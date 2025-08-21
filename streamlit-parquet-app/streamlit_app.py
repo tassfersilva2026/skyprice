@@ -21,7 +21,6 @@ DATA_PATH = APP_DIR / "data" / "OFERTAS.parquet"
 # Helpers
 # ===========================
 def _first_existing_image(repo_root: Path) -> Path | None:
-    # tenta achar 1ª imagem na pasta principal do repo (irmã do app)
     candidates = list(repo_root.glob("*.png")) + list(repo_root.glob("*.jpg")) + list(repo_root.glob("*.jpeg")) + list(repo_root.glob("*.gif"))
     return candidates[0] if candidates else None
 
@@ -84,12 +83,10 @@ def load_base(path: Path) -> pd.DataFrame:
     return df
 
 def winners_by_position(df: pd.DataFrame) -> pd.DataFrame:
-    """Retorna uma tabela por IDPESQUISA com colunas R1, R2, R3 (agência do ranking 1..3).
-    Se não houver 2º/3º, preenche 'SEM OFERTAS'."""
     base = pd.DataFrame({"IDPESQUISA": df["IDPESQUISA"].unique()})
     for r in (1,2,3):
         s = (df[df["RANKING"]==r]
-             .sort_values(["IDPESQUISA"]) # 1 por pesquisa
+             .sort_values(["IDPESQUISA"])
              .drop_duplicates(subset=["IDPESQUISA"]))
         base = base.merge(s[["IDPESQUISA","AGENCIA_NORM"]].rename(columns={"AGENCIA_NORM":f"R{r}"}),
                           on="IDPESQUISA", how="left")
@@ -106,7 +103,7 @@ def top_share(series: pd.Series, topn=20) -> pd.DataFrame:
 
 def make_bar(df: pd.DataFrame, x: str, y: str, sort_y_desc=True):
     if sort_y_desc:
-        df = df.sort_values(y, ascending=False)
+        df = df.sort_values(x, ascending=False)
     return alt.Chart(df).mark_bar().encode(
         x=alt.X(f"{x}:Q", title=x),
         y=alt.Y(f"{y}:N", sort="-x", title=y),
@@ -137,9 +134,10 @@ if img:
     st.image(img.as_posix(), use_container_width=True)
 
 # ===========================
-# Filtros (horizontais, valem pra todas as abas)
+# Filtros (horizontais)
 # ===========================
 st.markdown("---")
+st.markdown("### Filtros")
 with st.container():
     c1, c2, c3, c4, c5 = st.columns([1.2,1.2,1,2,1.2])
     data_min = pd.to_datetime(pd.Series(df_raw["DATAHORA_BUSCA"])).min()
@@ -208,8 +206,6 @@ st.markdown("## GRUPO")
 
 c_grupo1, c_grupo2, c_grupo3 = st.columns(3)
 
-# Corrigido: `top_r1_grupo` é um DataFrame.
-# Use `.loc` para encontrar a linha e a coluna desejada.
 with c_grupo1:
     st.markdown("1°")
     top_r1_grupo = top_share(W['R1'].replace({"MAXMILHAS":"GRUPO 123", "123MILHAS":"GRUPO 123"}))
