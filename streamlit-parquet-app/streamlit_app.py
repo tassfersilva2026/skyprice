@@ -14,7 +14,7 @@ st.set_page_config(page_title="Skyscanner — Painel", layout="wide", initial_si
 # ===========================
 # Config / caminhos fixos
 # ===========================
-APP_DIR   = Path(__file__).resolve().parent
+APP_DIR    = Path(__file__).resolve().parent
 DATA_PATH = APP_DIR / "data" / "OFERTAS.parquet"
 
 # ===========================
@@ -27,23 +27,23 @@ def _first_existing_image(repo_root: Path) -> Path | None:
 
 def std_agencia(raw: str) -> str:
     ag = (raw or "").strip().upper()
-    if ag == "BOOKINGCOM":            return "BOOKING.COM"
-    if ag == "KIWICOM":               return "KIWI.COM"
-    if ag.startswith("123MILHAS") or ag == "123":   return "123MILHAS"
-    if ag.startswith("MAXMILHAS") or ag == "MAX":   return "MAXMILHAS"
-    if ag.startswith("CAPOVIAGENS"):  return "CAPOVIAGENS"
-    if ag.startswith("FLIPMILHAS"):   return "FLIPMILHAS"
-    if ag.startswith("VAIDEPROMO"):   return "VAIDEPROMO"
-    if ag.startswith("KISSANDFLY"):   return "KISSANDFLY"
-    if ag.startswith("ZUPPER"):       return "ZUPPER"
-    if ag.startswith("MYTRIP"):       return "MYTRIP"
-    if ag.startswith("GOTOGATE"):     return "GOTOGATE"
-    if ag.startswith("DECOLAR"):      return "DECOLAR"
-    if ag.startswith("EXPEDIA"):      return "EXPEDIA"
-    if ag.startswith("GOL"):          return "GOL"
-    if ag.startswith("LATAM"):        return "LATAM"
-    if ag.startswith("TRIPCOM"):      return "TRIP.COM"
-    if ag.startswith("VIAJANET"):     return "VIAJANET"
+    if ag == "BOOKINGCOM":              return "BOOKING.COM"
+    if ag == "KIWICOM":                 return "KIWI.COM"
+    if ag.startswith("123MILHAS") or ag == "123":    return "123MILHAS"
+    if ag.startswith("MAXMILHAS") or ag == "MAX":    return "MAXMILHAS"
+    if ag.startswith("CAPOVIAGENS"):    return "CAPOVIAGENS"
+    if ag.startswith("FLIPMILHAS"):     return "FLIPMILHAS"
+    if ag.startswith("VAIDEPROMO"):     return "VAIDEPROMO"
+    if ag.startswith("KISSANDFLY"):     return "KISSANDFLY"
+    if ag.startswith("ZUPPER"):         return "ZUPPER"
+    if ag.startswith("MYTRIP"):         return "MYTRIP"
+    if ag.startswith("GOTOGATE"):       return "GOTOGATE"
+    if ag.startswith("DECOLAR"):        return "DECOLAR"
+    if ag.startswith("EXPEDIA"):        return "EXPEDIA"
+    if ag.startswith("GOL"):            return "GOL"
+    if ag.startswith("LATAM"):          return "LATAM"
+    if ag.startswith("TRIPCOM"):        return "TRIP.COM"
+    if ag.startswith("VIAJANET"):       return "VIAJANET"
     if ag in ("", "NAN", "NONE", "NULL", "SKYSCANNER"): return "SEM OFERTAS"
     return ag
 
@@ -158,36 +158,24 @@ if img:
     st.image(img.as_posix(), use_container_width=True)
 
 # ===========================
-# Abas
-# ===========================
-tab_labels = [
-    "1. Painel",
-    "2. Top 3 Agências",
-    "3. Top 3 Preços Mais Baratos",
-    "4. Ranking por Agências",
-    "5. Preço por Período do Dia",
-    "6. Qtde de Buscas x Ofertas",
-    "7. Comportamento Cias",
-    "8. Competitividade",
-    "9. Melhor Preço Diário",
-    "10. Dados"
-]
-tabs = st.tabs(tab_labels)
-
-# ===========================
 # Filtros (horizontais, valem pra todas as abas)
 # DATA usa H = DATAHORA_BUSCA
 # HORA usa C (HORA_BUSCA -> HH)
 # ADVP usa L (agrupado em 1,5,11,17,30)
 # TRECHO usa K
 # ===========================
+# **Alteração 1:** Remove a lógica de abas para focar apenas no layout da imagem.
+# O novo layout terá os filtros na parte superior.
+
+st.markdown("---") # Linha para separar visualmente
+
 with st.container():
     c1, c2, c3, c4, c5 = st.columns([1.2,1.2,1,2,1.2])
 
     # Data min/max a partir de H
     data_min = pd.to_datetime(pd.Series(df_raw["DATAHORA_BUSCA"])).min()
     data_max = pd.to_datetime(pd.Series(df_raw["DATAHORA_BUSCA"])).max()
-    def d(x): 
+    def d(x):
         try: return x.date()
         except: return None
     data_min = d(data_min) or date(2000,1,1)
@@ -229,148 +217,134 @@ if hh_sel:
 
 df = df[mask].copy()
 
-# Métricas rápidas no topo
-m1, m2, m3, m4 = st.columns(4)
-m1.metric("Linhas filtradas", f"{len(df):,}".replace(",", "."))
-m2.metric("Pesquisas únicas", f"{df['IDPESQUISA'].nunique():,}".replace(",", "."))
-m3.metric("Ofertas (linhas) por pesquisa", f"{(len(df)/(df['IDPESQUISA'].nunique() or 1)):.2f}".replace(".", ","))
-m4.metric("Trechos distintos", f"{df['TRECHO'].nunique():,}".replace(",", "."))
+# ======================================================================
+# Reestruturação para o layout da imagem
+# ======================================================================
+
+if df.empty:
+    st.info("Sem dados para os filtros."); st.stop()
+
+st.markdown("---") # Linha para separar os filtros do conteúdo
 
 # ======================================================================
-# 1) PAINEL
+# Métrica principal e cobertura por ranking
 # ======================================================================
-with tabs[0]:
-    st.subheader("Painel")
-    if df.empty:
-        st.info("Sem dados para os filtros."); st.stop()
 
-    st.caption("• Contagem única de pesquisas (col. A) • Participação por posição de ranking (col. M)")
+# **Alteração 2:** Combina as métricas em um layout de duas colunas
+c_pesquisas, c_cobertura = st.columns([1, 2])
 
-    # Pesquisas únicas
-    st.metric("Pesquisas únicas", f"{df['IDPESQUISA'].nunique():,}".replace(",", "."))
+# Cálculo das métricas de cobertura
+total_pesquisas = df['IDPESQUISA'].nunique()
+# O 'winners_by_position' retorna o vencedor de cada pesquisa
+W = winners_by_position(df)
+# Conta a quantidade de pesquisas que tiveram um ranking 1, 2 e 3
+rank1_count = W[W['R1'] != 'SEM OFERTAS'].shape[0]
+rank2_count = W[W['R2'] != 'SEM OFERTAS'].shape[0]
+rank3_count = W[W['R3'] != 'SEM OFERTAS'].shape[0]
+# Calcula a porcentagem de cobertura
+rank1_perc = (rank1_count / total_pesquisas * 100) if total_pesquisas > 0 else 0
+rank2_perc = (rank2_count / total_pesquisas * 100) if total_pesquisas > 0 else 0
+rank3_perc = (rank3_count / total_pesquisas * 100) if total_pesquisas > 0 else 0
 
-    # Vencedores por posição (R1, R2, R3) com 'SEM OFERTAS' quando inexistente
-    W = winners_by_position(df)
+with c_pesquisas:
+    st.markdown("Pesquisas únicas")
+    st.title(f"{total_pesquisas:,}".replace(",", "."))
 
-    # Separado (agência normal)
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.markdown("**Participação TOP1 (agências separadas)**")
-        t1 = top_share(W["R1"])
-        st.dataframe(t1, use_container_width=True, height=280)
-    with col_b:
-        st.markdown("**Participação TOP1 (visão GRUPO 123)**")
-        Wg = W.copy()
-        Wg["R1G"] = Wg["R1"].replace({"MAXMILHAS":"GRUPO 123","123MILHAS":"GRUPO 123"})
-        t1g = top_share(Wg["R1G"])
-        st.dataframe(t1g, use_container_width=True, height=280)
-
-    # Posição 2 e 3 com "SEM OFERTAS"
-    c21, c22 = st.columns(2)
-    with c21:
-        st.markdown("**Participação TOP2 (com 'SEM OFERTAS' quando não existe)**")
-        st.dataframe(top_share(W["R2"]), use_container_width=True, height=280)
-    with c22:
-        st.markdown("**Participação TOP3 (com 'SEM OFERTAS' quando não existe)**")
-        st.dataframe(top_share(W["R3"]), use_container_width=True, height=280)
+with c_cobertura:
+    st.markdown("Cobertura por Ranking")
+    st.subheader(f"1°: {rank1_count:,} ({rank1_perc:.1f}%) • 2°: {rank2_count:,} ({rank2_perc:.1f}%) • 3°: {rank3_count:,} ({rank3_perc:.1f}%)".replace(",", ".").replace(".", ",", 1).replace(".", "", 1))
+    
+st.markdown("---") # Linha divisória
 
 # ======================================================================
-# 2) TOP 3 AGÊNCIAS (mais vitórias em TOP1)
+# GRUPO
 # ======================================================================
-with tabs[1]:
-    st.subheader("Top 3 Agências (mais TOP1)")
-    if df.empty: st.info("Sem dados."); st.stop()
-    W = winners_by_position(df)
-    t = W["R1"].value_counts().rename_axis("Agência/Cia").reset_index(name="Vitórias TOP1")
-    t["%"] = (t["Vitórias TOP1"] / t["Vitórias TOP1"].sum() * 100).round(2)
-    t3 = t.head(3)
-    st.dataframe(t3, use_container_width=True)
-    st.altair_chart(make_bar(t3.rename(columns={"Vitórias TOP1":"Quantidade"}), "Quantidade", "Agência/Cia"))
+st.markdown("## GRUPO")
+# Pega o top 100 de cada ranking para não sobrecarregar
+top_r1_grupo = top_share(W['R1'].replace({"MAXMILHAS":"GRUPO 123", "123MILHAS":"GRUPO 123"}), topn=100)
+top_r2_grupo = top_share(W['R2'].replace({"MAXMILHAS":"GRUPO 123", "123MILHAS":"GRUPO 123"}), topn=100)
+top_r3_grupo = top_share(W['R3'].replace({"MAXMILHAS":"GRUPO 123", "123MILHAS":"GRUPO 123"}), topn=100)
+
+# **Alteração 3:** Exibe os dados do GRUPO em um layout de três colunas
+c_grupo1, c_grupo2, c_grupo3 = st.columns(3)
+
+with c_grupo1:
+    st.markdown("1°")
+    # Pega a porcentagem do GRUPO 123
+    perc_grupo_r1 = top_r1_grupo.loc[top_r1_grupo['Agência/Cia'] == 'GRUPO 123', '%'].values
+    if len(perc_grupo_r1) > 0:
+        st.subheader(f"{perc_grupo_r1[0]:.2f}%".replace(".", ","))
+    else:
+        st.subheader("0.00%")
+    # Pega a linha da agência "123MILHAS" para calcular o tamanho da barra
+    perc_123_r1 = top_r1_grupo.loc[top_r1_grupo['Agência/Cia'] == '123MILHAS', '%'].values
+    # Ajusta para a barra de progresso
+    progress_val = perc_123_r1[0] / 100 if len(perc_123_r1) > 0 else 0
+    st.progress(progress_val)
+
+
+with c_grupo2:
+    st.markdown("2°")
+    perc_grupo_r2 = top_r2_grupo.loc[top_r2_grupo['Agência/Cia'] == 'GRUPO 123', '%'].values
+    if len(perc_grupo_r2) > 0:
+        st.subheader(f"{perc_grupo_r2[0]:.2f}%".replace(".", ","))
+    else:
+        st.subheader("0.00%")
+    progress_val = (perc_grupo_r2[0] / 100) if len(perc_grupo_r2) > 0 else 0
+    st.progress(progress_val)
+
+with c_grupo3:
+    st.markdown("3°")
+    perc_grupo_r3 = top_r3_grupo.loc[top_r3_grupo['Agência/Cia'] == 'GRUPO 123', '%'].values
+    if len(perc_grupo_r3) > 0:
+        st.subheader(f"{perc_grupo_r3[0]:.2f}%".replace(".", ","))
+    else:
+        st.subheader("0.00%")
+    progress_val = (perc_grupo_r3[0] / 100) if len(perc_grupo_r3) > 0 else 0
+    st.progress(progress_val)
+
+st.markdown("---") # Linha divisória
 
 # ======================================================================
-# 3) TOP 3 PREÇOS MAIS BARATOS (geral filtrado)
+# FLIPMILHAS
 # ======================================================================
-with tabs[2]:
-    st.subheader("Top 3 Preços Mais Baratos (geral)")
-    if df.empty: st.info("Sem dados."); st.stop()
-    t = df.sort_values(["PRECO"]).head(3)[["IDPESQUISA","AGENCIA_NORM","TRECHO","PRECO","DATAHORA_BUSCA"]]
-    st.dataframe(t.rename(columns={"AGENCIA_NORM":"Agência/Cia","DATAHORA_BUSCA":"Data Busca"}), use_container_width=True)
+st.markdown("## FLIPMILHAS")
+# Pega o top 100 de cada ranking para não sobrecarregar
+top_r1_flip = top_share(W['R1'], topn=100)
+top_r2_flip = top_share(W['R2'], topn=100)
+top_r3_flip = top_share(W['R3'], topn=100)
 
-# ======================================================================
-# 4) RANKING POR AGÊNCIAS (volume e vitórias)
-# ======================================================================
-with tabs[3]:
-    st.subheader("Ranking por Agências")
-    if df.empty: st.info("Sem dados."); st.stop()
-    # volume de ofertas + vitórias TOP1
-    W = winners_by_position(df)
-    wins = W["R1"].value_counts().rename_axis("Agência/Cia").reset_index(name="Vitórias TOP1")
-    vol  = df["AGENCIA_NORM"].value_counts().rename_axis("Agência/Cia").reset_index(name="Ofertas")
-    rt = vol.merge(wins, on="Agência/Cia", how="left").fillna(0)
-    rt["Vitórias TOP1"] = rt["Vitórias TOP1"].astype(int)
-    rt["Taxa Vitória (%)"] = (rt["Vitórias TOP1"]/rt["Ofertas"]*100).round(2)
-    st.dataframe(rt.sort_values(["Vitórias TOP1","Ofertas"], ascending=False), use_container_width=True, height=420)
+# **Alteração 4:** Exibe os dados de FLIPMILHAS em um layout de três colunas
+c_flip1, c_flip2, c_flip3 = st.columns(3)
 
-# ======================================================================
-# 5) PREÇO POR PERÍODO DO DIA (HH da busca)
-# ======================================================================
-with tabs[4]:
-    st.subheader("Preço por Período do Dia (HH)")
-    if df.empty: st.info("Sem dados."); st.stop()
-    t = df.groupby("HORA_HH", as_index=False)["PRECO"].median().rename(columns={"PRECO":"Preço Mediano"})
-    st.altair_chart(make_line(t, "HORA_HH", "Preço Mediano"))
+with c_flip1:
+    st.markdown("1°")
+    perc_flip_r1 = top_r1_flip.loc[top_r1_flip['Agência/Cia'] == 'FLIPMILHAS', '%'].values
+    if len(perc_flip_r1) > 0:
+        st.subheader(f"{perc_flip_r1[0]:.2f}%".replace(".", ","))
+    else:
+        st.subheader("0.00%")
+    progress_val = (perc_flip_r1[0] / 100) if len(perc_flip_r1) > 0 else 0
+    st.progress(progress_val)
 
-# ======================================================================
-# 6) QTDE DE BUSCAS x OFERTAS
-# ======================================================================
-with tabs[5]:
-    st.subheader("Quantidade de Buscas x Ofertas")
-    if df.empty: st.info("Sem dados."); st.stop()
-    searches = df["IDPESQUISA"].nunique()
-    offers   = len(df)
-    col1, col2 = st.columns(2)
-    col1.metric("Pesquisas únicas", f"{searches:,}".replace(",", "."))
-    col2.metric("Ofertas (linhas)", f"{offers:,}".replace(",", "."))
-    t = pd.DataFrame({"Métrica":["Pesquisas","Ofertas"], "Qtde":[searches, offers]})
-    st.altair_chart(make_bar(t.rename(columns={"Qtde":"Valor"}), "Valor", "Métrica"))
+with c_flip2:
+    st.markdown("2°")
+    perc_flip_r2 = top_r2_flip.loc[top_r2_flip['Agência/Cia'] == 'FLIPMILHAS', '%'].values
+    if len(perc_flip_r2) > 0:
+        st.subheader(f"{perc_flip_r2[0]:.2f}%".replace(".", ","))
+    else:
+        st.subheader("0.00%")
+    progress_val = (perc_flip_r2[0] / 100) if len(perc_flip_r2) > 0 else 0
+    st.progress(progress_val)
 
-# ======================================================================
-# 7) COMPORTAMENTO CIAS (share por trecho)
-# ======================================================================
-with tabs[6]:
-    st.subheader("Comportamento Cias (share por Trecho)")
-    if df.empty: st.info("Sem dados."); st.stop()
-    base = df.groupby(["TRECHO","AGENCIA_NORM"]).size().rename("Qtde").reset_index()
-    total_por_trecho = base.groupby("TRECHO")["Qtde"].transform("sum")
-    base["%"] = (base["Qtde"]/total_por_trecho*100).round(2)
-    st.dataframe(base.sort_values(["TRECHO","%"], ascending=[True, False]), use_container_width=True, height=420)
+with c_flip3:
+    st.markdown("3°")
+    perc_flip_r3 = top_r3_flip.loc[top_r3_flip['Agência/Cia'] == 'FLIPMILHAS', '%'].values
+    if len(perc_flip_r3) > 0:
+        st.subheader(f"{perc_flip_r3[0]:.2f}%".replace(".", ","))
+    else:
+        st.subheader("0.00%")
+    progress_val = (perc_flip_r3[0] / 100) if len(perc_flip_r3) > 0 else 0
+    st.progress(progress_val)
 
-# ======================================================================
-# 8) COMPETITIVIDADE (diferença para o melhor preço da pesquisa)
-# ======================================================================
-with tabs[7]:
-    st.subheader("Competitividade (Δ para o melhor preço na mesma pesquisa)")
-    if df.empty: st.info("Sem dados."); st.stop()
-    # Δ-preço para o menor da pesquisa
-    best = df.groupby("IDPESQUISA")["PRECO"].min().rename("BEST").reset_index()
-    t = df.merge(best, on="IDPESQUISA", how="left")
-    t["DELTA"] = t["PRECO"] - t["BEST"]
-    agg = t.groupby("AGENCIA_NORM", as_index=False)["DELTA"].median().rename(columns={"DELTA":"Δ Mediano"})
-    st.dataframe(agg.sort_values("Δ Mediano"), use_container_width=True)
-    st.altair_chart(make_bar(agg.rename(columns={"Δ Mediano":"Delta"}), "Delta", "AGENCIA_NORM"))
-
-# ======================================================================
-# 9) MELHOR PREÇO DIÁRIO (por DATAHORA_BUSCA)
-# ======================================================================
-with tabs[8]:
-    st.subheader("Melhor Preço Diário (Data da busca — col. H)")
-    if df.empty: st.info("Sem dados."); st.stop()
-    t = df.groupby("DATAHORA_BUSCA", as_index=False)["PRECO"].min().rename(columns={"PRECO":"Melhor Preço"})
-    st.altair_chart(make_line(t, "DATAHORA_BUSCA", "Melhor Preço"))
-
-# ======================================================================
-# 10) DADOS (visão bruta filtrada)
-# ======================================================================
-with tabs[9]:
-    st.subheader("Dados (após filtros)")
-    st.dataframe(df, use_container_width=True, height=560)
+# Fim do script, pois o resto do dashboard não é necessário para o layout da imagem.
