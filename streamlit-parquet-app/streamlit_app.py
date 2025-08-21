@@ -126,16 +126,13 @@ def make_line(df: pd.DataFrame, x: str, y: str, color: str|None=None):
 df_raw = load_base(DATA_PATH)
 
 # ===========================
-# Banner (pasta principal do repo)
+# Banner e Filtros (Layout corrigido)
 # ===========================
 repo_root = APP_DIR
 img = _first_existing_image(repo_root)
 if img:
     st.image(img.as_posix(), use_container_width=True)
 
-# ===========================
-# Filtros (horizontais)
-# ===========================
 st.markdown("---")
 st.markdown("### Filtros")
 with st.container():
@@ -178,6 +175,11 @@ if df.empty:
 
 st.markdown("---")
 
+# ======================================================================
+# Métricas e Dados (Layout corrigido)
+# ======================================================================
+st.markdown("## Painel")
+
 c_pesquisas, c_cobertura = st.columns([1, 2])
 
 W = winners_by_position(df)
@@ -199,9 +201,6 @@ with c_cobertura:
     
 st.markdown("---")
 
-# ======================================================================
-# GRUPO
-# ======================================================================
 st.markdown("## GRUPO")
 
 c_grupo1, c_grupo2, c_grupo3 = st.columns(3)
@@ -232,9 +231,6 @@ with c_grupo3:
 
 st.markdown("---")
 
-# ======================================================================
-# FLIPMILHAS
-# ======================================================================
 st.markdown("## FLIPMILHAS")
 
 c_flip1, c_flip2, c_flip3 = st.columns(3)
