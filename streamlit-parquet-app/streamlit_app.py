@@ -176,85 +176,116 @@ if df.empty:
 st.markdown("---")
 
 # ======================================================================
-# Métricas e Dados (Layout corrigido)
+# Sistema de Abas
 # ======================================================================
-st.markdown("## Painel")
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["Painel", "Variação de Preço", "Análise de Rankings", "Histórico de Pesquisas", "Outras Métricas"])
 
-c_pesquisas, c_cobertura = st.columns([1, 2])
+with tab1:
+    st.markdown("## Painel Principal")
+    c_pesquisas, c_cobertura = st.columns([1, 2])
+    W = winners_by_position(df)
+    total_pesquisas = df['IDPESQUISA'].nunique()
+    rank1_count = W[W['R1'] != 'SEM OFERTAS'].shape[0]
+    rank2_count = W[W['R2'] != 'SEM OFERTAS'].shape[0]
+    rank3_count = W[W['R3'] != 'SEM OFERTAS'].shape[0]
+    rank1_perc = (rank1_count / total_pesquisas * 100) if total_pesquisas > 0 else 0
+    rank2_perc = (rank2_count / total_pesquisas * 100) if total_pesquisas > 0 else 0
+    rank3_perc = (rank3_count / total_pesquisas * 100) if total_pesquisas > 0 else 0
 
-W = winners_by_position(df)
-total_pesquisas = df['IDPESQUISA'].nunique()
-rank1_count = W[W['R1'] != 'SEM OFERTAS'].shape[0]
-rank2_count = W[W['R2'] != 'SEM OFERTAS'].shape[0]
-rank3_count = W[W['R3'] != 'SEM OFERTAS'].shape[0]
-rank1_perc = (rank1_count / total_pesquisas * 100) if total_pesquisas > 0 else 0
-rank2_perc = (rank2_count / total_pesquisas * 100) if total_pesquisas > 0 else 0
-rank3_perc = (rank3_count / total_pesquisas * 100) if total_pesquisas > 0 else 0
+    with c_pesquisas:
+        st.markdown("Pesquisas únicas")
+        st.title(f"{total_pesquisas:,}".replace(",", "."))
 
-with c_pesquisas:
-    st.markdown("Pesquisas únicas")
-    st.title(f"{total_pesquisas:,}".replace(",", "."))
+    with c_cobertura:
+        st.markdown("Cobertura por Ranking")
+        st.subheader(f"1°: {rank1_count:,} ({rank1_perc:.1f}%) • 2°: {rank2_count:,} ({rank2_perc:.1f}%) • 3°: {rank3_count:,} ({rank3_perc:.1f}%)".replace(",", ".").replace(".", ",", 1).replace(".", "", 1))
+        
+    st.markdown("---")
 
-with c_cobertura:
-    st.markdown("Cobertura por Ranking")
-    st.subheader(f"1°: {rank1_count:,} ({rank1_perc:.1f}%) • 2°: {rank2_count:,} ({rank2_perc:.1f}%) • 3°: {rank3_count:,} ({rank3_perc:.1f}%)".replace(",", ".").replace(".", ",", 1).replace(".", "", 1))
+    st.markdown("## GRUPO")
+    c_grupo1, c_grupo2, c_grupo3 = st.columns(3)
+    with c_grupo1:
+        st.markdown("1°")
+        top_r1_grupo = top_share(W['R1'].replace({"MAXMILHAS":"GRUPO 123", "123MILHAS":"GRUPO 123"}))
+        perc_grupo_r1 = top_r1_grupo.loc[top_r1_grupo['Agência/Cia'] == 'GRUPO 123', '%']
+        perc_val = perc_grupo_r1.iloc[0] if not perc_grupo_r1.empty else 0
+        st.subheader(f"{perc_val:.2f}%".replace(".", ","))
+        st.progress(perc_val / 100)
+    with c_grupo2:
+        st.markdown("2°")
+        top_r2_grupo = top_share(W['R2'].replace({"MAXMILHAS":"GRUPO 123", "123MILHAS":"GRUPO 123"}))
+        perc_grupo_r2 = top_r2_grupo.loc[top_r2_grupo['Agência/Cia'] == 'GRUPO 123', '%']
+        perc_val = perc_grupo_r2.iloc[0] if not perc_grupo_r2.empty else 0
+        st.subheader(f"{perc_val:.2f}%".replace(".", ","))
+        st.progress(perc_val / 100)
+    with c_grupo3:
+        st.markdown("3°")
+        top_r3_grupo = top_share(W['R3'].replace({"MAXMILHAS":"GRUPO 123", "123MILHAS":"GRUPO 123"}))
+        perc_grupo_r3 = top_r3_grupo.loc[top_r3_grupo['Agência/Cia'] == 'GRUPO 123', '%']
+        perc_val = perc_grupo_r3.iloc[0] if not perc_grupo_r3.empty else 0
+        st.subheader(f"{perc_val:.2f}%".replace(".", ","))
+        st.progress(perc_val / 100)
+    st.markdown("---")
+    st.markdown("## FLIPMILHAS")
+    c_flip1, c_flip2, c_flip3 = st.columns(3)
+    with c_flip1:
+        st.markdown("1°")
+        top_r1_flip = top_share(W['R1'])
+        perc_flip_r1 = top_r1_flip.loc[top_r1_flip['Agência/Cia'] == 'FLIPMILHAS', '%']
+        perc_val = perc_flip_r1.iloc[0] if not perc_flip_r1.empty else 0
+        st.subheader(f"{perc_val:.2f}%".replace(".", ","))
+        st.progress(perc_val / 100)
+    with c_flip2:
+        st.markdown("2°")
+        top_r2_flip = top_share(W['R2'])
+        perc_flip_r2 = top_r2_flip.loc[top_r2_flip['Agência/Cia'] == 'FLIPMILHAS', '%']
+        perc_val = perc_flip_r2.iloc[0] if not perc_flip_r2.empty else 0
+        st.subheader(f"{perc_val:.2f}%".replace(".", ","))
+        st.progress(perc_val / 100)
+    with c_flip3:
+        st.markdown("3°")
+        top_r3_flip = top_share(W['R3'])
+        perc_flip_r3 = top_r3_flip.loc[top_r3_flip['Agência/Cia'] == 'FLIPMILHAS', '%']
+        perc_val = perc_flip_r3.iloc[0] if not perc_flip_r3.empty else 0
+        st.subheader(f"{perc_val:.2f}%".replace(".", ","))
+        st.progress(perc_val / 100)
+
+with tab2:
+    st.markdown("## Variação de Preço")
+    st.info("Conteúdo para a aba de Variação de Preço.")
+
+with tab3:
+    st.markdown("## Análise de Rankings")
+    st.info("Conteúdo para a aba de Análise de Rankings.")
     
-st.markdown("---")
+    # Exemplo de uso de top_share e make_bar para demonstrar a correção do SchemaValidationError
+    st.markdown("### Top Agências por Posição")
+    
+    st.markdown("#### Posição 1")
+    t1 = top_share(W['R1'])
+    st.altair_chart(make_bar(t1, "Qtde", "Agência/Cia"), use_container_width=True)
+    st.dataframe(t1)
 
-st.markdown("## GRUPO")
+    st.markdown("#### Posição 2")
+    t2 = top_share(W['R2'])
+    st.altair_chart(make_bar(t2, "Qtde", "Agência/Cia"), use_container_width=True)
+    st.dataframe(t2)
 
-c_grupo1, c_grupo2, c_grupo3 = st.columns(3)
+    st.markdown("#### Posição 3")
+    t3 = top_share(W['R3'])
+    st.altair_chart(make_bar(t3, "Qtde", "Agência/Cia"), use_container_width=True)
+    st.dataframe(t3)
 
-with c_grupo1:
-    st.markdown("1°")
-    top_r1_grupo = top_share(W['R1'].replace({"MAXMILHAS":"GRUPO 123", "123MILHAS":"GRUPO 123"}))
-    perc_grupo_r1 = top_r1_grupo.loc[top_r1_grupo['Agência/Cia'] == 'GRUPO 123', '%']
-    perc_val = perc_grupo_r1.iloc[0] if not perc_grupo_r1.empty else 0
-    st.subheader(f"{perc_val:.2f}%".replace(".", ","))
-    st.progress(perc_val / 100)
+with tab4:
+    st.markdown("## Histórico de Pesquisas")
+    st.info("Conteúdo para a aba de Histórico de Pesquisas.")
+    
+    # Exemplo de gráfico de linha
+    st.markdown("### Preço Médio por Data da Busca")
+    df_agg = df.groupby('DATAHORA_BUSCA')['PRECO'].mean().reset_index()
+    st.altair_chart(make_line(df_agg, "DATAHORA_BUSCA", "PRECO"), use_container_width=True)
 
-with c_grupo2:
-    st.markdown("2°")
-    top_r2_grupo = top_share(W['R2'].replace({"MAXMILHAS":"GRUPO 123", "123MILHAS":"GRUPO 123"}))
-    perc_grupo_r2 = top_r2_grupo.loc[top_r2_grupo['Agência/Cia'] == 'GRUPO 123', '%']
-    perc_val = perc_grupo_r2.iloc[0] if not perc_grupo_r2.empty else 0
-    st.subheader(f"{perc_val:.2f}%".replace(".", ","))
-    st.progress(perc_val / 100)
-
-with c_grupo3:
-    st.markdown("3°")
-    top_r3_grupo = top_share(W['R3'].replace({"MAXMILHAS":"GRUPO 123", "123MILHAS":"GRUPO 123"}))
-    perc_grupo_r3 = top_r3_grupo.loc[top_r3_grupo['Agência/Cia'] == 'GRUPO 123', '%']
-    perc_val = perc_grupo_r3.iloc[0] if not perc_grupo_r3.empty else 0
-    st.subheader(f"{perc_val:.2f}%".replace(".", ","))
-    st.progress(perc_val / 100)
-
-st.markdown("---")
-
-st.markdown("## FLIPMILHAS")
-
-c_flip1, c_flip2, c_flip3 = st.columns(3)
-
-with c_flip1:
-    st.markdown("1°")
-    top_r1_flip = top_share(W['R1'])
-    perc_flip_r1 = top_r1_flip.loc[top_r1_flip['Agência/Cia'] == 'FLIPMILHAS', '%']
-    perc_val = perc_flip_r1.iloc[0] if not perc_flip_r1.empty else 0
-    st.subheader(f"{perc_val:.2f}%".replace(".", ","))
-    st.progress(perc_val / 100)
-
-with c_flip2:
-    st.markdown("2°")
-    top_r2_flip = top_share(W['R2'])
-    perc_flip_r2 = top_r2_flip.loc[top_r2_flip['Agência/Cia'] == 'FLIPMILHAS', '%']
-    perc_val = perc_flip_r2.iloc[0] if not perc_flip_r2.empty else 0
-    st.subheader(f"{perc_val:.2f}%".replace(".", ","))
-    st.progress(perc_val / 100)
-
-with c_flip3:
-    st.markdown("3°")
-    top_r3_flip = top_share(W['R3'])
-    perc_flip_r3 = top_r3_flip.loc[top_r3_flip['Agência/Cia'] == 'FLIPMILHAS', '%']
-    perc_val = perc_flip_r3.iloc[0] if not perc_flip_r3.empty else 0
-    st.subheader(f"{perc_val:.2f}%".replace(".", ","))
-    st.progress(perc_val / 100)
+with tab5:
+    st.markdown("## Outras Métricas")
+    st.info("Conteúdo para a aba de Outras Métricas.")
+    st.dataframe(df)
