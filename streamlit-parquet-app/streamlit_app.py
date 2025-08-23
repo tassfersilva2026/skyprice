@@ -50,7 +50,6 @@ def load_base(path: Path) -> pd.DataFrame:
         st.error(f"Arquivo obrigatório não encontrado: {path.as_posix()}"); st.stop()
     df = pd.read_parquet(path)
 
-    # mapear colunas pela posição se necessário
     colmap = {
         0:"IDPESQUISA", 1:"CIA", 2:"HORA_BUSCA", 3:"HORA_PARTIDA", 4:"HORA_CHEGADA",
         5:"TIPO_VOO", 6:"DATA_EMBARQUE", 7:"DATAHORA_BUSCA", 8:"AGENCIA_COMP",
@@ -60,7 +59,7 @@ def load_base(path: Path) -> pd.DataFrame:
         rename = {df.columns[i]: colmap[i] for i in range(min(13, df.shape[1]))}
         df = df.rename(columns=rename)
 
-    # horas -> "HH:MM:SS" e HH
+    # horas -> HH:MM:SS e HH inteiro
     for c in ["HORA_BUSCA", "HORA_PARTIDA", "HORA_CHEGADA"]:
         if c in df.columns:
             df[c] = pd.to_datetime(df[c].astype(str).str.strip(), errors="coerce").dt.strftime("%H:%M:%S")
@@ -115,33 +114,39 @@ def last_update_from_cols(df: pd.DataFrame) -> str:
         return f"{max_d.strftime('%d/%m/%Y')} - {max_h.strftime('%H:%M:%S')}"
     return f"{max_d.strftime('%d/%m/%Y')}"
 
-# ========= Estilos das caixinhas e grade (4 por linha) =========
+# ========= Estilos (3 cards por linha) =========
 CARD_CSS = """
 <style>
 .cards-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
 }
-@media (max-width: 1200px) { .cards-grid { grid-template-columns: repeat(3, minmax(0,1fr)); } }
-@media (max-width: 900px)  { .cards-grid { grid-template-columns: repeat(2, minmax(0,1fr)); } }
-@media (max-width: 600px)  { .cards-grid { grid-template-columns: 1fr; } }
+@media (max-width: 1100px) { .cards-grid { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+@media (max-width: 700px)  { .cards-grid { grid-template-columns: 1fr; } }
 
-.card { border:1px solid #e9e9ee; border-radius:14px; padding:10px 12px;
-        background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.04); }
-.card .title { font-weight:650; font-size:15px; margin-bottom:6px; }
-.row { display:flex; gap:10px; }
-.item { flex:1; display:flex; align-items:center; gap:6px; }
-.badge { min-width:26px; padding:2px 8px; font-weight:700; font-size:11px; color:#fff; border-radius:999px; text-align:center; }
-.gold  { background:#D4AF37; }   /* ouro */
-.silver{ background:#C0C0C0; }   /* prata */
-.bronze{ background:#CD7F32; }   /* bronze */
+.card {
+  border:1px solid #e9e9ee; border-radius:14px; padding:10px 12px;
+  background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.04);
+}
+.card .title { font-weight:650; font-size:15px; margin-bottom:8px; }
+
+.row   { display:flex; gap:8px; }
+.item  { flex:1; display:flex; align-items:center; justify-content:space-between;
+         gap:8px; padding:8px 10px; border-radius:10px; border:1px solid #e3e3e8;
+         color:#222; }
+.pos   { font-weight:700; font-size:12px; opacity:.85; }
 .pct   { font-size:16px; font-weight:650; }
+
+/* Fundo do QUADRO (não o número) */
+.goldbg   { background:#FAF3D0; border-color:#D4AF37; }  /* ouro claro */
+.silverbg { background:#F5F5F7; border-color:#C0C0C0; }  /* prata clara */
+.bronzebg { background:#F6E0D1; border-color:#CD7F32; }  /* bronze claro */
 </style>
 """
 
-# >>>>>>> FIX AQUI: sem indentação nem quebras iniciais no HTML <<<<<<<
 def card_html(nome: str, p1: float, p2: float, p3: float) -> str:
+    # sem indentação pra não virar bloco de código
     p1 = max(0.0, min(100.0, float(p1 or 0.0)))
     p2 = max(0.0, min(100.0, float(p2 or 0.0)))
     p3 = max(0.0, min(100.0, float(p3 or 0.0)))
@@ -149,17 +154,18 @@ def card_html(nome: str, p1: float, p2: float, p3: float) -> str:
         f"<div class='card'>"
         f"<div class='title'>{nome}</div>"
         f"<div class='row'>"
-        f"<div class='item'><span class='badge gold'>1º</span><span class='pct'>{p1:.2f}%</span></div>"
-        f"<div class='item'><span class='badge silver'>2º</span><span class='pct'>{p2:.2f}%</span></div>"
-        f"<div class='item'><span class='badge bronze'>3º</span><span class='pct'>{p3:.2f}%</span></div>"
+        f"<div class='item goldbg'><span class='pos'>1º</span><span class='pct'>{p1:.2f}%</span></div>"
+        f"<div class='item silverbg'><span class='pos'>2º</span><span class='pct'>{p2:.2f}%</span></div>"
+        f"<div class='item bronzebg'><span class='pos'>3º</span><span class='pct'>{p3:.2f}%</span></div>"
         f"</div></div>"
     )
 
-# ========= Gráficos =========
+# ========= Gráficos utilitários =========
 def make_bar(df: pd.DataFrame, x_col: str, y_col: str, sort_y_desc: bool = True):
     d = df[[y_col, x_col]].copy()
-    d[x_col] = pd.to_numeric(d[x_col], errors="coerce"); d[y_col] = d[y_col].astype(str)
-    d = d.dropna(subset=[x_col]); 
+    d[x_col] = pd.to_numeric(d[x_col], errors="coerce")
+    d[y_col] = d[y_col].astype(str)
+    d = d.dropna(subset=[x_col])
     if sort_y_desc: d = d.sort_values(x_col, ascending=False)
     if d.empty: return alt.Chart(pd.DataFrame({x_col: [], y_col: []})).mark_bar()
     return alt.Chart(d).mark_bar().encode(
@@ -172,9 +178,11 @@ def make_line(df: pd.DataFrame, x_col: str, y_col: str, color: str | None = None
     cols = [x_col, y_col] + ([color] if color else [])
     d = df[cols].copy()
     try:
-        d[x_col] = pd.to_datetime(d[x_col], errors="raise"); x_enc = alt.X(f"{x_col}:T", title=x_col)
+        d[x_col] = pd.to_datetime(d[x_col], errors="raise")
+        x_enc = alt.X(f"{x_col}:T", title=x_col)
     except Exception:
-        d[x_col] = pd.to_numeric(d[x_col], errors="coerce"); x_enc = alt.X(f"{x_col}:Q", title=x_col)
+        d[x_col] = pd.to_numeric(d[x_col], errors="coerce")
+        x_enc = alt.X(f"{x_col}:Q", title=x_col)
     d[y_col] = pd.to_numeric(d[y_col], errors="coerce")
     if color: d[color] = d[color].astype(str)
     d = d.dropna(subset=[x_col, y_col])
@@ -284,7 +292,7 @@ def tab1_painel(df_raw: pd.DataFrame):
     # Ordena pelo % em 1º (desc)
     targets_sorted = sorted(targets_base, key=lambda t: pcts_for_target(t)[0], reverse=True)
 
-    # Render cards em grade (4 por linha)
+    # Render cards (3 por linha)
     cards = []
     for tgt in targets_sorted:
         p1, p2, p3 = pcts_for_target(tgt)
