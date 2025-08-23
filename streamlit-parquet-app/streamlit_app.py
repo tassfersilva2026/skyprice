@@ -542,7 +542,6 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
 
 
 # ──────────────────── ABA: Top 3 Preços Mais Baratos (START) ─────────────────
-# ──────────────────── ABA: Top 3 Preços Mais Baratos (START) ─────────────────
 @register_tab("Top 3 Preços Mais Baratos")
 def tab3_top3_precos(df_raw: pd.DataFrame):
     """
@@ -562,13 +561,13 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
     if df.empty:
         st.info("Sem dados para os filtros."); return
 
-    # ====== UI simples (opcional) ======
+    # ====== UI simples ======
     c1, c2, _ = st.columns([0.28, 0.18, 0.54])
     agencia_foco = c1.selectbox("Agência alvo", ["Todos", "123MILHAS", "MAXMILHAS"], index=0)
     posicao_foco = c2.selectbox("Ranking", ["Todas", 1, 2, 3], index=0)
 
     # ====== Helpers ======
-    def fmt_moeda_br(x): 
+    def fmt_moeda_br(x):
         try:
             xv = float(x)
             if not _np.isfinite(xv): return "R$ -"
@@ -612,13 +611,17 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
         if not (0 <= h <= 23 and 0 <= m <= 59 and 0 <= sec <= 59): return None
         return f"{h:02d}:{m:02d}:{sec:02d}"
 
-    # ====== Normalização + escolha da ÚLTIMA pesquisa (IDPESQUISA) ======
+    # ====== Normalização + escolha da ÚLTIMA pesquisa ======
     dfp = df.copy()
     dfp["__DTKEY__"] = _pd.to_datetime(dfp.get("DATAHORA_BUSCA"), errors="coerce")
-    dfp["__HORA__"]  = (dfp.get("HORA_BUSCA") or _pd.Series([None]*len(dfp))).apply(parse_hora_text)
-    dfp["_H_"]       = _pd.to_datetime(dfp["__HORA__"], format="%H:%M:%S", errors="coerce")
 
-    # pega a última linha por data+hora e usa o ID dessa linha
+    # ✅ FIX: nada de "or" com Series
+    hora_raw = dfp.get("HORA_BUSCA", _pd.Series([None]*len(dfp), index=dfp.index))
+    dfp["__HORA__"] = hora_raw.apply(parse_hora_text)
+
+    dfp["_H_"] = _pd.to_datetime(dfp["__HORA__"], format="%H:%M:%S", errors="coerce")
+
+    # última linha por data+hora → IDPESQUISA da pesquisa alvo
     try:
         last_row = dfp.sort_values(["__DTKEY__", "_H_"], ascending=[True, True]).iloc[-1]
     except IndexError:
@@ -627,30 +630,30 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
     if _pd.isna(last_id):
         st.info("Última pesquisa sem ID."); return
 
-    # **ISOLA TUDO** nessa única pesquisa
+    # isola a MESMA pesquisa
     dfp = dfp[dfp["IDPESQUISA"] == last_id].copy()
     if dfp.empty:
         st.info("A última pesquisa não possui ofertas no recorte."); return
 
-    # badge com data/hora/ID
     dt_lbl = last_row["__DTKEY__"].strftime("%d/%m/%Y") if _pd.notna(last_row["__DTKEY__"]) else ""
     hh_lbl = str(last_row["__HORA__"] or "")
     st.caption(f"Última pesquisa: **{dt_lbl} {hh_lbl}** • ID **{last_id}**")
 
     # ====== Colunas de trabalho ======
-    dfp["__TRECHO__"] = dfp["TRECHO"].astype(str)
-    advp_col          = "ADVP_CANON" if "ADVP_CANON" in dfp.columns else "ADVP"
-    dfp["__ADVP__"]   = dfp[advp_col].astype(str)
-    dfp["__AG__"]     = dfp["AGENCIA_NORM"].astype(str)
-    dfp["__PRECO__"]  = _pd.to_numeric(dfp["PRECO"], errors="coerce")
+    advp_col = "ADVP_CANON" if "ADVP_CANON" in dfp.columns else "ADVP"
+    dfp = dfp.assign(
+        __TRECHO__ = dfp["TRECHO"].astype(str),
+        __ADVP__   = dfp[advp_col].astype(str),
+        __AG__     = dfp["AGENCIA_NORM"].astype(str),
+        __PRECO__  = _pd.to_numeric(dfp["PRECO"], errors="coerce"),
+    )
     dfp = dfp[dfp["__PRECO__"].notna()]
     if dfp.empty:
         st.info("Sem preços válidos na última pesquisa."); return
 
-    # ====== Cálculo do pódio por Trecho×ADVP (dentro da MESMA pesquisa) ======
+    # ====== Cálculo do pódio por Trecho×ADVP ======
     def build_rank(sub: _pd.DataFrame) -> _pd.DataFrame:
-        tmp = sub.copy()
-        rk = (tmp.groupby("__AG__", as_index=False)["__PRECO__"].min()
+        rk = (sub.groupby("__AG__", as_index=False)["__PRECO__"].min()
                 .sort_values("__PRECO__").reset_index(drop=True))
         if not rk.empty:
             rk["_CAN"]   = rk["__AG__"].apply(_canon)
@@ -662,7 +665,7 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
         hh = sub_rows["__HORA__"].dropna().astype(str)
         return (ts.strftime("%d/%m/%Y") if _pd.notna(ts) else "") + (" " + hh.iloc[-1] if not hh.empty else "")
 
-    # ====== UI/estilos dos cards ======
+    # ====== UI/estilos ======
     GRID   = "display:grid;grid-auto-flow:column;grid-auto-columns:260px;gap:10px;overflow-x:auto;padding:6px 2px 10px 2px;scrollbar-width:thin;"
     BOX    = "border:1px solid #e5e7eb;border-radius:12px;background:#fff;"
     HEAD   = "padding:8px 10px;border-bottom:1px solid #f1f5f9;font-weight:700;color:#111827;"
@@ -682,7 +685,6 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
     for trecho in sorted(dfp["__TRECHO__"].dropna().unique(), key=str):
         df_t = dfp[dfp["__TRECHO__"] == trecho]
 
-        # ADVPs em ordem numérica
         def _advp_key(v):
             m = re.search(r"\d+", str(v)); return (0, int(m.group())) if m else (1, str(v))
         advps = sorted(df_t["__ADVP__"].dropna().unique(), key=_advp_key)
@@ -692,13 +694,11 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
             rows = df_t[df_t["__ADVP__"] == str(advp)].copy()
             rank = build_rank(rows)
 
-            # filtro opcional de foco (agência/posição)
             if not rank.empty and agencia_foco != "Todos":
                 rk_map = {row["__AG__"]: i+1 for i, row in rank.head(3).iterrows()}
                 found = any(_canon(ag) == _canon(agencia_foco) and (posicao_foco == "Todas" or posicao_foco == i)
                             for ag, i in rk_map.items())
-                if not found:
-                    continue
+                if not found: continue
 
             box = [f"<div style='{BOX}'>", f"<div style='{HEAD}'>ADVP: <b>{advp}</b></div>"]
 
@@ -706,15 +706,12 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
                 box.append(f"<div style='{NOBOX}'>Sem ofertas</div>")
                 box.append("</div>"); boxes.append("".join(box)); continue
 
-            # timestamp único para esse Trecho×ADVP (dentro da mesma pesquisa)
             dt_label = dt_for(rows)
-
             box.append(f"<div style='{STACK}'>")
             for i in range(min(3, len(rank))):
                 r = rank.iloc[i]
                 preco_i = float(r["__PRECO__"]); ag_i = r["__AG__"]
 
-                # subtítulo: Top1 = −% vs 2º | Top2/3 = +% vs 1º
                 if i == 0 and len(rank) >= 2:
                     p2 = float(rank.iloc[1]["__PRECO__"])
                     subtxt = f"−{int(round((p2 - preco_i) / p2 * 100.0))}% vs 2º" if (_np.isfinite(p2) and p2 != 0) else "—"
@@ -737,13 +734,11 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
                 )
             box.append("</div>")  # stack
 
-            # chips para 123/MAX quando fora do Top3 (avaliado na MESMA pesquisa)
             podium_tags = {_canon(r['__AG__']) for _, r in rank.head(3).iterrows()}
             p1 = float(rank.iloc[0]["__PRECO__"])
             extras = []
             for target in ["123MILHAS", "MAXMILHAS"]:
-                if _canon(target) in podium_tags:
-                    continue
+                if _canon(target) in podium_tags: continue
                 m = rank[rank["_BRAND"] == _brand_tag(target)]
                 if m.empty:
                     if rows[rows["__AG__"].astype(str).str.upper().str.contains(target)].empty:
@@ -766,9 +761,6 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
             st.markdown(f"<div style='margin:14px 0 10px 0;padding:10px 12px;border-left:4px solid #0B5FFF;background:#ECF3FF;border-radius:8px;font-weight:800;color:#0A2A6B;'>Trecho: <b>{trecho}</b></div>", unsafe_allow_html=True)
             st.markdown("<div style='" + GRID + "'>" + "".join(boxes) + "</div>", unsafe_allow_html=True)
 # ───────────────────── ABA: Top 3 Preços Mais Baratos (END) ──────────────────
-
-
-# ───────────────────── ABA 4: Ranking por Agências (START) ───────────────────
 
 # ───────────────────── ABA 4: Ranking por Agências (START) ───────────────────
 @register_tab("Ranking por Agências")
