@@ -117,27 +117,16 @@ def last_update_from_cols(df: pd.DataFrame) -> str:
 # ========= Estilos (3 cards por linha; cor só nos TOP 3) =========
 CARD_CSS = """
 <style>
-.cards-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
+.cards-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 @media (max-width: 1100px) { .cards-grid { grid-template-columns: repeat(2, minmax(0,1fr)); } }
 @media (max-width: 700px)  { .cards-grid { grid-template-columns: 1fr; } }
-
-.card {
-  border:1px solid #e9e9ee; border-radius:14px; padding:10px 12px;
-  background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.04);
-}
+.card { border:1px solid #e9e9ee; border-radius:14px; padding:10px 12px; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.04); }
 .card .title { font-weight:650; font-size:15px; margin-bottom:8px; }
-
-.goldcard   { background:#FFF9E5; border-color:#D4AF37; } /* ouro */
-.silvercard { background:#F7F7FA; border-color:#C0C0C0; } /* prata */
-.bronzecard { background:#FFF1E8; border-color:#CD7F32; } /* bronze */
-
+.goldcard   { background:#FFF9E5; border-color:#D4AF37; }
+.silvercard { background:#F7F7FA; border-color:#C0C0C0; }
+.bronzecard { background:#FFF1E8; border-color:#CD7F32; }
 .row  { display:flex; gap:8px; }
-.item { flex:1; display:flex; align-items:center; justify-content:space-between;
-        gap:8px; padding:8px 10px; border-radius:10px; border:1px solid #e3e3e8; background:#fafbfc; }
+.item { flex:1; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px; border-radius:10px; border:1px solid #e3e3e8; background:#fafbfc; }
 .pos  { font-weight:700; font-size:12px; opacity:.85; }
 .pct  { font-size:16px; font-weight:650; }
 </style>
@@ -158,7 +147,7 @@ def card_html(nome: str, p1: float, p2: float, p3: float, rank_cls: str = "") ->
         f"</div></div>"
     )
 
-# ========= Gráficos utilitários (sem use_container_width aqui) =========
+# ========= Gráficos utilitários =========
 def make_bar(df: pd.DataFrame, x_col: str, y_col: str, sort_y_desc: bool = True):
     d = df[[y_col, x_col]].copy()
     d[x_col] = pd.to_numeric(d[x_col], errors="coerce")
@@ -322,20 +311,24 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
             r = tuple(int(round(f[i] + (to[i]-f[i])*t)) for i in range(3))
             return f"#{r[0]:02x}{r[1]:02x}{r[2]:02x}"
 
+        # Cores base por coluna (paleta pedida)
         base_color_by_col = {
-            "Maxmilhas":    "#c7e9c0",  # verde
-            "123milhas":    "#fdd0a2",  # laranja
-            "FlipMilhas":   "#fee391",  # amarelo
-            "Capo Viagens": "#f1b6da",  # rosa
+            "preço top":     "#cfe3ff",  # AZUL → Preço Top 1/2/3
+            "123milhas":     "#fdd0a2",  # LARANJA
+            "maxmilhas":     "#c7e9c0",  # VERDE
+            "flipmilhas":    "#fee391",  # AMARELO
+            "capo viagens":  "#f1b6da",  # ROSA
+            "capoviagens":   "#f1b6da",  # ROSA (variação)
         }
-        default_base = "#d7e3f8"       # azul claro
+        default_base = "#cfe3ff"
 
         for c in grad_cols:
             if c not in df_show.columns:
                 continue
+            name = c.lower()
             base_hex = default_base
             for key, val in base_color_by_col.items():
-                if key.lower() in c.lower():
+                if key in name:
                     base_hex = val; break
 
             series = _pd.to_numeric(df_show[c], errors="coerce")
@@ -352,23 +345,18 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
                         out.append("")
                     else:
                         t = float((x - mn) / rng)
-                        t = max(0.0, min(1.0, t)) ** 0.6  # suaviza
+                        t = max(0.0, min(1.0, t)) ** 0.6
                         out.append(f"background-color: {_blend('#ffffff', base_hex, t)}")
                 return out
 
             sty = sty.apply(_col_styles, subset=[c])
 
-        # força branco em nulos
         sty = sty.applymap(lambda v: "background-color: #FFFFFF; color: #111111" if _is_null_like(v) else "")
-        # bordas sutis
-        sty = sty.set_table_styles([{
-            "selector": "tbody td, th",
-            "props": [("border", "1px solid #EEE")]
-        }])
+        sty = sty.set_table_styles([{"selector": "tbody td, th","props": [("border", "1px solid #EEE")]}])
         return sty
     # --------------------------------------------
 
-    # Constantes de display
+    # Constantes
     A_MAX, A_123, A_FLIP, A_CAPO = "MAXMILHAS", "123MILHAS", "FLIPMILHAS", "CAPOVIAGENS"
 
     # ============ Tabela 1 — Ranking Top 3 por Trecho (menor preço) ============
@@ -397,14 +385,17 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
         })
 
     t1 = by_ag.groupby("TRECHO").apply(_row_top3).reset_index(drop=True)
-    for c in ["Preço Top 1","Preço Top 2","Preço Top 3","123milhas","Maxmilhas","FlipMilhas","Capo Viagens"]:
-        t1[c] = _pd.to_numeric(t1[c], errors="coerce")
+
+    # >>> Preço sem casas decimais (mantém NA)
+    preco_cols = ["Preço Top 1","Preço Top 2","Preço Top 3","123milhas","Maxmilhas","FlipMilhas","Capo Viagens"]
+    for c in preco_cols:
+        t1[c] = _pd.to_numeric(t1[c], errors="coerce").round(0).astype("Int64")
+
     t1.index = _np.arange(1, len(t1) + 1); t1.index.name = "#"
 
     st.markdown("**Ranking Top 3 (Agências)**")
-    cols_preco_t1 = ["Preço Top 1","Preço Top 2","Preço Top 3","123milhas","Maxmilhas","FlipMilhas","Capo Viagens"]
-    fmt_map_t1    = {c: "{:,.0f}"}  # formata como inteiro PT-BR
-    sty1 = style_smart_colwise(t1, fmt_map_t1, grad_cols=cols_preco_t1)
+    fmt_map_t1 = {c: "{:,.0f}" for c in preco_cols}
+    sty1 = style_smart_colwise(t1, fmt_map_t1, grad_cols=preco_cols)
     st.dataframe(sty1, use_container_width=True)
 
     # ============ Tabela 2 — % Diferença (base: Top1) ============
@@ -484,12 +475,14 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
         })
 
     t3 = _pd.DataFrame(rows3)
+    # Inteiros também aqui
+    for c in [c for c in t3.columns if c.startswith("Preço ")]:
+        t3[c] = _pd.to_numeric(t3[c], errors="coerce").round(0).astype("Int64")
     t3.index = _np.arange(1, len(t3) + 1); t3.index.name = "#"
 
     st.markdown("**Comparativo Menor Preço Cia × Agências de Milhas**")
-    preco_cols_t3 = [c for c in t3.columns if c.startswith("Preço")] + ["Preço Menor Valor"]
-    preco_cols_t3 = list(dict.fromkeys(preco_cols_t3))
-    fmt_map_t3 = {c: "{:,.0f}"}  # inteiro PT-BR
+    preco_cols_t3 = [c for c in t3.columns if c.startswith("Preço ")]
+    fmt_map_t3 = {c: "{:,.0f}" for c in preco_cols_t3}
     sty3 = style_smart_colwise(t3, fmt_map_t3, grad_cols=preco_cols_t3)
     st.dataframe(sty3, use_container_width=True)
 
@@ -527,9 +520,11 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
     cols = st.columns(len(t))
     for i, (_,row) in enumerate(t.iterrows()):
         with cols[i]:
-            st.metric(f"{row['AGENCIA_NORM']} • {row['TRECHO']}",
-                      value=f"R$ {row['PRECO']:,.2f}".replace(",", "X").replace(".", ",").replace("X","."),  # PT-BR
-                      delta=f"{row['DATAHORA_BUSCA']:%d/%m/%Y}")
+            st.metric(
+                f"{row['AGENCIA_NORM']} • {row['TRECHO']}",
+                value=f"R$ {row['PRECO']:,.0f}".replace(",", "X").replace(".", ",").replace("X","."),
+                delta=f"{row['DATAHORA_BUSCA']:%d/%m/%Y}"
+            )
 
 def tab4_ranking_agencias(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t4")
