@@ -542,64 +542,36 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
 
 
 # ──────────────────── ABA: Top 3 Preços Mais Baratos (START) ─────────────────
-@register_tab("Top 3 Preços Mais Baratos")
+# ──────────────────── ABA: Top 3 Preços Mais Baratos (START) ─────────────────
 def tab3_top3_precos(df_raw: pd.DataFrame):
     """
-    Estilo Painel (cards em grid), mantendo:
-      - Pódio Top1/2/3 por (TRECHO → ADVP)
-      - Preço sem casas decimais (R$ X.XXX)
-      - Data (col. H: DATAHORA_BUSCA) + Hora (col. C: HORA_BUSCA → 'HH:MM:SS')
-    Função independente (helpers e CSS locais).
+    Requisitos:
+      - Usar a ÚLTIMA pesquisa (IDPESQUISA) depois dos filtros de data/hora
+      - Por TRECHO, mostrar colunas: ADVP 1 | 5 | 11 | 17 | 30
+      - Em cada ADVP: Top 1/2/3 (mesma pesquisa), com:
+          * Agência (e CIA do Top 1, se houver)
+          * Preço inteiro
+          * %: Top1 = % mais barato vs 2º; Top2/Top3 = % mais caro vs 1º
+      - Para 123MILHAS / MAXMILHAS:
+          * Se não apareceram no grupo: “Sem ofertas”
+          * Se apareceram fora do Top3: posição e % mais caro vs 1º
+    Independente (helpers e CSS locais).
     """
-    import re
     import numpy as _np
     import pandas as _pd
 
-    # ========= Filtros globais =========
-    df = render_filters(df_raw, key_prefix="t3")
-    st.subheader("Top 3 Preços Mais Baratos — estilo Painel")
-    if df.empty:
-        st.info("Sem dados para os filtros.")
-        return
-
-    # ========= CSS (baseado no Painel) =========
-    PODIO_CSS = """
-    <style>
-    .cards-grid { display:grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap:10px; }
-    @media (max-width:1100px){ .cards-grid { grid-template-columns: repeat(2, minmax(0,1fr)); } }
-    @media (max-width:700px){  .cards-grid { grid-template-columns: 1fr; } }
-
-    .card { border:1px solid #e9e9ee; border-radius:14px; padding:10px 12px; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.04); }
-    .card .title { font-weight:650; font-size:15px; margin-bottom:8px; }
-
-    .goldcard   { background:#FFF9E5; border-color:#D4AF37; } /* ouro   */
-    .silvercard { background:#F7F7FA; border-color:#C0C0C0; } /* prata  */
-    .bronzecard { background:#FFF1E8; border-color:#CD7F32; } /* bronze */
-
-    .row  { display:flex; gap:8px; flex-direction:column; }
-    .item { display:flex; align-items:center; gap:8px; padding:8px 10px; border-radius:10px; border:1px solid #e3e3e8; background:#fafbfc; }
-    .pos  { font-weight:900; font-size:12px; opacity:.85; min-width:22px; text-align:center; }
-    .mid  { display:flex; flex-direction:column; gap:2px; flex:1; min-width:0; }
-    .ag   { font-weight:750; font-size:13px; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    .sub  { font-size:11px; color:#64748b; }
-    .val  { font-size:16px; font-weight:800; color:#0f172a; white-space:nowrap; }
-    </style>
-    """
-    st.markdown(PODIO_CSS, unsafe_allow_html=True)
-
-    # ========= Helpers locais =========
+    # ====== helpers ======
     def parse_hora_text(val) -> str | None:
-        """Converte texto variado para 'HH:MM:SS'."""
         s = str(val).strip()
-        if s == "" or s.lower() in {"nan","none","null"}:
+        if s == "" or s.lower() in {"nan", "none", "null"}:
             return None
-        # tenta datetime completo (pega só hora)
+        # tenta datetime completo primeiro
         try:
             ts = _pd.to_datetime(s, dayfirst=True, errors="raise")
             return ts.strftime("%H:%M:%S")
         except Exception:
             pass
-        # fallback numérico: HH, HHMM, HHMMSS
+        # fallback: HH / HHMM / HHMMSS ou com :
         digs = "".join(ch for ch in s if ch.isdigit())
         h = m = sec = None
         try:
@@ -611,7 +583,6 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
                 h, m, sec = int(digs), 0, 0
         except Exception:
             pass
-        # tenta com separadores (: ou .)
         if h is None:
             parts = [p for p in s.replace(".", ":").split(":") if p]
             try:
@@ -625,90 +596,240 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
             return None
         return f"{h:02d}:{m:02d}:{sec:02d}"
 
+    def _advp_nearest(x) -> int:
+        try:
+            v = float(str(x).replace(",", "."))
+        except Exception:
+            v = _np.nan
+        if _pd.isna(v):
+            v = 1
+        return min([1,5,11,17,30], key=lambda k: abs(v-k))
+
     def fmt_moeda_br(x) -> str:
         try:
             xv = float(x)
-            if not _np.isfinite(xv):
-                return "R$ -"
+            if not _np.isfinite(xv): return "R$ -"
             return "R$ " + f"{xv:,.0f}".replace(",", ".")
         except Exception:
             return "R$ -"
 
-    def _advp_key(v):
-        m = re.search(r"\d+", str(v))
-        return (0, int(m.group())) if m else (1, str(v))
+    def pct(x):  # formata com sinal e % inteiro
+        try:
+            v = float(x)
+            if not _np.isfinite(v): return "—"
+            s = "+" if v > 0 else ""
+            return f"{s}{round(v):.0f}%"
+        except Exception:
+            return "—"
 
-    # ========= Normalização mínima =========
-    advp_col = "ADVP_CANON" if "ADVP_CANON" in df.columns else "ADVP"
-    need = ["TRECHO", advp_col, "AGENCIA_NORM", "PRECO", "DATAHORA_BUSCA"]
-    miss = [c for c in need if c not in df.columns]
-    if miss:
-        st.error("Faltam colunas: " + ", ".join(miss))
-        return
+    # ====== filtros globais ======
+    df = render_filters(df_raw, key_prefix="t3")
+    st.subheader("Top 3 Preços Mais Baratos — Última Pesquisa (por filtros)")
 
-    base = df[["TRECHO", advp_col, "AGENCIA_NORM", "PRECO", "DATAHORA_BUSCA", "HORA_BUSCA"]].copy()
-    base["PRECO"] = _pd.to_numeric(base["PRECO"], errors="coerce")
-    base = base[base["PRECO"].notna()]
-    base["DATAHORA_BUSCA"] = _pd.to_datetime(base["DATAHORA_BUSCA"], errors="coerce")
-    base["HORA_NORM"] = base["HORA_BUSCA"].apply(parse_hora_text) if "HORA_BUSCA" in base.columns else None
+    if df.empty:
+        st.info("Sem dados para os filtros."); return
 
-    if base.empty:
-        st.info("Sem preços válidos no recorte atual.")
-        return
+    # ====== normalização mínima ======
+    # hora (coluna C) normalizada
+    if "HORA_BUSCA" in df.columns:
+        df = df.copy()
+        df["HORA_NORM"] = df["HORA_BUSCA"].apply(parse_hora_text)
+    else:
+        df["HORA_NORM"] = None
 
-    # ========= Núcleo vetorizado =========
-    # (1) Para cada (TRECHO, ADVP, AGENCIA): menor PRECO; em empate, data/hora mais recente.
-    sort_cols = ["TRECHO", advp_col, "AGENCIA_NORM", "PRECO", "DATAHORA_BUSCA", "HORA_NORM"]
-    best_ag = (base.sort_values(sort_cols, ascending=[True, True, True, True, False, False])
-                    .drop_duplicates(subset=["TRECHO", advp_col, "AGENCIA_NORM"], keep="first"))
+    # data (coluna H) para ordering
+    if "DATAHORA_BUSCA" in df.columns:
+        df["DATAHORA_BUSCA"] = _pd.to_datetime(df["DATAHORA_BUSCA"], errors="coerce")
+    else:
+        st.error("Coluna 'DATAHORA_BUSCA' não encontrada."); return
 
-    # (2) Ranking por (TRECHO, ADVP)
+    # IDPESQUISA para fixar "a mesma pesquisa"
+    if "IDPESQUISA" not in df.columns:
+        st.error("Coluna 'IDPESQUISA' não encontrada."); return
+
+    # ADVP_CANON (se não existir, cria)
+    advp_col = "ADVP_CANON" if "ADVP_CANON" in df.columns else None
+    if not advp_col:
+        if "ADVP" not in df.columns:
+            st.error("Colunas 'ADVP_CANON' ou 'ADVP' não encontradas."); return
+        df["ADVP_CANON"] = df["ADVP"].apply(_advp_nearest)
+        advp_col = "ADVP_CANON"
+
+    # preço numérico
+    df["PRECO"] = _pd.to_numeric(df["PRECO"], errors="coerce")
+    df = df[df["PRECO"].notna()]
+    if df.empty:
+        st.info("Sem preços válidos no recorte atual."); return
+
+    # ====== escolher a ÚLTIMA pesquisa (dentro dos filtros) ======
+    # regra: maior DATAHORA_BUSCA; em empate, maior HORA_NORM; pega o IDPESQUISA dessa linha.
+    df["_H_"] = _pd.to_datetime(df["HORA_NORM"], format="%H:%M:%S", errors="coerce")
+    df_sorted = df.sort_values(["DATAHORA_BUSCA", "_H_"], ascending=[True, True])
+    last_row = df_sorted.iloc[-1]
+    last_id  = last_row["IDPESQUISA"]
+    last_dt  = last_row["DATAHORA_BUSCA"]
+    last_h   = last_row["HORA_NORM"] if _pd.notna(last_row["HORA_NORM"]) else ""
+
+    st.markdown(
+        f"<div style='font-size:13px;opacity:.85;margin-top:-6px;'>"
+        f"Última pesquisa (após filtros): <b>{last_dt:%d/%m/%Y}</b> — <b>{last_h or '—:—:—'}</b> &nbsp; "
+        f"(ID <code>{str(last_id)}</code>)"
+        f"</div>", unsafe_allow_html=True
+    )
+    st.markdown("<hr style='margin:6px 0'>", unsafe_allow_html=True)
+
+    # restringe à última pesquisa
+    dfl = df[df["IDPESQUISA"] == last_id].copy()
+    if dfl.empty:
+        st.info("A última pesquisa não possui ofertas dentro dos filtros."); return
+
+    # garantir AGENCIA_NORM e CIA
+    if "AGENCIA_NORM" not in dfl.columns:
+        st.error("Coluna 'AGENCIA_NORM' não encontrada."); return
+    if "CIA" not in dfl.columns:
+        dfl["CIA"] = _pd.NA  # segue sem CIA se não existir
+
+    # manter apenas ADVPs solicitados
+    ADVPS = [1,5,11,17,30]
+    dfl = dfl[dfl[advp_col].isin(ADVPS)]
+    if dfl.empty:
+        st.info("A última pesquisa não possui ofertas para ADVP 1/5/11/17/30."); return
+
+    # ====== escolher para cada (TRECHO, ADVP, AGENCIA) a melhor linha (menor preço; em empate, data/hora mais recente) ======
+    sort_cols = ["TRECHO", advp_col, "AGENCIA_NORM", "PRECO", "DATAHORA_BUSCA", "_H_"]
+    best_ag = (dfl.sort_values(sort_cols, ascending=[True, True, True, True, False, False])
+                  .drop_duplicates(subset=["TRECHO", advp_col, "AGENCIA_NORM"], keep="first"))
+
+    # ranking por (TRECHO, ADVP)
     best_ag = best_ag.sort_values(["TRECHO", advp_col, "PRECO", "DATAHORA_BUSCA"], ascending=[True, True, True, False])
     best_ag["RANK"] = best_ag.groupby(["TRECHO", advp_col]).cumcount() + 1
 
-    # (3) Seleciona Top3 e monta label dd/mm HH:MM:SS
-    top3 = best_ag[best_ag["RANK"] <= 3].copy()
-    top3["DT_LABEL"] = top3["DATAHORA_BUSCA"].dt.strftime("%d/%m").fillna("")
-    top3["HORA_NORM"] = top3["HORA_NORM"].fillna("")
-    top3["DT_HORA"] = (top3["DT_LABEL"] + " " + top3["HORA_NORM"]).str.strip()
+    # util: pegar top3 e também posição/percentual para marcas específicas
+    def resumo_grupo(g: _pd.DataFrame) -> dict:
+        g = g.sort_values("PRECO", ascending=True).reset_index(drop=True)
+        out = {"top": [], "extras": {}}
+        # Top 3
+        p1 = _np.nan
+        if len(g) >= 1: p1 = float(g.loc[0, "PRECO"])
+        p2 = float(g.loc[1, "PRECO"]) if len(g) >= 2 else _np.nan
 
-    if top3.empty:
-        st.info("Não há pódios para exibir.")
-        return
+        for i in range(min(3, len(g))):
+            r = g.loc[i]
+            ag = str(r["AGENCIA_NORM"])
+            cia = (str(r["CIA"]) if _pd.notna(r["CIA"]) else "-")
+            pr = float(r["PRECO"])
+            if i == 0:
+                # % de menor valor vs 2º
+                mm = ((p2 - pr) / p2 * 100.0) if (_np.isfinite(p2) and p2 > 0) else _np.nan
+                pct_txt = pct(mm)
+                out["top"].append({"rank": 1, "ag": ag, "cia": cia, "preco": pr, "pct": pct_txt, "label": "↓ vs 2º"})
+            else:
+                # % mais caro vs 1º
+                mm = ((pr - p1) / p1 * 100.0) if (_np.isfinite(p1) and p1 > 0) else _np.nan
+                pct_txt = pct(mm)
+                out["top"].append({"rank": i+1, "ag": ag, "cia": cia if i==0 else "-", "preco": pr, "pct": pct_txt, "label": "↑ vs 1º"})
 
-    # Ordena cartões pelo menor Top1 (mais interessante primeiro)
-    order_helper = (top3[top3["RANK"] == 1]
-                    .sort_values(["PRECO", "DATAHORA_BUSCA"], ascending=[True, False])
-                    [["TRECHO", advp_col]])
-    keys = list(order_helper.itertuples(index=False, name=None))
+        # extras: 123MILHAS e MAXMILHAS
+        for brand in ("123MILHAS", "MAXMILHAS"):
+            pos = _np.nan; prb = _np.nan
+            if not g.empty:
+                mask = g["AGENCIA_NORM"].astype(str).str.upper().eq(brand)
+                if mask.any():
+                    ix = int(_np.where(mask)[0][0])
+                    pos = ix + 1
+                    prb = float(g.loc[ix, "PRECO"])
+            if _np.isnan(pos):
+                out["extras"][brand] = {"status": "Sem ofertas"}
+            elif pos <= 3:
+                out["extras"][brand] = {"status": "Top3"}  # não imprimir
+            else:
+                mm = ((prb - p1) / p1 * 100.0) if (_np.isfinite(p1) and p1 > 0) else _np.nan
+                out["extras"][brand] = {"status": "ForaTop3", "pos": int(pos), "pct": pct(mm)}
+        return out
 
-    # ========= Card HTML =========
-    def podio_card_html(trecho: str, advp, rows: _pd.DataFrame, card_rank_cls: str = "") -> str:
-        title = f"{trecho} • ADVP {advp}"
-        rows = rows.sort_values("RANK")
-        items = []
-        for _, r in rows.iterrows():
-            items.append(
-                "<div class='item'>"
-                f"<span class='pos'>{int(r['RANK'])}º</span>"
-                "<div class='mid'>"
-                f"<div class='ag'>{str(r['AGENCIA_NORM'])}</div>"
-                f"<div class='sub'>{str(r['DT_HORA'])}</div>"
-                "</div>"
-                f"<span class='val'>{fmt_moeda_br(r['PRECO'])}</span>"
+    # ====== CSS de layout (linha por TRECHO; 5 colunas de ADVP) ======
+    CSS = """
+    <style>
+      .trecho { margin: 14px 0 12px 0; padding: 10px 12px; border-left:4px solid #0B5FFF; background:#ECF3FF; border-radius:8px; font-weight:800; color:#0A2A6B; }
+      .advp-grid { display:grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap:10px; }
+      @media (max-width:1200px){ .advp-grid { grid-template-columns: repeat(3, minmax(0,1fr)); } }
+      @media (max-width:780px){  .advp-grid { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+      @media (max-width:560px){  .advp-grid { grid-template-columns: 1fr; } }
+
+      .card { border:1px solid #e9e9ee; border-radius:14px; padding:10px 12px; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.04); min-height:120px; }
+      .head { font-weight:700; font-size:13px; margin-bottom:8px; }
+      .row  { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:10px; border:1px solid #e3e3e8; background:#fafbfc; margin-bottom:6px; }
+      .pos  { font-weight:900; font-size:12px; opacity:.85; min-width:22px; text-align:center; }
+      .mid  { display:flex; flex-direction:column; gap:2px; flex:1; min-width:0; }
+      .ag   { font-weight:750; font-size:13px; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .sub  { font-size:11px; color:#64748b; }
+      .val  { font-size:16px; font-weight:800; color:#0f172a; white-space:nowrap; }
+      .foot { font-size:11px; color:#475569; margin-top:6px; display:flex; gap:6px; flex-wrap:wrap; }
+      .chip { background:#f1f5f9; border:1px solid #e2e8f0; border-radius:10px; padding:2px 6px; font-weight:700; }
+      .muted{ color:#94a3b8; }
+    </style>
+    """
+    st.markdown(CSS, unsafe_allow_html=True)
+
+    # ====== render por TRECHO ======
+    trechos = dfl["TRECHO"].dropna().astype(str).unique().tolist()
+    trechos = sorted(trechos, key=lambda x: x)
+
+    for trecho in trechos:
+        st.markdown(f"<div class='trecho'>Trecho: <b>{trecho}</b></div>", unsafe_allow_html=True)
+
+        # grid de 5 ADVP fixos
+        cols_html = []
+        for advp in [1,5,11,17,30]:
+            g = best_ag[(best_ag["TRECHO"].astype(str) == trecho) & (best_ag[advp_col] == advp)].copy()
+            if g.empty:
+                cols_html.append(
+                    "<div class='card'>"
+                    f"<div class='head'>ADVP {advp}</div>"
+                    "<div class='row muted'><span class='pos'>—</span><div class='mid'><div class='ag'>Sem ofertas</div></div></div>"
+                    "</div>"
+                )
+                continue
+
+            res = resumo_grupo(g)
+
+            # monta linhas Top 1/2/3
+            rows = []
+            for entry in res["top"]:
+                rnk = entry["rank"]; ag = entry["ag"]; cia = entry["cia"]; pr = entry["preco"]
+                sub = (f"{cia}" if (cia and cia != "-" and rnk==1) else "")  # CIA só do Top1, quando existir
+                label = entry["label"]; ptxt = entry["pct"]
+                subtxt = (f"{label}: {ptxt}" if ptxt != "—" else label)
+                rows.append(
+                    "<div class='row'>"
+                    f"<span class='pos'>{rnk}º</span>"
+                    "<div class='mid'>"
+                    f"<div class='ag'>{ag}</div>"
+                    f"<div class='sub'>{subtxt}{(' • ' + sub) if sub else ''}</div>"
+                    "</div>"
+                    f"<span class='val'>{fmt_moeda_br(pr)}</span>"
+                    "</div>"
+                )
+
+            # extras 123/Max
+            chips = []
+            for brand in ("123MILHAS", "MAXMILHAS"):
+                info = res["extras"].get(brand, {"status": "Sem ofertas"})
+                if info["status"] == "Sem ofertas":
+                    chips.append(f"<span class='chip'>{brand}: Sem ofertas</span>")
+                elif info["status"] == "ForaTop3":
+                    chips.append(f"<span class='chip'>{brand}: {info['pos']}º • +{info['pct'].lstrip('+')}</span>")
+                # se Top3, não mostra chip
+
+            cols_html.append(
+                "<div class='card'>"
+                f"<div class='head'>ADVP {advp}</div>"
+                + "".join(rows) +
+                (f"<div class='foot'>{''.join(chips)}</div>" if chips else "") +
                 "</div>"
             )
-        cls = f"card {card_rank_cls}".strip()
-        return f"<div class='{cls}'><div class='title'>{title}</div><div class='row'>{''.join(items)}</div></div>"
 
-    # ========= Render (grid igual ao Painel) =========
-    cards = []
-    for idx, (trecho, advp) in enumerate(keys):
-        bloc = top3[(top3["TRECHO"] == trecho) & (top3[advp_col] == advp)]
-        rank_cls = "goldcard" if idx == 0 else ("silvercard" if idx == 1 else ("bronzecard" if idx == 2 else ""))
-        cards.append(podio_card_html(str(trecho), advp, bloc, rank_cls))
-
-    st.markdown(f"<div class='cards-grid'>{''.join(cards)}</div>", unsafe_allow_html=True)
+        st.markdown("<div class='advp-grid'>" + "".join(cols_html) + "</div>", unsafe_allow_html=True)
 # ───────────────────── ABA: Top 3 Preços Mais Baratos (END) ──────────────────
 
 # ───────────────────────── ABA: Ranking por Agências (START) ──────────────────
