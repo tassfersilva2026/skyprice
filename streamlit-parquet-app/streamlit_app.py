@@ -288,6 +288,7 @@ def tab1_painel(df_raw: pd.DataFrame):
 
 
 # ──────────────────────── ABA: Top 3 Agências (START) ────────────────────────
+# ──────────────────────── ABA: Top 3 Agências (START) ────────────────────────
 @register_tab("Top 3 Agências")
 def tab2_top3_agencias(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t2")
@@ -299,12 +300,42 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
     import numpy as _np
     import pandas as _pd
 
-    # ---- Helpers de estilo sem matplotlib ----
-    def _is_null_like(v) -> bool:
-        if v is None: return True
-        if isinstance(v, float) and _np.isnan(v): return True
-        if isinstance(v, str) and v.strip().lower() in {"none", "nan", ""}: return True
-        return False
+    # ---- Helpers de estilo sem matplotlib (cores fixas por coluna) ----
+    BLUE   = "#cfe3ff"  # Preços Top 1/2/3
+    ORANGE = "#fdd0a2"  # 123milhas
+    GREEN  = "#c7e9c0"  # Maxmilhas
+    YELLOW = "#fee391"  # FlipMilhas
+    PINK   = "#f1b6da"  # Capo Viagens/Capoviagens
+
+    def _norm(s: str) -> str:
+        return str(s).strip().casefold()
+
+    # nomes normalizados -> cor
+    _COLOR_BY_NAME = {
+        _norm("Preço Top 1"): BLUE,
+        _norm("Preço Top 2"): BLUE,
+        _norm("Preço Top 3"): BLUE,
+        _norm("123milhas"):   ORANGE,
+        _norm("Maxmilhas"):   GREEN,
+        _norm("FlipMilhas"):  YELLOW,
+        _norm("Capo Viagens"):PINK,
+        _norm("Capoviagens"): PINK,  # variação
+    }
+
+    def _base_color_for(col_name: str) -> str:
+        n = _norm(col_name)
+        if n in _COLOR_BY_NAME:
+            return _COLOR_BY_NAME[n]
+        # fallback: qualquer coisa que comece com "preço top" fica azul
+        if n.startswith(_norm("Preço Top")):
+            return BLUE
+        return BLUE
+
+    def _blend(hex_from: str, hex_to: str, t: float) -> str:
+        f = tuple(int(hex_from[i:i+2], 16) for i in (1,3,5))
+        to = tuple(int(hex_to[i:i+2], 16) for i in (1,3,5))
+        r = tuple(int(round(f[i] + (to[i]-f[i])*t)) for i in range(3))
+        return f"#{r[0]:02x}{r[1]:02x}{r[2]:02x}"
 
     def style_smart_colwise(df_show: _pd.DataFrame, fmt_map: dict, grad_cols: list[str]):
         sty = df_show.style
@@ -312,36 +343,15 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
         if fmt_map:
             sty = sty.format(fmt_map, na_rep="-", decimal=",", thousands=".")
 
-        def _blend(hex_from: str, hex_to: str, t: float) -> str:
-            f = tuple(int(hex_from[i:i+2], 16) for i in (1,3,5))
-            to = tuple(int(hex_to[i:i+2], 16) for i in (1,3,5))
-            r = tuple(int(round(f[i] + (to[i]-f[i])*t)) for i in range(3))
-            return f"#{r[0]:02x}{r[1]:02x}{r[2]:02x}"
-
-        base_color_by_col = {
-            "preço top":     "#cfe3ff",  # AZUL (Top1/2/3)
-            "123milhas":     "#fdd0a2",  # LARANJA
-            "maxmilhas":     "#c7e9c0",  # VERDE
-            "flipmilhas":    "#fee391",  # AMARELO
-            "capo viagens":  "#f1b6da",  # ROSA
-            "capoviagens":   "#f1b6da",  # ROSA (variação)
-        }
-        default_base = "#cfe3ff"
-
         for c in grad_cols:
-            if c not in df_show.columns: 
+            if c not in df_show.columns:
                 continue
-            name = c.lower()
-            base_hex = default_base
-            for key, val in base_color_by_col.items():
-                if key in name:
-                    base_hex = val; break
-
+            base_hex = _base_color_for(c)
             series = _pd.to_numeric(df_show[c], errors="coerce")
             mn, mx = series.min(skipna=True), series.max(skipna=True)
             if _pd.isna(mn) or _pd.isna(mx) or mn == mx:
                 continue
-            rng = (mx - mn) if (mx - mn) != 0 else 1.0
+            rng = (mx - mn) or 1.0
 
             def _col_styles(col):
                 out = []
@@ -350,14 +360,17 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
                     if _pd.isna(x):
                         out.append("")
                     else:
-                        t = float((x - mn) / rng)
-                        t = max(0.0, min(1.0, t)) ** 0.6
-                        out.append(f"background-color: {_blend('#ffffff', base_hex, t)}")
+                        # intensidade do claro -> forte
+                        t = max(0.0, min(1.0, float((x - mn) / rng))) ** 0.6
+                        out.append(f"background-color: {_blend('#ffffff', base_hex, t)} !important")
                 return out
 
             sty = sty.apply(_col_styles, subset=[c])
 
-        sty = sty.applymap(lambda v: "background-color: #FFFFFF; color: #111111" if _is_null_like(v) else "")
+        # nulos: branco forçado
+        sty = sty.applymap(lambda v: "background-color: #FFFFFF !important; color: #111111" 
+                           if (v is None or (isinstance(v, float) and _np.isnan(v))) else "")
+        # bordas
         sty = sty.set_table_styles([{"selector": "tbody td, th","props": [("border", "1px solid #EEE")]}])
         return sty
 
@@ -390,9 +403,12 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
         })
 
     t1 = by_ag.groupby("TRECHO").apply(_row_top3).reset_index(drop=True)
+
+    # preços como inteiros (0 casas), preservando NA
     preco_cols = ["Preço Top 1","Preço Top 2","Preço Top 3","123milhas","Maxmilhas","FlipMilhas","Capo Viagens"]
     for c in preco_cols:
         t1[c] = _pd.to_numeric(t1[c], errors="coerce").round(0).astype("Int64")
+
     t1.index = _np.arange(1, len(t1) + 1); t1.index.name = "#"
 
     st.markdown("**Ranking Top 3 (Agências)**")
@@ -410,14 +426,10 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
     for _, r in t1.reset_index().iterrows():
         base = r["Preço Top 1"]
         rows2.append({
-            "#": r["#"],
-            "Trecho": r["Trecho"],
-            "Agencia Top 1": r["Agencia Top 1"],
-            "Preço Top 1": r["Preço Top 1"],
-            "Agencia Top 2": r["Agencia Top 2"],
-            "% Dif Top2 vs Top1": pct_diff(base, r["Preço Top 2"]),
-            "Agencia Top 3": r["Agencia Top 3"],
-            "% Dif Top3 vs Top1": pct_diff(base, r["Preço Top 3"]),
+            "#": r["#"], "Trecho": r["Trecho"],
+            "Agencia Top 1": r["Agencia Top 1"], "Preço Top 1": r["Preço Top 1"],
+            "Agencia Top 2": r["Agencia Top 2"], "% Dif Top2 vs Top1": pct_diff(base, r["Preço Top 2"]),
+            "Agencia Top 3": r["Agencia Top 3"], "% Dif Top3 vs Top1": pct_diff(base, r["Preço Top 3"]),
             "123milhas": pct_diff(base, r["123milhas"]),
             "Maxmilhas": pct_diff(base, r["Maxmilhas"]),
             "FlipMilhas": pct_diff(base, r["FlipMilhas"]),
@@ -428,19 +440,16 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
     st.markdown("**% Diferença entre Agências (base: Top 1)**")
     pct_cols   = ["% Dif Top2 vs Top1","% Dif Top3 vs Top1","123milhas","Maxmilhas","FlipMilhas","Capo Viagens"]
     fmt_map_t2 = {"Preço Top 1": "{:,.0f}"} | {c: "{:.2f}%" for c in pct_cols}
-    grad_cols  = ["Preço Top 1"] + pct_cols
-    sty2 = style_smart_colwise(t2, fmt_map_t2, grad_cols=grad_cols)
+    sty2 = style_smart_colwise(t2, fmt_map_t2, grad_cols=["Preço Top 1"] + pct_cols)
     st.dataframe(sty2, use_container_width=True)
 
-    # ---- Tabelas 3/4: Comparativo com Cia (se existir 'CIA') ----
+    # ---- Tabelas 3/4: com CIA (se existir) ----
     if "CIA" not in df.columns:
         st.info("Coluna de Cia Aérea ('CIA') não encontrada. As tabelas 3/4 dependem dela.")
         return
 
-    by_air = (
-        df.groupby(["TRECHO","CIA"], as_index=False)
-          .agg(PRECO_AIR_MIN=("PRECO", "min"))
-    )
+    by_air = (df.groupby(["TRECHO","CIA"], as_index=False)
+                .agg(PRECO_AIR_MIN=("PRECO", "min")))
     idx = by_air.groupby("TRECHO")["PRECO_AIR_MIN"].idxmin()
     min_air = by_air.loc[idx, ["TRECHO", "CIA", "PRECO_AIR_MIN"]] \
                     .rename(columns={"CIA": "Cia Menor Preço", "PRECO_AIR_MIN": "Preço Menor Valor"})
@@ -454,10 +463,10 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
 
     rows3 = []
     for trecho, sub in df.groupby("TRECHO"):
-        p123, c123   = best_ag(sub, A_123)
-        pmax, cmax   = best_ag(sub, A_MAX)
-        pflip, cflip = best_ag(sub, A_FLIP)
-        pcapo, ccapo = best_ag(sub, A_CAPO)
+        p123, c123   = best_ag(sub, "123MILHAS")
+        pmax, cmax   = best_ag(sub, "MAXMILHAS")
+        pflip, cflip = best_ag(sub, "FLIPMILHAS")
+        pcapo, ccapo = best_ag(sub, "CAPOVIAGENS")
 
         base = min_air[min_air["TRECHO"] == trecho]
         if base.empty:
@@ -507,9 +516,10 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
     st.markdown("**%Comparativo Menor Preço Cia × Agências de Milhas**")
     pct_cols_t4 = [c for c in t4.columns if c.startswith("% Dif ")]
     fmt_map_t4  = {"Preço Menor Valor": "{:,.0f}"} | {c: "{:.2f}%" for c in pct_cols_t4}
-    grad_cols_t4 = ["Preço Menor Valor"] + pct_cols_t4
-    sty4 = style_smart_colwise(t4, fmt_map_t4, grad_cols=grad_cols_t4)
+    sty4 = style_smart_colwise(t4, fmt_map_t4, grad_cols=["Preço Menor Valor"] + pct_cols_t4)
     st.dataframe(sty4, use_container_width=True)
+# ───────────────────────── ABA: Top 3 Agências (END) ─────────────────────────
+
 # ───────────────────────── ABA: Top 3 Agências (END) ─────────────────────────
 
 
