@@ -542,318 +542,231 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
 
 
 # ──────────────────── ABA: Top 3 Preços Mais Baratos (START) ─────────────────
+# ──────────────────── ABA: Top 3 Preços Mais Baratos (START) ─────────────────
 @register_tab("Top 3 Preços Mais Baratos")
 def tab3_top3_precos(df_raw: pd.DataFrame):
     """
-    Pódio por Trecho → ADVP
-    - Preço sem casas decimais
-    - Cards 1º/2º/3º por Trecho×ADVP
-    - Badge com ID da pesquisa e data+hora (data = col. H, hora = col. C normalizada)
-    - Independente do resto (faz parsing de HORA_BUSCA aqui mesmo)
+    Pódio por Trecho → ADVP (sempre na MESMA pesquisa):
+      - Seleciona a ÚLTIMA pesquisa (IDPESQUISA) após os filtros (data/hora)
+      - Para cada Trecho e ADVP: Top 1/2/3 daquela MESMA pesquisa
+      - Preço sem casas, %: Top1 = −% vs 2º | Top2/3 = +% vs 1º
+      - Chips “123MILHAS/MAXMILHAS” quando ausentes do Top3
     """
     import re
     import numpy as _np
     import pandas as _pd
 
-    # ====== Filtros globais do app ======
+    # ====== Filtros do app ======
     df = render_filters(df_raw, key_prefix="t3")
-    st.subheader("Pódio por Trecho → ADVP")
+    st.subheader("Pódio por Trecho → ADVP (última pesquisa)")
     if df.empty:
-        st.info("Sem dados para os filtros.")
-        return
+        st.info("Sem dados para os filtros."); return
 
-    # ====== UI fina da aba ======
-    c1, c2, c3 = st.columns([0.28, 0.18, 0.54])
-    agencias_known = ["Todos", "123MILHAS", "MAXMILHAS"]
-    agencia_foco   = c1.selectbox("Agência alvo", agencias_known, index=0)
-    posicao_foco   = c2.selectbox("Ranking", ["Todas", 1, 2, 3], index=0)
-    c3.caption("Agrupamento"); c3.write("Todos os registros filtrados")
+    # ====== UI simples (opcional) ======
+    c1, c2, _ = st.columns([0.28, 0.18, 0.54])
+    agencia_foco = c1.selectbox("Agência alvo", ["Todos", "123MILHAS", "MAXMILHAS"], index=0)
+    posicao_foco = c2.selectbox("Ranking", ["Todas", 1, 2, 3], index=0)
 
     # ====== Helpers ======
-    def _canon(s: str) -> str:
-        return re.sub(r"[^A-Z0-9]+", "", str(s).upper())
-
-    def _brand_tag(s: str) -> str | None:
-        cs = _canon(s)
-        if cs.startswith("123MILHAS") or cs == "123":
-            return "123MILHAS"
-        if cs.startswith("MAXMILHAS") or cs == "MAX":
-            return "MAXMILHAS"
-        return None
-
-    def fmt_moeda_br(x) -> str:
+    def fmt_moeda_br(x): 
         try:
             xv = float(x)
             if not _np.isfinite(xv): return "R$ -"
             return "R$ " + f"{xv:,.0f}".replace(",", ".")
-        except Exception:
-            return "R$ -"
+        except: return "R$ -"
 
-    def fmt_pct_plus(x) -> str:
+    def fmt_pct_plus(x):
         try:
             v = float(x)
             if not _np.isfinite(v): return "—"
             return f"+{round(v):.0f}%"
-        except Exception:
-            return "—"
+        except: return "—"
 
-    def _normalize_id(val) -> str | None:
-        if val is None or (isinstance(val, float) and _np.isnan(val)): return None
-        s = str(val)
-        try:
-            f = float(s.replace(",", "."))
-            if f.is_integer(): return str(int(f))
-        except Exception:
-            pass
-        return s
+    def _canon(s: str) -> str: return re.sub(r"[^A-Z0-9]+", "", str(s).upper())
+    def _brand_tag(s: str) -> str | None:
+        cs = _canon(s)
+        if cs.startswith("123MILHAS") or cs == "123": return "123MILHAS"
+        if cs.startswith("MAXMILHAS") or cs == "MAX":  return "MAXMILHAS"
+        return None
 
-    # --- Parser robusto para HORA_BUSCA (coluna C) → "HH:MM:SS"
     def parse_hora_text(val) -> str | None:
         s = str(val).strip()
-        if s == "" or s.lower() in {"nan", "none", "null"}:
-            return None
-        # tenta datetime completo primeiro
+        if s == "" or s.lower() in {"nan", "none", "null"}: return None
         try:
             ts = _pd.to_datetime(s, dayfirst=True, errors="raise")
             return ts.strftime("%H:%M:%S")
-        except Exception:
-            pass
-        # limpa só dígitos
+        except: pass
         digs = "".join(ch for ch in s if ch.isdigit())
         h = m = sec = None
         try:
-            if len(digs) >= 6:      # HHMMSS (pega os 6 últimos)
-                h, m, sec = int(digs[-6:-4]), int(digs[-4:-2]), int(digs[-2:])
-            elif len(digs) == 4:    # HHMM
-                h, m, sec = int(digs[:2]), int(digs[2:4]), 0
-            elif len(digs) in (1,2):# H / HH
-                h, m, sec = int(digs), 0, 0
-        except Exception:
-            pass
-        # tenta formatos com ':' ou '.'
+            if len(digs) >= 6:   h, m, sec = int(digs[-6:-4]), int(digs[-4:-2]), int(digs[-2:])
+            elif len(digs) == 4: h, m, sec = int(digs[:2]),    int(digs[2:4]),    0
+            elif len(digs) in (1,2): h, m, sec = int(digs), 0, 0
+        except: pass
         if h is None:
-            parts = [p for p in s.replace(".", ":").split(":") if p != ""]
+            parts = [p for p in s.replace(".", ":").split(":") if p]
             try:
-                if len(parts) == 2:
-                    h, m, sec = int(parts[0]), int(parts[1]), 0
-                elif len(parts) == 3:
-                    h, m, sec = int(parts[0]), int(parts[1]), int(parts[2])
-            except Exception:
-                return None
-        if not (0 <= h <= 23 and 0 <= m <= 59 and 0 <= sec <= 59):
-            return None
+                if len(parts) == 2: h, m, sec = int(parts[0]), int(parts[1]), 0
+                elif len(parts) == 3: h, m, sec = int(parts[0]), int(parts[1]), int(parts[2])
+            except: return None
+        if not (0 <= h <= 23 and 0 <= m <= 59 and 0 <= sec <= 59): return None
         return f"{h:02d}:{m:02d}:{sec:02d}"
 
-    # ====== Layout (CSS) ======
-    GRID_STYLE    = "display:grid;grid-auto-flow:column;grid-auto-columns:260px;gap:10px;overflow-x:auto;padding:6px 2px 10px 2px;scrollbar-width:thin;"
-    BOX_STYLE     = "border:1px solid #e5e7eb;border-radius:12px;background:#fff;"
-    HEAD_STYLE    = "padding:8px 10px;border-bottom:1px solid #f1f5f9;font-weight:700;color:#111827;"
-    STACK_STYLE   = "display:grid;gap:8px;padding:8px;"
-    CARD_BASE     = "position:relative;border:1px solid #e5e7eb;border-radius:10px;padding:8px;background:#fff;min-height:78px;"
-    DT_WRAP_STYLE = "position:absolute;right:8px;top:6px;display:flex;align-items:center;gap:6px;"
-    DT_TXT_STYLE  = "font-size:10px;color:#94a3b8;font-weight:800;"
-    RANK_STYLE    = "font-weight:900;font-size:11px;color:#6b7280;letter-spacing:.3px;text-transform:uppercase;"
-    AG_STYLE      = "font-weight:800;font-size:15px;color:#111827;margin-top:2px;"
-    PR_STYLE      = "font-weight:900;font-size:18px;color:#111827;margin-top:2px;"
-    SUB_STYLE     = "font-weight:700;font-size:12px;color:#374151;"
-    NO_STYLE      = "padding:22px 12px;color:#6b7280;font-weight:800;text-align:center;border:1px dashed #e5e7eb;border-radius:10px;background:#fafafa;"
-    TRE_HDR_STYLE = "margin:14px 0 10px 0;padding:10px 12px;border-left:4px solid #0B5FFF;background:#ECF3FF;border-radius:8px;font-weight:800;color:#0A2A6B;"
-    EXTRAS_STYLE  = "border-top:1px dashed #e5e7eb;margin:6px 8px 8px 8px;padding-top:6px;display:flex;gap:6px;flex-wrap:wrap;"
-    CHIP_STYLE    = "background:#f3f4f6;border:1px solid #e5e7eb;border-radius:10px;padding:2px 6px;font-weight:700;font-size:11px;color:#111827;white-space:nowrap;line-height:1.1;"
-
-    BADGE_POP_CSS = """
-    <style>
-    .idp-wrap{position:relative; display:inline-flex; align-items:center;}
-    .idp-badge{display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; border:1px solid #cbd5e1; border-radius:50%; font-size:11px; font-weight:900; color:#64748b; background:#fff; user-select:none; cursor:default; line-height:1;}
-    .idp-pop{position:absolute; top:18px; right:0; background:#fff; color:#0f172a; border:1px solid #e5e7eb; border-radius:8px; padding:6px 8px; font-size:12px; font-weight:700; box-shadow:0 6px 16px rgba(0,0,0,.08); display:none; z-index:9999; white-space:nowrap;}
-    .idp-wrap:hover .idp-pop{ display:block; }
-    .idp-idbox{border:1px solid #e5e7eb; background:#f8fafc; border-radius:6px; padding:2px 6px; font-weight:800; font-size:12px; min-width:60px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; user-select:text; cursor:text;}
-    </style>
-    """
-    st.markdown(BADGE_POP_CSS, unsafe_allow_html=True)
-
-    # ====== Dados normalizados desta aba ======
+    # ====== Normalização + escolha da ÚLTIMA pesquisa (IDPESQUISA) ======
     dfp = df.copy()
-    dfp["__TRECHO__"]  = dfp["TRECHO"].astype(str)
-    advp_col           = "ADVP_CANON" if "ADVP_CANON" in dfp.columns else "ADVP"
-    dfp["__ADVP__"]    = dfp[advp_col].astype(str)
-    dfp["__AG__"]      = dfp["AGENCIA_NORM"].astype(str)
-    dfp["__PRECO__"]   = _pd.to_numeric(dfp["PRECO"], errors="coerce")
-    dfp["__DTKEY__"]   = _pd.to_datetime(dfp.get("DATAHORA_BUSCA"), errors="coerce")  # data (col. H)
-    # hora (col. C) — normalizada
-    hora_raw           = dfp.get("HORA_BUSCA")
-    dfp["__HORA__"]    = hora_raw.apply(parse_hora_text) if hora_raw is not None else None
-    dfp["__ID__"]      = dfp.get("IDPESQUISA")
+    dfp["__DTKEY__"] = _pd.to_datetime(dfp.get("DATAHORA_BUSCA"), errors="coerce")
+    dfp["__HORA__"]  = (dfp.get("HORA_BUSCA") or _pd.Series([None]*len(dfp))).apply(parse_hora_text)
+    dfp["_H_"]       = _pd.to_datetime(dfp["__HORA__"], format="%H:%M:%S", errors="coerce")
 
-    dfp = dfp[dfp["__PRECO__"].notna()].copy()
+    # pega a última linha por data+hora e usa o ID dessa linha
+    try:
+        last_row = dfp.sort_values(["__DTKEY__", "_H_"], ascending=[True, True]).iloc[-1]
+    except IndexError:
+        st.info("Sem dados válidos de data/hora."); return
+    last_id = last_row.get("IDPESQUISA")
+    if _pd.isna(last_id):
+        st.info("Última pesquisa sem ID."); return
+
+    # **ISOLA TUDO** nessa única pesquisa
+    dfp = dfp[dfp["IDPESQUISA"] == last_id].copy()
     if dfp.empty:
-        st.info("Sem preços válidos no recorte atual.")
-        return
+        st.info("A última pesquisa não possui ofertas no recorte."); return
 
-    # ====== Funções de cálculo ======
-    def build_rank(df_subset: _pd.DataFrame) -> _pd.DataFrame:
-        tmp = df_subset.copy()
-        rank = (tmp.groupby("__AG__", as_index=False)["__PRECO__"].min()
-                  .sort_values("__PRECO__").reset_index(drop=True))
-        if not rank.empty:
-            rank["_CAN"]   = rank["__AG__"].apply(_canon)
-            rank["_BRAND"] = rank["__AG__"].apply(_brand_tag)
-        return rank
+    # badge com data/hora/ID
+    dt_lbl = last_row["__DTKEY__"].strftime("%d/%m/%Y") if _pd.notna(last_row["__DTKEY__"]) else ""
+    hh_lbl = str(last_row["__HORA__"] or "")
+    st.caption(f"Última pesquisa: **{dt_lbl} {hh_lbl}** • ID **{last_id}**")
 
-    def presence_flags(df_all_rows: _pd.DataFrame, label: str) -> dict:
-        sub = df_all_rows[df_all_rows["__AG__"].astype(str).apply(_brand_tag) == _brand_tag(label)]
-        present_any = not sub.empty
-        present_with_price = present_any and _np.isfinite(sub["__PRECO__"]).any()
-        return {"present_any": present_any, "present_with_price": present_with_price}
+    # ====== Colunas de trabalho ======
+    dfp["__TRECHO__"] = dfp["TRECHO"].astype(str)
+    advp_col          = "ADVP_CANON" if "ADVP_CANON" in dfp.columns else "ADVP"
+    dfp["__ADVP__"]   = dfp[advp_col].astype(str)
+    dfp["__AG__"]     = dfp["AGENCIA_NORM"].astype(str)
+    dfp["__PRECO__"]  = _pd.to_numeric(dfp["PRECO"], errors="coerce")
+    dfp = dfp[dfp["__PRECO__"].notna()]
+    if dfp.empty:
+        st.info("Sem preços válidos na última pesquisa."); return
 
-    def dt_and_id_for(trecho: str, advp: str, agencia: str, preco: float) -> tuple[str, str | None]:
-        """Retorna label 'dd/mm HH:MM:SS' e ID da pesquisa."""
-        sub = dfp[
-            (dfp["__TRECHO__"] == str(trecho)) &
-            (dfp["__ADVP__"]   == str(advp)) &
-            (dfp["__AG__"].apply(_canon) == _canon(agencia))
-        ].copy()
-        if sub.empty:
-            return "", None
+    # ====== Cálculo do pódio por Trecho×ADVP (dentro da MESMA pesquisa) ======
+    def build_rank(sub: _pd.DataFrame) -> _pd.DataFrame:
+        tmp = sub.copy()
+        rk = (tmp.groupby("__AG__", as_index=False)["__PRECO__"].min()
+                .sort_values("__PRECO__").reset_index(drop=True))
+        if not rk.empty:
+            rk["_CAN"]   = rk["__AG__"].apply(_canon)
+            rk["_BRAND"] = rk["__AG__"].apply(_brand_tag)
+        return rk
 
-        # escolhe linha de preço igual/mais próximo, usando data mais recente
-        near = _np.isclose(sub["__PRECO__"], float(preco), rtol=0, atol=1)
-        sub_price = sub[near]
-        if sub_price.empty:
-            sub_price = sub.iloc[[sub["__PRECO__"].idxmin()]]
-        # data (H)
-        ts = _pd.to_datetime(sub_price["__DTKEY__"], errors="coerce").max()
-        d_lbl = ts.strftime("%d/%m") if _pd.notna(ts) else ""
-        # hora (C) — pega a mais recente entre as candidatas
-        h_lbl = sub_price["__HORA__"].dropna().astype(str)
-        h_lbl = h_lbl.iloc[-1] if not h_lbl.empty else ""
-        dt_lbl = (d_lbl + " " + h_lbl).strip()
+    def dt_for(sub_rows: _pd.DataFrame) -> str:
+        ts = _pd.to_datetime(sub_rows["__DTKEY__"], errors="coerce").max()
+        hh = sub_rows["__HORA__"].dropna().astype(str)
+        return (ts.strftime("%d/%m/%Y") if _pd.notna(ts) else "") + (" " + hh.iloc[-1] if not hh.empty else "")
 
-        # ID de pesquisa (coluna A)
-        row_latest = sub_price.loc[sub_price["__DTKEY__"].idxmax()] if _pd.notna(ts) else sub_price.iloc[-1]
-        id_val = _normalize_id(row_latest["__ID__"]) if "__ID__" in row_latest.index else None
-        return dt_lbl, id_val
+    # ====== UI/estilos dos cards ======
+    GRID   = "display:grid;grid-auto-flow:column;grid-auto-columns:260px;gap:10px;overflow-x:auto;padding:6px 2px 10px 2px;scrollbar-width:thin;"
+    BOX    = "border:1px solid #e5e7eb;border-radius:12px;background:#fff;"
+    HEAD   = "padding:8px 10px;border-bottom:1px solid #f1f5f9;font-weight:700;color:#111827;"
+    STACK  = "display:grid;gap:8px;padding:8px;"
+    CARD   = "position:relative;border:1px solid #e5e7eb;border-radius:10px;padding:8px;background:#fff;min-height:78px;"
+    DTWRAP = "position:absolute;right:8px;top:6px;display:flex;align-items:center;gap:6px;"
+    DTTXT  = "font-size:10px;color:#94a3b8;font-weight:800;"
+    RANK   = "font-weight:900;font-size:11px;color:#6b7280;letter-spacing:.3px;text-transform:uppercase;"
+    AG     = "font-weight:800;font-size:15px;color:#111827;margin-top:2px;"
+    PR     = "font-weight:900;font-size:18px;color:#111827;margin-top:2px;"
+    SUB    = "font-weight:700;font-size:12px;color:#374151;"
+    NOBOX  = "padding:22px 12px;color:#6b7280;font-weight:800;text-align:center;border:1px dashed #e5e7eb;border-radius:10px;background:#fafafa;"
+    FOOT   = "border-top:1px dashed #e5e7eb;margin:6px 8px 8px 8px;padding-top:6px;display:flex;gap:6px;flex-wrap:wrap;"
+    CHIP   = "background:#f3f4f6;border:1px solid #e5e7eb;border-radius:10px;padding:2px 6px;font-weight:700;font-size:11px;color:#111827;white-space:nowrap;line-height:1.1;"
 
-    def _popover_html(id_val: str | None) -> str:
-        if not id_val:
-            return ""
-        sid = str(id_val).replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ")
-        return (
-            f"<span class='idp-wrap'>"
-            f"  <span class='idp-badge' title='Duplo clique para selecionar'>?</span>"
-            f"  <span class='idp-pop'>ID:&nbsp;<input class='idp-idbox' type='text' value='{sid}' readonly></span>"
-            f"</span>"
-        )
-
-    def _card_html(rank: int, agencia: str, preco: float, subtxt: str, dt: str, id_to_copy: str | None) -> str:
-        stripe = "#D4AF37" if rank == 1 else ("#9CA3AF" if rank == 2 else "#CD7F32")
-        stripe_div = f"<div style='position:absolute;left:0;top:0;bottom:0;width:6px;border-radius:10px 0 0 10px;background:{stripe};'></div>"
-        badge = _popover_html(id_to_copy)
-        return (
-            f"<div style='{CARD_BASE}'>"
-            f"{stripe_div}"
-            f"<div style='{DT_WRAP_STYLE}'><span style='{DT_TXT_STYLE}'>{dt}</span>{badge}</div>"
-            f"<div style='{RANK_STYLE}'>{rank}º</div>"
-            f"<div style='{AG_STYLE}'>{agencia}</div>"
-            f"<div style='{PR_STYLE}'>{fmt_moeda_br(preco)}</div>"
-            f"<div style='{SUB_STYLE}'>{subtxt}</div>"
-            f"</div>"
-        )
-
-    # ====== Render: por Trecho → ADVP ======
+    # ====== Render por Trecho ======
     for trecho in sorted(dfp["__TRECHO__"].dropna().unique(), key=str):
         df_t = dfp[dfp["__TRECHO__"] == trecho]
 
-        # ordenar ADVP numericamente quando possível
+        # ADVPs em ordem numérica
         def _advp_key(v):
-            m = re.search(r"\d+", str(v))
-            return (0, int(m.group())) if m else (1, str(v))
+            m = re.search(r"\d+", str(v)); return (0, int(m.group())) if m else (1, str(v))
         advps = sorted(df_t["__ADVP__"].dropna().unique(), key=_advp_key)
 
         boxes = []
         for advp in advps:
-            all_rows = df_t[df_t["__ADVP__"] == str(advp)].copy()
-            base_rank = build_rank(all_rows)
+            rows = df_t[df_t["__ADVP__"] == str(advp)].copy()
+            rank = build_rank(rows)
 
-            # filtro fino: só renderiza se a agência/posição escolhida bater
-            if not base_rank.empty and agencia_foco != "Todos":
-                rk_map = {row["__AG__"]: i+1 for i, row in base_rank.head(3).iterrows()}
-                found_target = any(_canon(ag) == _canon(agencia_foco) and (posicao_foco == "Todas" or posicao_foco == i)
-                                   for ag, i in rk_map.items())
-                if not found_target:
+            # filtro opcional de foco (agência/posição)
+            if not rank.empty and agencia_foco != "Todos":
+                rk_map = {row["__AG__"]: i+1 for i, row in rank.head(3).iterrows()}
+                found = any(_canon(ag) == _canon(agencia_foco) and (posicao_foco == "Todas" or posicao_foco == i)
+                            for ag, i in rk_map.items())
+                if not found:
                     continue
 
-            box = [f"<div style='{BOX_STYLE}'>", f"<div style='{HEAD_STYLE}'>ADVP: <b>{advp}</b></div>"]
+            box = [f"<div style='{BOX}'>", f"<div style='{HEAD}'>ADVP: <b>{advp}</b></div>"]
 
-            if base_rank.empty:
-                box.append(f"<div style='{NO_STYLE}'>Sem ofertas</div>")
-                extras = []
-                for label in ["123MILHAS", "MAXMILHAS"]:
-                    pres = presence_flags(all_rows, label)
-                    if not pres["present_any"]:
-                        extras.append(f"<span style='{CHIP_STYLE}'>{label}: Não apareceu</span>")
-                    elif not pres["present_with_price"]:
-                        extras.append(f"<span style='{CHIP_STYLE}'>{label}: Sem ofertas</span>")
-                if extras:
-                    box.append(f"<div style='{EXTRAS_STYLE}'>" + "".join(extras) + "</div>")
-                box.append("</div>")
-                boxes.append("".join(box))
-                continue
+            if rank.empty:
+                box.append(f"<div style='{NOBOX}'>Sem ofertas</div>")
+                box.append("</div>"); boxes.append("".join(box)); continue
 
-            podium = base_rank.head(3).copy()
-            box.append(f"<div style='{STACK_STYLE}'>")
-            for i in range(len(podium)):
-                row = podium.iloc[i]
-                preco_i = float(row["__PRECO__"])
-                ag_i    = row["__AG__"]
+            # timestamp único para esse Trecho×ADVP (dentro da mesma pesquisa)
+            dt_label = dt_for(rows)
 
-                dt_i, id_i = dt_and_id_for(trecho, advp, ag_i, preco_i)
+            box.append(f"<div style='{STACK}'>")
+            for i in range(min(3, len(rank))):
+                r = rank.iloc[i]
+                preco_i = float(r["__PRECO__"]); ag_i = r["__AG__"]
 
-                # subtítulo do card
-                if i == 0 and len(podium) >= 2:
-                    p2 = float(podium.iloc[1]["__PRECO__"])
-                    subtxt = f"−{int(round((p2 - preco_i) / p2 * 100.0))}% vs 2º" if _np.isfinite(p2) and p2 != 0 else "—"
+                # subtítulo: Top1 = −% vs 2º | Top2/3 = +% vs 1º
+                if i == 0 and len(rank) >= 2:
+                    p2 = float(rank.iloc[1]["__PRECO__"])
+                    subtxt = f"−{int(round((p2 - preco_i) / p2 * 100.0))}% vs 2º" if (_np.isfinite(p2) and p2 != 0) else "—"
                 else:
-                    p1 = float(podium.iloc[0]["__PRECO__"])
-                    subtxt = fmt_pct_plus((preco_i - p1) / p1 * 100.0) + " vs 1º" if (_np.isfinite(p1) and p1 != 0 and _np.isfinite(preco_i)) else "—"
+                    p1 = float(rank.iloc[0]["__PRECO__"])
+                    subtxt = fmt_pct_plus((preco_i - p1) / p1 * 100.0) + " vs 1º" if (_np.isfinite(p1) and p1 != 0) else "—"
 
-                box.append(_card_html(i+1, ag_i, preco_i, subtxt, dt_i, id_i))
+                stripe = "#D4AF37" if i == 0 else ("#9CA3AF" if i == 1 else "#CD7F32")
+                stripe_div = f"<div style='position:absolute;left:0;top:0;bottom:0;width:6px;border-radius:10px 0 0 10px;background:{stripe};'></div>"
+
+                box.append(
+                    "<div style='" + CARD + "'>"
+                    + stripe_div +
+                    f"<div style='{DTWRAP}'><span style='{DTTXT}'>{dt_label}</span></div>"
+                    f"<div style='{RANK}'>{i+1}º</div>"
+                    f"<div style='{AG}'>{ag_i}</div>"
+                    f"<div style='{PR}'>{fmt_moeda_br(preco_i)}</div>"
+                    f"<div style='{SUB}'>{subtxt}</div>"
+                    "</div>"
+                )
             box.append("</div>")  # stack
 
-            # chips extras para 123/MAX se não estão no pódio
+            # chips para 123/MAX quando fora do Top3 (avaliado na MESMA pesquisa)
+            podium_tags = {_canon(r['__AG__']) for _, r in rank.head(3).iterrows()}
+            p1 = float(rank.iloc[0]["__PRECO__"])
             extras = []
-            p1 = float(podium.iloc[0]["__PRECO__"])
-            podium_tags = {_canon(r['__AG__']) for _, r in podium.iterrows()}
-
             for target in ["123MILHAS", "MAXMILHAS"]:
                 if _canon(target) in podium_tags:
                     continue
-                match = base_rank[base_rank["_BRAND"] == _brand_tag(target)]
-                if match.empty:
-                    pres = presence_flags(all_rows, target)
-                    if not pres["present_any"]:
-                        extras.append(f"<span style='{CHIP_STYLE}'>{target}: Não apareceu</span>")
-                    elif not pres["present_with_price"]:
-                        extras.append(f"<span style='{CHIP_STYLE}'>{target}: Sem ofertas</span>")
+                m = rank[rank["_BRAND"] == _brand_tag(target)]
+                if m.empty:
+                    if rows[rows["__AG__"].astype(str).str.upper().str.contains(target)].empty:
+                        extras.append(f"<span style='{CHIP}'>{target}: Não apareceu</span>")
+                    else:
+                        extras.append(f"<span style='{CHIP}'>{target}: Sem ofertas</span>")
                 else:
-                    pos = int(match.index[0]) + 1
-                    preco_v = float(match.iloc[0]["__PRECO__"])
-                    delta = ((preco_v - p1) / p1 * 100.0) if (_np.isfinite(preco_v) and _np.isfinite(p1) and p1 != 0) else None
-                    ts_lbl, _ = dt_and_id_for(trecho, advp, target, preco_v)
-                    pct_str = f" {fmt_pct_plus(delta)}" if delta is not None else ""
-                    ts_part = f" | {ts_lbl}" if ts_lbl else ""
-                    extras.append(f"<span style='{CHIP_STYLE}'>{pos}º {target}: {fmt_moeda_br(preco_v)}{pct_str}{ts_part}</span>")
+                    pos = int(m.index[0]) + 1
+                    px  = float(m.iloc[0]["__PRECO__"])
+                    delta = ((px - p1) / p1 * 100.0) if (_np.isfinite(px) and _np.isfinite(p1) and p1 != 0) else None
+                    extras.append(f"<span style='{CHIP}'>{pos}º {target}: {fmt_moeda_br(px)}{(' ' + fmt_pct_plus(delta)) if delta is not None else ''}</span>")
 
             if extras:
-                box.append(f"<div style='{EXTRAS_STYLE}'>" + "".join(extras) + "</div>")
+                box.append(f"<div style='{FOOT}'>" + "".join(extras) + "</div>")
 
             box.append("</div>")  # box
             boxes.append("".join(box))
 
         if boxes:
-            st.markdown(f"<div style='{TRE_HDR_STYLE}'>Trecho: <b>{trecho}</b></div>", unsafe_allow_html=True)
-            st.markdown("<div style='" + GRID_STYLE + "'>" + "".join(boxes) + "</div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='margin:14px 0 10px 0;padding:10px 12px;border-left:4px solid #0B5FFF;background:#ECF3FF;border-radius:8px;font-weight:800;color:#0A2A6B;'>Trecho: <b>{trecho}</b></div>", unsafe_allow_html=True)
+            st.markdown("<div style='" + GRID + "'>" + "".join(boxes) + "</div>", unsafe_allow_html=True)
 # ───────────────────── ABA: Top 3 Preços Mais Baratos (END) ──────────────────
+
 
 # ───────────────────── ABA 4: Ranking por Agências (START) ───────────────────
 
