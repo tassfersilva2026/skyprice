@@ -581,6 +581,7 @@ def parse_hora_text(val) -> str | None:
         return None
     return f"{h:02d}:{m:02d}:{sec:02d}"
 
+
 # ───────────────────── ABA: Top 3 Preços Mais Baratos (END) ──────────────────
 
 
