@@ -50,6 +50,7 @@ def load_base(path: Path) -> pd.DataFrame:
         st.error(f"Arquivo obrigatório não encontrado: {path.as_posix()}"); st.stop()
     df = pd.read_parquet(path)
 
+    # mapear colunas pela posição se necessário
     colmap = {
         0:"IDPESQUISA", 1:"CIA", 2:"HORA_BUSCA", 3:"HORA_PARTIDA", 4:"HORA_CHEGADA",
         5:"TIPO_VOO", 6:"DATA_EMBARQUE", 7:"DATAHORA_BUSCA", 8:"AGENCIA_COMP",
@@ -59,7 +60,7 @@ def load_base(path: Path) -> pd.DataFrame:
         rename = {df.columns[i]: colmap[i] for i in range(min(13, df.shape[1]))}
         df = df.rename(columns=rename)
 
-    # horas -> HH:MM:SS e HH inteiro
+    # horas -> "HH:MM:SS" e HH
     for c in ["HORA_BUSCA", "HORA_PARTIDA", "HORA_CHEGADA"]:
         if c in df.columns:
             df[c] = pd.to_datetime(df[c].astype(str).str.strip(), errors="coerce").dt.strftime("%H:%M:%S")
@@ -82,8 +83,8 @@ def load_base(path: Path) -> pd.DataFrame:
         df["RANKING"] = pd.to_numeric(df["RANKING"], errors="coerce").astype("Int64")
 
     # normalizações
-    df["AGENCIA_NORM"] = df["AGENCIA_COMP"].apply(std_agencia)
-    df["ADVP_CANON"]   = df["ADVP"].apply(advp_nearest)
+    df["AGENCIA_NORM"]  = df["AGENCIA_COMP"].apply(std_agencia)
+    df["ADVP_CANON"]    = df["ADVP"].apply(advp_nearest)
     return df
 
 def winners_by_position(df: pd.DataFrame) -> pd.DataFrame:
@@ -114,7 +115,7 @@ def last_update_from_cols(df: pd.DataFrame) -> str:
         return f"{max_d.strftime('%d/%m/%Y')} - {max_h.strftime('%H:%M:%S')}"
     return f"{max_d.strftime('%d/%m/%Y')}"
 
-# ========= Estilos (3 cards por linha) =========
+# ========= Estilos (3 cards por linha; cor só nos TOP 3) =========
 CARD_CSS = """
 <style>
 .cards-grid {
@@ -131,32 +132,30 @@ CARD_CSS = """
 }
 .card .title { font-weight:650; font-size:15px; margin-bottom:8px; }
 
-.row   { display:flex; gap:8px; }
-.item  { flex:1; display:flex; align-items:center; justify-content:space-between;
-         gap:8px; padding:8px 10px; border-radius:10px; border:1px solid #e3e3e8;
-         color:#222; }
-.pos   { font-weight:700; font-size:12px; opacity:.85; }
-.pct   { font-size:16px; font-weight:650; }
+.goldcard   { background:#FFF9E5; border-color:#D4AF37; } /* ouro */
+.silvercard { background:#F7F7FA; border-color:#C0C0C0; } /* prata */
+.bronzecard { background:#FFF1E8; border-color:#CD7F32; } /* bronze */
 
-/* Fundo do QUADRO (não o número) */
-.goldbg   { background:#FAF3D0; border-color:#D4AF37; }  /* ouro claro */
-.silverbg { background:#F5F5F7; border-color:#C0C0C0; }  /* prata clara */
-.bronzebg { background:#F6E0D1; border-color:#CD7F32; }  /* bronze claro */
+.row  { display:flex; gap:8px; }
+.item { flex:1; display:flex; align-items:center; justify-content:space-between;
+        gap:8px; padding:8px 10px; border-radius:10px; border:1px solid #e3e3e8; background:#fafbfc; }
+.pos  { font-weight:700; font-size:12px; opacity:.85; }
+.pct  { font-size:16px; font-weight:650; }
 </style>
 """
 
-def card_html(nome: str, p1: float, p2: float, p3: float) -> str:
-    # sem indentação pra não virar bloco de código
+def card_html(nome: str, p1: float, p2: float, p3: float, rank_cls: str = "") -> str:
     p1 = max(0.0, min(100.0, float(p1 or 0.0)))
     p2 = max(0.0, min(100.0, float(p2 or 0.0)))
     p3 = max(0.0, min(100.0, float(p3 or 0.0)))
+    cls = f"card {rank_cls}".strip()
     return (
-        f"<div class='card'>"
+        f"<div class='{cls}'>"
         f"<div class='title'>{nome}</div>"
         f"<div class='row'>"
-        f"<div class='item goldbg'><span class='pos'>1º</span><span class='pct'>{p1:.2f}%</span></div>"
-        f"<div class='item silverbg'><span class='pos'>2º</span><span class='pct'>{p2:.2f}%</span></div>"
-        f"<div class='item bronzebg'><span class='pos'>3º</span><span class='pct'>{p3:.2f}%</span></div>"
+        f"<div class='item'><span class='pos'>1º</span><span class='pct'>{p1:.2f}%</span></div>"
+        f"<div class='item'><span class='pos'>2º</span><span class='pct'>{p2:.2f}%</span></div>"
+        f"<div class='item'><span class='pos'>3º</span><span class='pct'>{p3:.2f}%</span></div>"
         f"</div></div>"
     )
 
@@ -221,6 +220,7 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
                                value=st.session_state["flt"]["dt_fim"],
                                min_value=dmin_abs, max_value=dmax_abs, format="DD/MM/YYYY")
     with c3:
+        # opções de ADVP conforme base (dinâmicas)
         advp_all = sorted(set(pd.to_numeric(df_raw["ADVP_CANON"], errors="coerce").dropna().astype(int).tolist()))
         advp_sel = st.multiselect("ADVP (col. L)", options=advp_all,
                                   default=st.session_state["flt"]["advp"], key=f"{key_prefix}_advp")
@@ -266,7 +266,7 @@ def tab1_painel(df_raw: pd.DataFrame):
     st.markdown(CARD_CSS, unsafe_allow_html=True)
     st.markdown("<hr style='margin:6px 0'>", unsafe_allow_html=True)
 
-    # Winners e versão agregada pro GRUPO 123
+    # Winners (com GRUPO 123 agregado)
     W = winners_by_position(df)
     Wg = W.replace({
         "R1":{"MAXMILHAS":"GRUPO 123","123MILHAS":"GRUPO 123"},
@@ -274,13 +274,11 @@ def tab1_painel(df_raw: pd.DataFrame):
         "R3":{"MAXMILHAS":"GRUPO 123","123MILHAS":"GRUPO 123"},
     })
 
-    # Alvos: TODAS (mesmo zeradas) + GRUPO 123 + SEM OFERTAS
+    # Alvos: TODAS + GRUPO 123 + SEM OFERTAS
     agencias_all = sorted(set(df_raw["AGENCIA_NORM"].dropna().astype(str)))
-    targets_base = list(agencias_all)  # inclui 123MILHAS e MAXMILHAS separados
-    if "GRUPO 123" not in targets_base:
-        targets_base.insert(0, "GRUPO 123")
-    if "SEM OFERTAS" not in targets_base:
-        targets_base.append("SEM OFERTAS")
+    targets_base = list(agencias_all)
+    if "GRUPO 123" not in targets_base: targets_base.insert(0, "GRUPO 123")
+    if "SEM OFERTAS" not in targets_base: targets_base.append("SEM OFERTAS")
 
     def pcts_for_target(tgt: str):
         base = Wg if tgt == "GRUPO 123" else W
@@ -292,11 +290,12 @@ def tab1_painel(df_raw: pd.DataFrame):
     # Ordena pelo % em 1º (desc)
     targets_sorted = sorted(targets_base, key=lambda t: pcts_for_target(t)[0], reverse=True)
 
-    # Render cards (3 por linha)
+    # Render cards (3 por linha) — cores só nos 3 primeiros
     cards = []
-    for tgt in targets_sorted:
+    for idx, tgt in enumerate(targets_sorted):
         p1, p2, p3 = pcts_for_target(tgt)
-        cards.append(card_html(tgt, p1, p2, p3))
+        rank_cls = "goldcard" if idx == 0 else "silvercard" if idx == 1 else "bronzecard" if idx == 2 else ""
+        cards.append(card_html(tgt, p1, p2, p3, rank_cls))
     st.markdown(f"<div class='cards-grid'>{''.join(cards)}</div>", unsafe_allow_html=True)
 
 def tab2_top3_agencias(df_raw: pd.DataFrame):
