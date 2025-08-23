@@ -857,18 +857,197 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
 
 
 # ───────────────────────── ABA: Ranking por Agências (START) ──────────────────
-@register_tab("Ranking por Agências")
+# ───────────────────── ABA 4: Ranking por Agências (START) ───────────────────
 def tab4_ranking_agencias(df_raw: pd.DataFrame):
+    """
+    Ranking por posição (1..15) com 3 visões:
+      1) Quantidade de ofertas por ranking (com Total)
+      2) % participação do ranking DENTRO da agência (linha)
+      3) % participação da agência DENTRO do ranking (coluna)
+    Observações:
+      - Usa colunas do app: AGENCIA_NORM, RANKING, TRECHO (opcional), DATAHORA_BUSCA
+      - Heatmap sem matplotlib (css via Styler.apply), com destaque para 123MILHAS e MAXMILHAS
+    """
+    import numpy as np
+    import pandas as pd
+
+    # ------------- Filtros globais (do app) -------------
     df = render_filters(df_raw, key_prefix="t4")
-    st.subheader("Ranking por Agências")
-    W = winners_by_position(df)
-    wins = W["R1"].value_counts().rename_axis("Agência/Cia").reset_index(name="Vitórias 1º")
-    vol  = df["AGENCIA_NORM"].value_counts().rename_axis("Agência/Cia").reset_index(name="Ofertas")
-    rt = vol.merge(wins, on="Agência/Cia", how="left").fillna(0)
-    rt["Taxa Vitória (%)"] = (rt["Vitórias 1º"]/rt["Ofertas"]*100).round(2)
-    c1,c2 = st.columns(2)
-    with c1: st.altair_chart(make_bar(rt[["Agência/Cia","Vitórias 1º"]], "Vitórias 1º", "Agência/Cia"), use_container_width=True)
-    with c2: st.altair_chart(make_bar(rt[["Agência/Cia","Ofertas"]], "Ofertas", "Agência/Cia"), use_container_width=True)
+    st.subheader("Ranking por Agências (1º ao 15º)")
+    if df.empty:
+        st.info("Sem dados para os filtros."); 
+        return
+
+    # ------------- Normalização mínima -------------
+    if "AGENCIA_NORM" not in df.columns or "RANKING" not in df.columns:
+        st.error("Colunas obrigatórias ausentes: AGENCIA_NORM e/ou RANKING."); 
+        return
+
+    # RANKING como inteiro 1..15 (ignora nulos e fora de faixa)
+    rk = pd.to_numeric(df["RANKING"], errors="coerce").astype("Int64")
+    df = df[rk.notna()].copy()
+    df["RANKING"] = rk.astype(int)
+    RANKS = list(range(1, 16))
+    df = df[df["RANKING"].isin(RANKS)]
+    if df.empty:
+        st.info("Sem posições de ranking entre 1 e 15 no recorte."); 
+        return
+
+    # ============ Núcleo: pivot com contagem ============
+    # (compatível com o script de referência)
+    counts = (df.groupby(["AGENCIA_NORM", "RANKING"], as_index=False)
+                .agg(OFERTAS=("AGENCIA_NORM", "size")))
+
+    pv = (counts.pivot(index="AGENCIA_NORM", columns="RANKING", values="OFERTAS")
+                 .reindex(columns=RANKS, fill_value=0)
+                 .fillna(0).astype(int))
+    pv.index.name = "Agência/Companhia"
+
+    # total por agência + linha Total
+    if 1 not in pv.columns:  # salvaguarda
+        pv[1] = 0
+    pv["Total"] = pv.sum(axis=1)
+    pv = pv.sort_values(by=1, ascending=False)
+
+    total_row = pv.sum(axis=0).to_frame().T
+    total_row.index = ["Total"]
+    total_row.index.name = "Agência/Companhia"
+    pv2 = pd.concat([pv, total_row], axis=0)
+
+    # ============ Tabelas de % ============
+    mat = pv[RANKS].copy()
+
+    # 1) % dentro da agência (linha)
+    row_sum = mat.sum(axis=1).replace(0, np.nan)
+    pct_linha = (mat.div(row_sum, axis=0) * 100).fillna(0)
+    pct_linha = pct_linha.sort_values(by=1, ascending=False)
+
+    # 2) % dentro do ranking (coluna)
+    col_sum = mat.sum(axis=0).replace(0, np.nan)
+    pct_coluna = (mat.div(col_sum, axis=1) * 100).fillna(0)
+    pct_coluna = pct_coluna.sort_values(by=1, ascending=False)
+
+    # ============ Estilização (sem matplotlib) ============
+    HL_MAP = {"123MILHAS": "#FFD8A8", "MAXMILHAS": "#D3F9D8"}  # linhas especiais
+
+    def _fmt_percent(v):
+        return "-" if pd.isna(v) else f"{v:.2f}%".replace(".", ",")
+
+    def _heat_col(col: pd.Series):
+        # gradiente branco -> azul (sem mpl)
+        vmin = pd.to_numeric(col, errors="coerce").min()
+        vmax = pd.to_numeric(col, errors="coerce").max()
+        rng = (vmax - vmin) if pd.notna(vmax) and pd.notna(vmin) and vmax != vmin else 1.0
+
+        def to_css(x):
+            try:
+                x = float(x); 
+                if not np.isfinite(x): 
+                    return ""
+                t = (x - vmin) / rng
+                # interp linear entre #ffffff e #1E40AF
+                r = int(255 + t * (30 - 255))
+                g = int(255 + t * (64 - 255))
+                b = int(255 + t * (175 - 255))
+                return f"background-color: rgb({r},{g},{b}); color:#0A2A6B;"
+            except Exception:
+                return ""
+        return col.apply(to_css)
+
+    def _apply_row_highlight(df_show: pd.DataFrame, hl_map: dict):
+        first_col = df_show.columns[0]
+        idx_upper = df_show[first_col].astype(str).str.upper()
+        styles = pd.DataFrame("", index=df_show.index, columns=df_show.columns)
+        for k, color in hl_map.items():
+            mask = idx_upper.eq(k)
+            styles.loc[mask, :] = f"background-color:{color}; color:#0A2A6B; font-weight:bold;"
+        return styles
+
+    def _style_table(df_show: pd.DataFrame, percent_cols=None, highlight_total_row=False, highlight_total_col=None,
+                     highlight_rows_map=None):
+        df_disp = df_show.reset_index(drop=True)
+        df_disp.index = np.arange(1, len(df_disp) + 1)
+
+        sty = df_disp.style
+
+        # formatação de percentuais
+        if percent_cols:
+            fmt_map = {c: _fmt_percent for c in percent_cols if c in df_disp.columns}
+            sty = sty.format(fmt_map, na_rep="-")
+
+        # heatmap por coluna (numéricas)
+        for c in df_disp.columns:
+            if pd.api.types.is_numeric_dtype(df_disp[c]) and (not percent_cols or c not in percent_cols):
+                sty = sty.apply(_heat_col, subset=[c])
+
+        # destacar coluna "Total"
+        if highlight_total_col and highlight_total_col in df_disp.columns:
+            def _hl_total(col):
+                return ["background-color:#E6F0FF; font-weight:bold; color:#0A2A6B;" for _ in col]
+            sty = sty.apply(_hl_total, subset=[highlight_total_col])
+
+        # destacar linhas especiais (123 / MAX)
+        if highlight_rows_map:
+            sty = sty.apply(lambda _: _apply_row_highlight(df_disp, highlight_rows_map), axis=None)
+
+        # destacar última linha (Total)
+        if highlight_total_row and len(df_disp) > 0:
+            def _hl_last_row(row):
+                return ["background-color:#E6F0FF; color:#0A2A6B; font-weight:bold;"
+                        if row.name == df_disp.index.max() else "" for _ in row]
+            sty = sty.apply(_hl_last_row, axis=1)
+
+        return sty
+
+    def _show_table(df_in: pd.DataFrame, percent_cols=None, highlight_total_row=False,
+                    highlight_total_col=None, highlight_rows_map=None, height=440):
+        st.dataframe(
+            _style_table(df_in, percent_cols=percent_cols, highlight_total_row=highlight_total_row,
+                         highlight_total_col=highlight_total_col, highlight_rows_map=highlight_rows_map),
+            use_container_width=True, height=height
+        )
+
+    # ========= Tabela 1 — Quantidades =========
+    t_qtd = pv2.reset_index()
+    if t_qtd.columns[0] != "Agência/Companhia":
+        t_qtd = t_qtd.rename(columns={t_qtd.columns[0]: "Agência/Companhia"})
+
+    st.subheader("Quantidade de Ofertas por Ranking (Ofertas)")
+    _show_table(
+        t_qtd[["Agência/Companhia"] + RANKS + ["Total"]],
+        highlight_total_row=True,
+        highlight_total_col="Total",
+        highlight_rows_map=HL_MAP,
+        height=480
+    )
+
+    # ========= Tabela 2 — % dentro da Agência (linha) =========
+    t_pct_linha = pct_linha.reset_index()
+    if t_pct_linha.columns[0] != "Agência/Companhia":
+        t_pct_linha = t_pct_linha.rename(columns={t_pct_linha.columns[0]: "Agência/Companhia"})
+
+    st.subheader("Participação do Ranking dentro da Agência")
+    _show_table(
+        t_pct_linha[["Agência/Companhia"] + RANKS],
+        percent_cols=set(RANKS),
+        highlight_rows_map=HL_MAP,
+        height=440
+    )
+
+    # ========= Tabela 3 — % dentro do Ranking (coluna) =========
+    t_pct_coluna = pct_coluna.reset_index()
+    if t_pct_coluna.columns[0] != "Agência/Companhia":
+        t_pct_coluna = t_pct_coluna.rename(columns={t_pct_coluna.columns[0]: "Agência/Companhia"})
+
+    st.subheader("Participação da Agência dentro do Ranking")
+    _show_table(
+        t_pct_coluna[["Agência/Companhia"] + RANKS],
+        percent_cols=set(RANKS),
+        highlight_rows_map=HL_MAP,
+        height=440
+    )
+# ───────────────────── ABA 4: Ranking por Agências (END) ─────────────────────
+
 # ─────────────────────────── ABA: Ranking por Agências (END) ──────────────────
 
 
