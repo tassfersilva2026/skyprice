@@ -545,11 +545,10 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
 @register_tab("Top 3 Preços Mais Baratos")
 def tab3_top3_precos(df_raw: pd.DataFrame):
     """
-    Pódio por Trecho → ADVP (sempre na MESMA pesquisa):
-      - Para CADA (Trecho, ADVP), seleciona a ÚLTIMA pesquisa (IDPESQUISA) daquele par
-      - Top 1/2/3 calculados somente dentro dessa mesma pesquisa
-      - Preços sem casas decimais; %: Top1 = −% vs 2º | Top2/3 = +% vs 1º
-      - Chips “123MILHAS/MAXMILHAS” quando ausentes do Top3 na pesquisa escolhida
+    Pódio por Trecho → ADVP (mesma pesquisa):
+      • Para CADA (Trecho, ADVP), usa a ÚLTIMA IDPESQUISA daquele par.
+      • Cards Top1/2/3 só dessa pesquisa.
+      • Ícone "?" discreto mostra/copía o ID da pesquisa.
     """
     import re
     import numpy as _np
@@ -562,7 +561,7 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
         st.info("Sem dados para os filtros."); 
         return
 
-    # ====== UI simples ======
+    # ====== UI ======
     c1, c2, _ = st.columns([0.28, 0.18, 0.54])
     agencia_foco = c1.selectbox("Agência alvo", ["Todos", "123MILHAS", "MAXMILHAS"], index=0)
     posicao_foco = c2.selectbox("Ranking", ["Todas", 1, 2, 3], index=0)
@@ -612,6 +611,31 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
         if not (0 <= h <= 23 and 0 <= m <= 59 and 0 <= sec <= 59): return None
         return f"{h:02d}:{m:02d}:{sec:02d}"
 
+    # ====== CSS do ícone do ID (discreto) ======
+    BADGE_POP_CSS = """
+    <style>
+    .idp-wrap{position:relative; display:inline-flex; align-items:center; margin-left:6px;}
+    .idp-badge{display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px;
+      border:1px solid #cbd5e1; border-radius:50%; font-size:11px; font-weight:900; color:#64748b; background:#fff;
+      user-select:none; cursor:default; line-height:1;}
+    .idp-pop{position:absolute; top:18px; right:0; background:#fff; color:#0f172a; border:1px solid #e5e7eb;
+      border-radius:8px; padding:6px 8px; font-size:12px; font-weight:700; box-shadow:0 6px 16px rgba(0,0,0,.08);
+      display:none; z-index:9999; white-space:nowrap;}
+    .idp-wrap:hover .idp-pop{ display:block; }
+    .idp-idbox{border:1px solid #e5e7eb; background:#f8fafc; border-radius:6px; padding:2px 6px; font-weight:800; font-size:12px;
+      min-width:60px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; user-select:text; cursor:text;}
+    </style>
+    """
+    st.markdown(BADGE_POP_CSS, unsafe_allow_html=True)
+
+    def _popover_html(id_val) -> str:
+        if id_val is None or (isinstance(id_val, float) and _np.isnan(id_val)): return ""
+        sid = str(id_val).replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ")
+        return ("<span class='idp-wrap'>"
+                "<span class='idp-badge' title='Passe o mouse para ver o ID'>?</span>"
+                f"<span class='idp-pop'>ID:&nbsp;<input class='idp-idbox' type='text' value='{sid}' readonly></span>"
+                "</span>")
+
     # ====== Normalização base ======
     dfp = df.copy()
     advp_col = "ADVP_CANON" if "ADVP_CANON" in dfp.columns else "ADVP"
@@ -623,7 +647,6 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
         __PRECO__  = _pd.to_numeric(dfp["PRECO"], errors="coerce"),
         __DTKEY__  = _pd.to_datetime(dfp.get("DATAHORA_BUSCA"), errors="coerce"),
     )
-    # hora (col. C) parseada
     hora_raw = dfp.get("HORA_BUSCA", _pd.Series([None]*len(dfp), index=dfp.index))
     dfp["__HORA__"] = hora_raw.apply(parse_hora_text)
     dfp["_H_"]      = _pd.to_datetime(dfp["__HORA__"], format="%H:%M:%S", errors="coerce")
@@ -633,28 +656,15 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
         st.info("Sem preços válidos no recorte."); 
         return
 
-    # ====== PARA CADA (Trecho, ADVP): escolha da ÚLTIMA pesquisa ======
-    # ordena por data+hora e pega a última linha de cada grupo
+    # ====== Última ID por (Trecho, ADVP) ======
     tmp_sorted = dfp.sort_values(["__TRECHO__", "__ADVP__", "__DTKEY__", "_H_"], kind="mergesort")
     last_rows = (
-        tmp_sorted
-        .groupby(["__TRECHO__", "__ADVP__"], as_index=False)
-        .tail(1)  # última linha de cada par
-        .loc[:, ["__TRECHO__", "__ADVP__", "IDPESQUISA", "__DTKEY__", "__HORA__"]]
+        tmp_sorted.groupby(["__TRECHO__", "__ADVP__"], as_index=False)
+                  .tail(1)[["__TRECHO__", "__ADVP__", "IDPESQUISA", "__DTKEY__", "__HORA__"]]
     )
-    # mapeamento rápido (trecho, advp) -> (id, dt, hh)
     last_rows_idx = last_rows.set_index(["__TRECHO__", "__ADVP__"])
 
-    # ====== Cálculos auxiliares ======
-    def build_rank(sub: _pd.DataFrame) -> _pd.DataFrame:
-        rk = (sub.groupby("__AG__", as_index=False)["__PRECO__"].min()
-                .sort_values("__PRECO__").reset_index(drop=True))
-        if not rk.empty:
-            rk["_CAN"]   = rk["__AG__"].apply(_canon)
-            rk["_BRAND"] = rk["__AG__"].apply(_brand_tag)
-        return rk
-
-    # ====== UI/estilos ======
+    # ====== Estilos dos cards ======
     GRID   = "display:grid;grid-auto-flow:column;grid-auto-columns:260px;gap:10px;overflow-x:auto;padding:6px 2px 10px 2px;scrollbar-width:thin;"
     BOX    = "border:1px solid #e5e7eb;border-radius:12px;background:#fff;"
     HEAD   = "padding:8px 10px;border-bottom:1px solid #f1f5f9;font-weight:700;color:#111827;"
@@ -670,19 +680,25 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
     FOOT   = "border-top:1px dashed #e5e7eb;margin:6px 8px 8px 8px;padding-top:6px;display:flex;gap:6px;flex-wrap:wrap;"
     CHIP   = "background:#f3f4f6;border:1px solid #e5e7eb;border-radius:10px;padding:2px 6px;font-weight:700;font-size:11px;color:#111827;white-space:nowrap;line-height:1.1;"
 
-    # ====== Render por Trecho ======
+    # ====== Cálculo do pódio por subgrupo ======
+    def build_rank(sub: _pd.DataFrame) -> _pd.DataFrame:
+        rk = (sub.groupby("__AG__", as_index=False)["__PRECO__"].min()
+                .sort_values("__PRECO__").reset_index(drop=True))
+        if not rk.empty:
+            rk["_CAN"]   = rk["__AG__"].apply(_canon)
+            rk["_BRAND"] = rk["__AG__"].apply(_brand_tag)
+        return rk
+
+    # ====== Render ======
     for trecho in sorted(dfp["__TRECHO__"].dropna().unique(), key=str):
         df_t = dfp[dfp["__TRECHO__"] == trecho]
 
-        # ADVPs em ordem numérica
         def _advp_key(v):
-            m = re.search(r"\d+", str(v))
-            return (0, int(m.group())) if m else (1, str(v))
+            m = re.search(r"\d+", str(v)); return (0, int(m.group())) if m else (1, str(v))
         advps = sorted(df_t["__ADVP__"].dropna().unique(), key=_advp_key)
 
         boxes = []
         for advp in advps:
-            # pega a última pesquisa do par (trecho, advp); se não houver, pula
             key = (trecho, str(advp))
             if key not in last_rows_idx.index:
                 continue
@@ -691,16 +707,14 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
             hh_last  = last_rows_idx.loc[key, "__HORA__"]
             dt_label = (dt_last.strftime("%d/%m/%Y") if _pd.notna(dt_last) else "") + (f" {hh_last}" if isinstance(hh_last, str) and hh_last else "")
 
-            # isola os registros desse (trecho, advp) na MESMA pesquisa
             rows = df_t[(df_t["__ADVP__"] == str(advp)) & (df_t["IDPESQUISA"] == last_id)].copy()
             rank = build_rank(rows)
 
-            # filtro opcional de foco
             if not rank.empty and agencia_foco != "Todos":
                 rk_map = {row["__AG__"]: i+1 for i, row in rank.head(3).iterrows()}
                 found = any(_canon(ag) == _canon(agencia_foco) and (posicao_foco == "Todas" or posicao_foco == i)
                             for ag, i in rk_map.items())
-                if not found:
+                if not found: 
                     continue
 
             box = [f"<div style='{BOX}'>", f"<div style='{HEAD}'>ADVP: <b>{advp}</b></div>"]
@@ -714,7 +728,6 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
                 r = rank.iloc[i]
                 preco_i = float(r["__PRECO__"]); ag_i = r["__AG__"]
 
-                # subtítulo: Top1 = −% vs 2º | Top2/3 = +% vs 1º
                 if i == 0 and len(rank) >= 2:
                     p2 = float(rank.iloc[1]["__PRECO__"])
                     subtxt = f"−{int(round((p2 - preco_i) / p2 * 100.0))}% vs 2º" if (_np.isfinite(p2) and p2 != 0) else "—"
@@ -728,7 +741,7 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
                 box.append(
                     "<div style='" + CARD + "'>"
                     + stripe_div +
-                    f"<div style='{DTWRAP}'><span style='{DTTXT}'>{dt_label}</span></div>"
+                    f"<div style='{DTWRAP}'><span style='{DTTXT}'>{dt_label}</span>{_popover_html(last_id)}</div>"
                     f"<div style='{RANK}'>{i+1}º</div>"
                     f"<div style='{AG}'>{ag_i}</div>"
                     f"<div style='{PR}'>{fmt_moeda_br(preco_i)}</div>"
@@ -737,16 +750,15 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
                 )
             box.append("</div>")  # stack
 
-            # chips para 123/MAX quando fora do Top3 (avaliado na MESMA pesquisa)
+            # chips 123/MAX se fora do Top3 (nessa pesquisa)
             podium_tags = {_canon(r['__AG__']) for _, r in rank.head(3).iterrows()}
             p1 = float(rank.iloc[0]["__PRECO__"])
             extras = []
             for target in ["123MILHAS", "MAXMILHAS"]:
-                if _canon(target) in podium_tags:
+                if _canon(target) in podium_tags: 
                     continue
                 m = rank[rank["_BRAND"] == _brand_tag(target)]
                 if m.empty:
-                    # Não apareceu nessa pesquisa
                     extras.append(f"<span style='{CHIP}'>{target}: Não apareceu</span>")
                 else:
                     pos = int(m.index[0]) + 1
@@ -767,6 +779,7 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
             )
             st.markdown("<div style='" + GRID + "'>" + "".join(boxes) + "</div>", unsafe_allow_html=True)
 # ───────────────────── ABA: Top 3 Preços Mais Baratos (END) ──────────────────
+
 
 
 # ───────────────────── ABA 4: Ranking por Agências (START) ───────────────────
