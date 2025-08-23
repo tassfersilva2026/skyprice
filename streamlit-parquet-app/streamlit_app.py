@@ -542,67 +542,107 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
 
 
 # ──────────────────── ABA: Top 3 Preços Mais Baratos (START) ─────────────────
+# ──────────────────── ABA: Top 3 Preços Mais Baratos (START) ─────────────────
+@register_tab("Top 3 Preços Mais Baratos")
 def tab3_top3_precos(df_raw: pd.DataFrame):
     """
-    Requisitos:
-      - Usar a ÚLTIMA pesquisa (IDPESQUISA) após os filtros (Data/Hora)
-      - Por TRECHO, mostrar colunas fixas: ADVP 1 | 5 | 11 | 17 | 30
-      - Em cada ADVP (sempre da MESMA pesquisa): Top 1/2/3 com
-          * Agência (e CIA no Top1, se houver)
-          * Preço inteiro (R$ X.XXX)
-          * %: Top1 = mais barato vs 2º  |  Top2/Top3 = mais caro vs 1º
-      - 123MILHAS / MAXMILHAS:
-          * Se não apareceram no grupo: “Sem ofertas”
-          * Se apareceram fora do Top3: posição e % mais caro vs 1º
+    Versão leve:
+      - Usa groupby vetorizado para achar o menor preço por (TRECHO, ADVP, AGENCIA)
+      - Pódio Top1/2/3 por (TRECHO, ADVP)
+      - Mostra data (col. H) + hora (col. C) -> HH:MM:SS
+      - Limites de renderização para performance
     """
+    import re
     import numpy as _np
     import pandas as _pd
 
-    # ====== Helpers locais (independente) ======
+    # ---------- Filtros globais ----------
+    df = render_filters(df_raw, key_prefix="t3")
+    st.subheader("Pódio por Trecho → ADVP (versão leve)")
+
+    if df.empty:
+        st.info("Sem dados para os filtros.")
+        return
+
+    # ---------- Controles de performance ----------
+    c1, c2, c3 = st.columns([0.32, 0.24, 0.44])
+    max_trechos = c1.number_input("Máx. trechos exibidos", min_value=1, max_value=500, value=20, step=1)
+    max_advp    = c2.number_input("Máx. ADVP por trecho",  min_value=1, max_value=30,  value=10, step=1)
+    c3.caption("Dica: aumente esses limites só quando precisar.")
+
+    # ---------- Parser robusto da HORA (coluna C) ----------
     def parse_hora_text(val) -> str | None:
-        """Converte texto variado para 'HH:MM:SS'."""
         s = str(val).strip()
         if s == "" or s.lower() in {"nan", "none", "null"}:
             return None
-        # tenta datetime completo
         try:
             ts = _pd.to_datetime(s, dayfirst=True, errors="raise")
             return ts.strftime("%H:%M:%S")
         except Exception:
             pass
-        # fallback: HH / HHMM / HHMMSS ou com ':'
         digs = "".join(ch for ch in s if ch.isdigit())
         h = m = sec = None
         try:
-            if len(digs) >= 6:
+            if len(digs) >= 6:      # HHMMSS (6 últimos)
                 h, m, sec = int(digs[-6:-4]), int(digs[-4:-2]), int(digs[-2:])
-            elif len(digs) == 4:
+            elif len(digs) == 4:    # HHMM
                 h, m, sec = int(digs[:2]), int(digs[2:4]), 0
-            elif len(digs) in (1, 2):
+            elif len(digs) in (1,2):
                 h, m, sec = int(digs), 0, 0
         except Exception:
             pass
         if h is None:
-            parts = [p for p in s.replace(".", ":").split(":") if p]
+            parts = [p for p in s.replace(".", ":").split(":") if p != ""]
             try:
-                if len(parts) == 2:
-                    h, m, sec = int(parts[0]), int(parts[1]), 0
-                elif len(parts) == 3:
-                    h, m, sec = int(parts[0]), int(parts[1]), int(parts[2])
+                if len(parts) == 2:   h, m, sec = int(parts[0]), int(parts[1]), 0
+                elif len(parts) == 3: h, m, sec = int(parts[0]), int(parts[1]), int(parts[2])
             except Exception:
                 return None
         if not (0 <= h <= 23 and 0 <= m <= 59 and 0 <= sec <= 59):
             return None
         return f"{h:02d}:{m:02d}:{sec:02d}"
 
-    def _advp_nearest(x) -> int:
-        try:
-            v = float(str(x).replace(",", "."))
-        except Exception:
-            v = _np.nan
-        if _pd.isna(v):
-            v = 1
-        return min([1, 5, 11, 17, 30], key=lambda k: abs(v - k))
+    # ---------- Normalização mínima ----------
+    advp_col = "ADVP_CANON" if "ADVP_CANON" in df.columns else "ADVP"
+    cols_need = ["TRECHO", advp_col, "AGENCIA_NORM", "PRECO", "DATAHORA_BUSCA"]
+    miss = [c for c in cols_need if c not in df.columns]
+    if miss:
+        st.error(f"Colunas faltando: {', '.join(miss)}"); return
+
+    dfp = df[["TRECHO", advp_col, "AGENCIA_NORM", "PRECO", "DATAHORA_BUSCA", "HORA_BUSCA", "IDPESQUISA"]].copy()
+    dfp["PRECO"] = _pd.to_numeric(dfp["PRECO"], errors="coerce")
+    dfp = dfp[dfp["PRECO"].notna()]
+
+    # hora normalizada (coluna C)
+    if "HORA_BUSCA" in dfp.columns:
+        dfp["HORA_NORM"] = dfp["HORA_BUSCA"].apply(parse_hora_text)
+    else:
+        dfp["HORA_NORM"] = None
+
+    # ---------- Núcleo leve (100% vetorizado) ----------
+    # 1) Para cada (TRECHO, ADVP, AGENCIA): pegar linha do menor PRECO e, em caso de empate, a mais recente
+    sort_cols = ["TRECHO", advp_col, "AGENCIA_NORM", "PRECO", "DATAHORA_BUSCA"]
+    df_sorted = dfp.sort_values(sort_cols + ["HORA_NORM"], ascending=[True, True, True, True, False, False])
+    best_ag = df_sorted.drop_duplicates(subset=["TRECHO", advp_col, "AGENCIA_NORM"], keep="first")
+
+    # 2) Ordenar por preço dentro de cada (TRECHO, ADVP) e marcar Top1/2/3
+    best_ag = best_ag.sort_values(["TRECHO", advp_col, "PRECO", "DATAHORA_BUSCA"], ascending=[True, True, True, False])
+    best_ag["RANK"] = best_ag.groupby(["TRECHO", advp_col]).cumcount() + 1
+    podium = best_ag[best_ag["RANK"] <= 3].copy()
+
+    # ---------- Layout ----------
+    GRID_STYLE    = "display:grid;grid-auto-flow:column;grid-auto-columns:260px;gap:10px;overflow-x:auto;padding:6px 2px 10px 2px;scrollbar-width:thin;"
+    BOX_STYLE     = "border:1px solid #e5e7eb;border-radius:12px;background:#fff;"
+    HEAD_STYLE    = "padding:8px 10px;border-bottom:1px solid #f1f5f9;font-weight:700;color:#111827;"
+    STACK_STYLE   = "display:grid;gap:8px;padding:8px;"
+    CARD_BASE     = "position:relative;border:1px solid #e5e7eb;border-radius:10px;padding:8px;background:#fff;min-height:78px;"
+    DT_WRAP_STYLE = "position:absolute;right:8px;top:6px;display:flex;align-items:center;gap:6px;"
+    DT_TXT_STYLE  = "font-size:10px;color:#94a3b8;font-weight:800;"
+    RANK_STYLE    = "font-weight:900;font-size:11px;color:#6b7280;letter-spacing:.3px;text-transform:uppercase;"
+    AG_STYLE      = "font-weight:800;font-size:15px;color:#111827;margin-top:2px;"
+    PR_STYLE      = "font-weight:900;font-size:18px;color:#111827;margin-top:2px;"
+    SUB_STYLE     = "font-weight:700;font-size:12px;color:#374151;"
+    TRE_HDR_STYLE = "margin:14px 0 10px 0;padding:10px 12px;border-left:4px solid #0B5FFF;background:#ECF3FF;border-radius:8px;font-weight:800;color:#0A2A6B;"
 
     def fmt_moeda_br(x) -> str:
         try:
@@ -612,221 +652,60 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
         except Exception:
             return "R$ -"
 
-    def pct_str(v) -> str:
-        try:
-            x = float(v)
-            if not _np.isfinite(x): return "—"
-            sign = "+" if x > 0 else ""
-            return f"{sign}{round(x):.0f}%"
-        except Exception:
-            return "—"
+    def _card_html(rank: int, agencia: str, preco: float, dt_hora: str) -> str:
+        stripe = "#D4AF37" if rank == 1 else ("#9CA3AF" if rank == 2 else "#CD7F32")
+        stripe_div = f"<div style='position:absolute;left:0;top:0;bottom:0;width:6px;border-radius:10px 0 0 10px;background:{stripe};'></div>"
+        return (
+            f"<div style='{CARD_BASE}'>"
+            f"{stripe_div}"
+            f"<div style='{DT_WRAP_STYLE}'><span style='{DT_TXT_STYLE}'>{dt_hora}</span></div>"
+            f"<div style='{RANK_STYLE}'>{rank}º</div>"
+            f"<div style='{AG_STYLE}'>{agencia}</div>"
+            f"<div style='{PR_STYLE}'>{fmt_moeda_br(preco)}</div>"
+            f"<div style='{SUB_STYLE}'></div>"
+            f"</div>"
+        )
 
-    # ====== Filtros globais do app ======
-    df = render_filters(df_raw, key_prefix="t3")
-    st.subheader("Top 3 Preços Mais Baratos — Última Pesquisa (por filtros)")
-    if df.empty:
-        st.info("Sem dados para os filtros."); 
-        return
-    df = df.copy()
+    # ---------- Render por trecho/advp com limites ----------
+    # Ordem de trechos pelo menor preço observado (mais interessante primeiro)
+    trecho_order = (podium.groupby("TRECHO")["PRECO"].min()
+                    .sort_values(ascending=True)
+                    .head(int(max_trechos))
+                    .index.tolist())
 
-    # ====== Normalização mínima ======
-    if "HORA_BUSCA" in df.columns:
-        df["HORA_NORM"] = df["HORA_BUSCA"].apply(parse_hora_text)
-    else:
-        df["HORA_NORM"] = None
+    for trecho in trecho_order:
+        pod_t = podium[podium["TRECHO"] == trecho].copy()
 
-    if "DATAHORA_BUSCA" not in df.columns:
-        st.error("Coluna 'DATAHORA_BUSCA' não encontrada."); 
-        return
-    df["DATAHORA_BUSCA"] = _pd.to_datetime(df["DATAHORA_BUSCA"], errors="coerce")
+        # ordenar ADVP numericamente quando der
+        def _advp_key(v):
+            m = re.search(r"\d+", str(v))
+            return (0, int(m.group())) if m else (1, str(v))
+        advp_vals = sorted(pod_t[advp_col].unique(), key=_advp_key)[:int(max_advp)]
 
-    if "IDPESQUISA" not in df.columns:
-        st.error("Coluna 'IDPESQUISA' não encontrada."); 
-        return
-
-    advp_col = "ADVP_CANON" if "ADVP_CANON" in df.columns else None
-    if not advp_col:
-        if "ADVP" not in df.columns:
-            st.error("Colunas 'ADVP_CANON' ou 'ADVP' não encontradas."); 
-            return
-        df["ADVP_CANON"] = df["ADVP"].apply(_advp_nearest)
-        advp_col = "ADVP_CANON"
-
-    df["PRECO"] = _pd.to_numeric(df["PRECO"], errors="coerce")
-    df = df[df["PRECO"].notna()]
-    if df.empty:
-        st.info("Sem preços válidos no recorte atual."); 
-        return
-
-    # ====== Escolher a ÚLTIMA pesquisa (IDPESQUISA) dentro do recorte ======
-    df["_H_"] = _pd.to_datetime(df["HORA_NORM"], format="%H:%M:%S", errors="coerce")
-    df_sorted = df.sort_values(["DATAHORA_BUSCA", "_H_"], ascending=[True, True])
-    last_row = df_sorted.iloc[-1]
-    last_id  = last_row["IDPESQUISA"]
-    last_dt  = last_row["DATAHORA_BUSCA"]
-    last_h   = last_row["HORA_NORM"] if _pd.notna(last_row["HORA_NORM"]) else ""
-
-    st.markdown(
-        f"<div style='font-size:13px;opacity:.85;margin-top:-6px;'>"
-        f"Última pesquisa (após filtros): <b>{last_dt:%d/%m/%Y}</b> — <b>{last_h or '—:—:—'}</b> &nbsp; "
-        f"(ID <code>{str(last_id)}</code>)"
-        f"</div>", unsafe_allow_html=True
-    )
-    st.markdown("<hr style='margin:6px 0'>", unsafe_allow_html=True)
-
-    # ====== Restringe toda análise à ÚLTIMA pesquisa ======
-    dfl = df[df["IDPESQUISA"] == last_id].copy()
-    if dfl.empty:
-        st.info("A última pesquisa não possui ofertas dentro dos filtros."); 
-        return
-
-    if "AGENCIA_NORM" not in dfl.columns:
-        st.error("Coluna 'AGENCIA_NORM' não encontrada."); 
-        return
-    if "CIA" not in dfl.columns:
-        dfl["CIA"] = _pd.NA  # segue sem CIA se não existir
-
-    # Mantém apenas os ADVPs pedidos
-    ADVPS = [1, 5, 11, 17, 30]
-    dfl = dfl[dfl[advp_col].isin(ADVPS)]
-    if dfl.empty:
-        st.info("A última pesquisa não possui ofertas para ADVP 1/5/11/17/30."); 
-        return
-
-    # ====== Para cada (TRECHO, ADVP, AGENCIA), escolher a melhor linha ======
-    sort_cols = ["TRECHO", advp_col, "AGENCIA_NORM", "PRECO", "DATAHORA_BUSCA", "_H_"]
-    best_ag = (dfl.sort_values(sort_cols, ascending=[True, True, True, True, False, False])
-                  .drop_duplicates(subset=["TRECHO", advp_col, "AGENCIA_NORM"], keep="first"))
-
-    # Ranking por (TRECHO, ADVP)
-    best_ag = best_ag.sort_values(["TRECHO", advp_col, "PRECO", "DATAHORA_BUSCA"], ascending=[True, True, True, False])
-    best_ag["RANK"] = best_ag.groupby(["TRECHO", advp_col]).cumcount() + 1
-
-    # ====== Função de resumo do grupo ======
-    def resumo_grupo(g: _pd.DataFrame) -> dict:
-        g = g.sort_values("PRECO", ascending=True).reset_index(drop=True)
-        out = {"top": [], "extras": {}}
-        p1 = float(g.loc[0, "PRECO"]) if len(g) >= 1 else _np.nan
-        p2 = float(g.loc[1, "PRECO"]) if len(g) >= 2 else _np.nan
-
-        # Top 1/2/3
-        for i in range(min(3, len(g))):
-            r = g.loc[i]
-            ag  = str(r["AGENCIA_NORM"])
-            cia = (str(r["CIA"]) if _pd.notna(r["CIA"]) else "-")
-            pr  = float(r["PRECO"])
-            if i == 0:
-                # % mais barato vs 2º
-                mm = ((p2 - pr) / p2 * 100.0) if (_np.isfinite(p2) and p2 > 0) else _np.nan
-                out["top"].append({"rank": 1, "ag": ag, "cia": cia, "preco": pr, "pct": pct_str(mm), "lbl": "↓ vs 2º"})
-            else:
-                # % mais caro vs 1º
-                mm = ((pr - p1) / p1 * 100.0) if (_np.isfinite(p1) and p1 > 0) else _np.nan
-                out["top"].append({"rank": i+1, "ag": ag, "cia": "-", "preco": pr, "pct": pct_str(mm), "lbl": "↑ vs 1º"})
-
-        # Extras: 123 / MAX
-        for brand in ("123MILHAS", "MAXMILHAS"):
-            pos = _np.nan; prb = _np.nan
-            if not g.empty:
-                mask = g["AGENCIA_NORM"].astype(str).str.upper().eq(brand)
-                if mask.any():
-                    ix = int(_np.where(mask)[0][0])
-                    pos = ix + 1
-                    prb = float(g.loc[ix, "PRECO"])
-            if _np.isnan(pos):
-                out["extras"][brand] = {"status": "Sem ofertas"}
-            elif pos <= 3:
-                out["extras"][brand] = {"status": "Top3"}  # já aparece nos Top
-            else:
-                mm = ((prb - p1) / p1 * 100.0) if (_np.isfinite(p1) and p1 > 0) else _np.nan
-                out["extras"][brand] = {"status": "ForaTop3", "pos": int(pos), "pct": pct_str(mm)}
-        return out
-
-    # ====== CSS de layout (linha por TRECHO; 5 colunas ADVP) ======
-    CSS = """
-    <style>
-      .trecho { margin: 14px 0 12px 0; padding: 10px 12px; border-left:4px solid #0B5FFF; background:#ECF3FF; border-radius:8px; font-weight:800; color:#0A2A6B; }
-      .advp-grid { display:grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap:10px; }
-      @media (max-width:1200px){ .advp-grid { grid-template-columns: repeat(3, minmax(0,1fr)); } }
-      @media (max-width:780px){  .advp-grid { grid-template-columns: repeat(2, minmax(0,1fr)); } }
-      @media (max-width:560px){  .advp-grid { grid-template-columns: 1fr; } }
-
-      .card { border:1px solid #e9e9ee; border-radius:14px; padding:10px 12px; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.04); min-height:120px; }
-      .head { font-weight:700; font-size:13px; margin-bottom:8px; }
-      .row  { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:10px; border:1px solid #e3e3e8; background:#fafbfc; margin-bottom:6px; }
-      .pos  { font-weight:900; font-size:12px; opacity:.85; min-width:22px; text-align:center; }
-      .mid  { display:flex; flex-direction:column; gap:2px; flex:1; min-width:0; }
-      .ag   { font-weight:750; font-size:13px; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-      .sub  { font-size:11px; color:#64748b; }
-      .val  { font-size:16px; font-weight:800; color:#0f172a; white-space:nowrap; }
-      .foot { font-size:11px; color:#475569; margin-top:6px; display:flex; gap:6px; flex-wrap:wrap; }
-      .chip { background:#f1f5f9; border:1px solid #e2e8f0; border-radius:10px; padding:2px 6px; font-weight:700; }
-      .muted{ color:#94a3b8; }
-    </style>
-    """
-    st.markdown(CSS, unsafe_allow_html=True)
-
-    # ====== Render por TRECHO ======
-    trechos = dfl["TRECHO"].dropna().astype(str).unique().tolist()
-    trechos.sort()
-
-    for trecho in trechos:
-        st.markdown(f"<div class='trecho'>Trecho: <b>{trecho}</b></div>", unsafe_allow_html=True)
-
-        cols_html = []
-        for advp in [1, 5, 11, 17, 30]:
-            g = best_ag[(best_ag["TRECHO"].astype(str) == trecho) & (best_ag[advp_col] == advp)].copy()
+        boxes = []
+        for advp in advp_vals:
+            g = pod_t[pod_t[advp_col] == advp].sort_values("RANK")
             if g.empty:
-                cols_html.append(
-                    "<div class='card'>"
-                    f"<div class='head'>ADVP {advp}</div>"
-                    "<div class='row muted'><span class='pos'>—</span><div class='mid'><div class='ag'>Sem ofertas</div></div></div>"
-                    "</div>"
-                )
                 continue
 
-            res = resumo_grupo(g)
+            header = f"<div style='{HEAD_STYLE}'>ADVP: <b>{advp}</b></div>"
+            stack  = [f"<div style='{STACK_STYLE}'>"]
 
-            # Top 1/2/3
-            rows_html = []
-            for entry in res["top"]:
-                rnk = entry["rank"]; ag = entry["ag"]; cia = entry["cia"]; pr = entry["preco"]
-                lbl = entry["lbl"];  pct = entry["pct"]
-                subtxt = f"{lbl}: {pct}" if pct != "—" else lbl
-                # CIA aparece apenas no Top1 (se existir)
-                cia_txt = f" • {cia}" if (rnk == 1 and cia and cia != "-") else ""
-                rows_html.append(
-                    "<div class='row'>"
-                    f"<span class='pos'>{rnk}º</span>"
-                    "<div class='mid'>"
-                    f"<div class='ag'>{ag}</div>"
-                    f"<div class='sub'>{subtxt}{cia_txt}</div>"
-                    "</div>"
-                    f"<span class='val'>{fmt_moeda_br(pr)}</span>"
-                    "</div>"
-                )
+            for _, row in g.iterrows():
+                dt = _pd.to_datetime(row["DATAHORA_BUSCA"], errors="coerce")
+                d_lbl = dt.strftime("%d/%m") if _pd.notna(dt) else ""
+                h_lbl = (row.get("HORA_NORM") or "").strip()
+                dt_lbl = (d_lbl + " " + h_lbl).strip()
+                stack.append(_card_html(int(row["RANK"]), str(row["AGENCIA_NORM"]), float(row["PRECO"]), dt_lbl))
 
-            # 123 / MAX
-            chips = []
-            for brand in ("123MILHAS", "MAXMILHAS"):
-                info = res["extras"].get(brand, {"status": "Sem ofertas"})
-                if info["status"] == "Sem ofertas":
-                    chips.append(f"<span class='chip'>{brand}: Sem ofertas</span>")
-                elif info["status"] == "ForaTop3":
-                    # info['pct'] já vem com sinal
-                    chips.append(f"<span class='chip'>{brand}: {info['pos']}º • {info['pct']}</span>")
-                # se Top3, não mostra chip extra
+            stack.append("</div>")
+            boxes.append("<div style='{BOX_STYLE}'>".replace("{BOX_STYLE}", BOX_STYLE) + header + "".join(stack) + "</div>")
 
-            cols_html.append(
-                "<div class='card'>"
-                f"<div class='head'>ADVP {advp}</div>"
-                + "".join(rows_html) +
-                (f"<div class='foot'>{''.join(chips)}</div>" if chips else "") +
-                "</div>"
-            )
-
-        st.markdown("<div class='advp-grid'>" + "".join(cols_html) + "</div>", unsafe_allow_html=True)
+        if boxes:
+            st.markdown(f"<div style='{TRE_HDR_STYLE}'>Trecho: <b>{trecho}</b></div>", unsafe_allow_html=True)
+            st.markdown("<div style='" + GRID_STYLE + "'>" + "".join(boxes) + "</div>", unsafe_allow_html=True)
 # ───────────────────── ABA: Top 3 Preços Mais Baratos (END) ──────────────────
+
 
 # ───────────────────────── ABA: Ranking por Agências (START) ──────────────────
 @register_tab("Ranking por Agências")
