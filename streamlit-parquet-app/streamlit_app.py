@@ -36,15 +36,19 @@ def std_agencia(raw: str) -> str:
     return ag
 
 def advp_nearest(x) -> int:
-    try: v = float(str(x).replace(",", "."))
-    except: v = np.nan
-    if np.isnan(v): v = 1
+    try:
+        v = float(str(x).replace(",", "."))
+    except Exception:
+        v = np.nan
+    if np.isnan(v):
+        v = 1
     return min([1,5,11,17,30], key=lambda k: abs(v-k))
 
 @st.cache_data(show_spinner=True)
 def load_base(path: Path) -> pd.DataFrame:
     if not path.exists():
-        st.error(f"Arquivo obrigatório não encontrado: `{path.as_posix()}`"); st.stop()
+        st.error(f"Arquivo obrigatório não encontrado: {path.as_posix()}"); st.stop()
+
     df = pd.read_parquet(path)
 
     # mapear colunas pela posição se necessário
@@ -57,13 +61,13 @@ def load_base(path: Path) -> pd.DataFrame:
         rename = {df.columns[i]: colmap[i] for i in range(min(13, df.shape[1]))}
         df = df.rename(columns=rename)
 
-    # horas texto -> HH e "HH:MM:SS"
+    # horas texto -> HH:MM:SS e HH (inteiro) para filtro
     for c in ["HORA_BUSCA", "HORA_PARTIDA", "HORA_CHEGADA"]:
         if c in df.columns:
             df[c] = pd.to_datetime(df[c].astype(str).str.strip(), errors="coerce").dt.strftime("%H:%M:%S")
     df["HORA_HH"] = pd.to_datetime(df["HORA_BUSCA"], errors="coerce").dt.hour
 
-    # datas dd/mm/aaaa (G/H)
+    # datas dd/mm/aaaa
     for c in ["DATA_EMBARQUE", "DATAHORA_BUSCA"]:
         if c in df.columns:
             df[c] = pd.to_datetime(df[c], errors="coerce", dayfirst=True)
@@ -71,8 +75,8 @@ def load_base(path: Path) -> pd.DataFrame:
     # preço
     if "PRECO" in df.columns:
         df["PRECO"] = (df["PRECO"].astype(str)
-                       .str.replace(r"[^\d,.-]", "", regex=True)
-                       .str.replace(",", ".", regex=False))
+                        .str.replace(r"[^\d,.-]", "", regex=True)
+                        .str.replace(",", ".", regex=False))
         df["PRECO"] = pd.to_numeric(df["PRECO"], errors="coerce")
 
     # ranking
@@ -83,6 +87,7 @@ def load_base(path: Path) -> pd.DataFrame:
     df["AGENCIA_NORM"]  = df["AGENCIA_COMP"].apply(std_agencia)
     df["AGENCIA_GRUPO"] = df["AGENCIA_NORM"].replace({"MAXMILHAS":"GRUPO 123", "123MILHAS":"GRUPO 123"})
     df["ADVP_CANON"]    = df["ADVP"].apply(advp_nearest)
+
     return df
 
 def winners_by_position(df: pd.DataFrame) -> pd.DataFrame:
@@ -117,14 +122,18 @@ def make_bar(df: pd.DataFrame, x_col: str, y_col: str, sort_y_desc: bool = True)
     d[x_col] = pd.to_numeric(d[x_col], errors="coerce")
     d[y_col] = d[y_col].astype(str)
     d = d.dropna(subset=[x_col])
-    if sort_y_desc: d = d.sort_values(x_col, ascending=False)
-    if d.empty: return alt.Chart(pd.DataFrame({x_col: [], y_col: []})).mark_bar()
-    return (alt.Chart(d).mark_bar().encode(
-        x=alt.X(f"{x_col}:Q", title=x_col),
-        y=alt.Y(f"{y_col}:N", sort="-x", title=y_col),
-        tooltip=[alt.Tooltip(f"{y_col}:N", title=y_col),
-                 alt.Tooltip(f"{x_col}:Q", title=x_col)],
-    ).properties(height=320, use_container_width=True))
+    if sort_y_desc:
+        d = d.sort_values(x_col, ascending=False)
+    if d.empty:
+        return alt.Chart(pd.DataFrame({x_col: [], y_col: []})).mark_bar()
+    return (
+        alt.Chart(d).mark_bar().encode(
+            x=alt.X(f"{x_col}:Q", title=x_col),
+            y=alt.Y(f"{y_col}:N", sort="-x", title=y_col),
+            tooltip=[alt.Tooltip(f"{y_col}:N", title=y_col),
+                     alt.Tooltip(f"{x_col}:Q", title=x_col)],
+        ).properties(height=320, use_container_width=True)
+    )
 
 def make_line(df: pd.DataFrame, x_col: str, y_col: str, color: str | None = None):
     cols = [x_col, y_col] + ([color] if color else [])
@@ -136,18 +145,24 @@ def make_line(df: pd.DataFrame, x_col: str, y_col: str, color: str | None = None
         d[x_col] = pd.to_numeric(d[x_col], errors="coerce")
         x_enc = alt.X(f"{x_col}:Q", title=x_col)
     d[y_col] = pd.to_numeric(d[y_col], errors="coerce")
-    if color: d[color] = d[color].astype(str)
+    if color:
+        d[color] = d[color].astype(str)
     d = d.dropna(subset=[x_col, y_col])
-    if d.empty: return alt.Chart(pd.DataFrame({x_col: [], y_col: []})).mark_line()
-    enc = dict(x=x_enc, y=alt.Y(f"{y_col}:Q", title=y_col),
-               tooltip=[alt.Tooltip(f"{x_col}", title=x_col),
-                        alt.Tooltip(f"{y_col}:Q", title=y_col)])
-    if color: enc["color"] = alt.Color(f"{color}:N", title=color)
+    if d.empty:
+        return alt.Chart(pd.DataFrame({x_col: [], y_col: []})).mark_line()
+    enc = dict(
+        x=x_enc,
+        y=alt.Y(f"{y_col}:Q", title=y_col),
+        tooltip=[alt.Tooltip(f"{x_col}", title=x_col),
+                 alt.Tooltip(f"{y_col}:Q", title=y_col)]
+    )
+    if color:
+        enc["color"] = alt.Color(f"{color}:N", title=color)
     return alt.Chart(d).mark_line(point=True).encode(**enc).properties(height=320, use_container_width=True)
 
 # ========= Estado global dos filtros (compartilhado entre abas) =========
 def _init_filter_state(df_raw: pd.DataFrame):
-    if "flt" in st.session_state: 
+    if "flt" in st.session_state:
         return
     dmin = pd.to_datetime(df_raw["DATAHORA_BUSCA"], errors="coerce").min()
     dmax = pd.to_datetime(df_raw["DATAHORA_BUSCA"], errors="coerce").max()
@@ -156,16 +171,18 @@ def _init_filter_state(df_raw: pd.DataFrame):
     st.session_state["flt"] = {
         "dt_ini": dmin,
         "dt_fim": dmax,
-        "advp":   [1,5,11,17,30],
+        # ADVP agora segue a mesma experiência de Trechos: nada pré-selecionado
+        "advp": [],
         "trechos": [],
-        "hh":     [],
+        "hh": [],
     }
 
 def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
-    """Desenha os filtros no TOPO da aba atual e sincroniza em st.session_state['flt']."""
+    """Desenha os filtros no TOPO da aba atual e sincroniza em st.session_state['flt'].""" 
     _init_filter_state(df_raw)
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
     c1, c2, c3, c4, c5 = st.columns([1.2,1.2,1,2,1.2])
+
     # limites absolutos de data
     dmin_abs = pd.to_datetime(df_raw["DATAHORA_BUSCA"], errors="coerce").min()
     dmax_abs = pd.to_datetime(df_raw["DATAHORA_BUSCA"], errors="coerce").max()
@@ -173,43 +190,55 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
     dmax_abs = dmax_abs.date() if pd.notna(dmax_abs) else date.today()
 
     with c1:
-        dt_ini = st.date_input("Data inicial (col. H)", key=f"{key_prefix}_dtini",
+        dt_ini = st.date_input("Data inicial (col. H)",
+                               key=f"{key_prefix}_dtini",
                                value=st.session_state["flt"]["dt_ini"],
-                               min_value=dmin_abs, max_value=dmax_abs, format="DD/MM/YYYY")
+                               min_value=dmin_abs, max_value=dmax_abs,
+                               format="DD/MM/YYYY")
     with c2:
-        dt_fim = st.date_input("Data final (col. H)", key=f"{key_prefix}_dtfim",
+        dt_fim = st.date_input("Data final (col. H)",
+                               key=f"{key_prefix}_dtfim",
                                value=st.session_state["flt"]["dt_fim"],
-                               min_value=dmin_abs, max_value=dmax_abs, format="DD/MM/YYYY")
+                               min_value=dmin_abs, max_value=dmax_abs,
+                               format="DD/MM/YYYY")
     with c3:
-        advp_sel = st.multiselect("ADVP (col. L)", [1,5,11,17,30],
+        # ADVP dinâmico (igual Trechos): vindo da base, sem pré-seleção
+        advp_all = sorted(set(pd.to_numeric(df_raw["ADVP_CANON"], errors="coerce").dropna().astype(int).tolist()))
+        advp_sel = st.multiselect("ADVP (col. L)",
+                                  options=advp_all,
                                   default=st.session_state["flt"]["advp"],
                                   key=f"{key_prefix}_advp")
     with c4:
         trechos_all = sorted([t for t in df_raw["TRECHO"].dropna().unique().tolist() if str(t).strip()!=""])
-        tr_sel = st.multiselect("Trechos (col. K)", trechos_all,
+        tr_sel = st.multiselect("Trechos (col. K)",
+                                trechos_all,
                                 default=st.session_state["flt"]["trechos"],
                                 key=f"{key_prefix}_trechos")
     with c5:
-        hh_sel = st.multiselect("Hora da busca HH (col. C)", list(range(24)),
+        hh_sel = st.multiselect("Hora da busca HH (col. C)",
+                                list(range(24)),
                                 default=st.session_state["flt"]["hh"],
                                 key=f"{key_prefix}_hh")
 
     # Atualiza estado global
     st.session_state["flt"] = {
-        "dt_ini": dt_ini,
-        "dt_fim": dt_fim,
-        "advp":   advp_sel or [],
+        "dt_ini": dt_ini, "dt_fim": dt_fim,
+        "advp": advp_sel or [],
         "trechos": tr_sel or [],
-        "hh":     hh_sel or [],
+        "hh": hh_sel or [],
     }
 
     # Aplica nos dados
     mask = pd.Series(True, index=df_raw.index)
     mask &= (pd.to_datetime(df_raw["DATAHORA_BUSCA"], errors="coerce") >= pd.Timestamp(dt_ini))
     mask &= (pd.to_datetime(df_raw["DATAHORA_BUSCA"], errors="coerce") <= pd.Timestamp(dt_fim))
-    if advp_sel: mask &= df_raw["ADVP_CANON"].isin(advp_sel)
-    if tr_sel:   mask &= df_raw["TRECHO"].isin(tr_sel)
-    if hh_sel:   mask &= df_raw["HORA_HH"].isin(hh_sel)
+    if advp_sel:
+        mask &= df_raw["ADVP_CANON"].isin(advp_sel)
+    if tr_sel:
+        mask &= df_raw["TRECHO"].isin(tr_sel)
+    if hh_sel:
+        mask &= df_raw["HORA_HH"].isin(hh_sel)
+
     df = df_raw[mask].copy()
 
     # Linha informativa
@@ -219,7 +248,7 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
 
 # ========= Abas (funções 100% independentes) =========
 def tab1_painel(df_raw: pd.DataFrame):
-    df = render_filters(df_raw, key_prefix="t1")   # FILTROS NO TOPO
+    df = render_filters(df_raw, key_prefix="t1")  # FILTROS NO TOPO
     st.subheader("Painel")
 
     st.markdown("**Pesquisas únicas**")
@@ -236,25 +265,46 @@ def tab1_painel(df_raw: pd.DataFrame):
     )
     st.markdown("<hr>", unsafe_allow_html=True)
 
+    # Vencedores por posição
     W  = winners_by_position(df)
-    Wg = W.replace({"R1":{"MAXMILHAS":"GRUPO 123","123MILHAS":"GRUPO 123"},
-                    "R2":{"MAXMILHAS":"GRUPO 123","123MILHAS":"GRUPO 123"},
-                    "R3":{"MAXMILHAS":"GRUPO 123","123MILHAS":"GRUPO 123"}})
+    Wg = W.replace({
+        "R1":{"MAXMILHAS":"GRUPO 123","123MILHAS":"GRUPO 123"},
+        "R2":{"MAXMILHAS":"GRUPO 123","123MILHAS":"GRUPO 123"},
+        "R3":{"MAXMILHAS":"GRUPO 123","123MILHAS":"GRUPO 123"},
+    })
 
-    def bloco_percent(title: str, base: pd.DataFrame, target: str):
-        p1 = (base["R1"] == target).mean()*100
-        p2 = (base["R2"] == target).mean()*100
-        p3 = (base["R3"] == target).mean()*100
+    def bloco_percent(title: str, base: pd.DataFrame):
+        p1 = (base["R1"] == title).mean()*100
+        p2 = (base["R2"] == title).mean()*100
+        p3 = (base["R3"] == title).mean()*100
         st.markdown(f"### {title}")
         c1,c2,c3 = st.columns(3)
         for i,(lab,val) in enumerate([("1º",p1),("2º",p2),("3º",p3)]):
             with (c1 if i==0 else c2 if i==1 else c3):
-                st.caption(lab); st.markdown(f"<h3 style='margin-top:-8px;'>{val:.2f}%</h3>", unsafe_allow_html=True)
+                st.caption(lab)
+                st.markdown(f"<h3 style='margin-top:-8px;'>{val:.2f}%</h3>", unsafe_allow_html=True)
                 st.progress(int(round(val)))
 
-    bloco_percent("GRUPO 123", Wg, "GRUPO 123")
-    st.markdown("<hr>", unsafe_allow_html=True)
-    bloco_percent("FLIPMILHAS", W, "FLIPMILHAS")
+    # === NOVO: mostrar todas as agências (com GRUPO 123 agregado) ===
+    counts = pd.concat([W["R1"], W["R2"], W["R3"]]).value_counts()
+    agencies_sorted = [a for a in counts.index.tolist()
+                       if a not in ("SEM OFERTAS", "MAXMILHAS", "123MILHAS")]
+
+    targets = []
+    if any((Wg[["R1","R2","R3"]] == "GRUPO 123").to_numpy().ravel()):
+        targets.append("GRUPO 123")
+    targets.extend(agencies_sorted)
+
+    # Render em grade 2 colunas
+    for i in range(0, len(targets), 2):
+        cols = st.columns(2)
+        for j in range(2):
+            if i+j < len(targets):
+                tgt = targets[i+j]
+                with cols[j]:
+                    base = Wg if tgt == "GRUPO 123" else W
+                    bloco_percent(tgt, base)
+        st.markdown("<hr style='opacity:.1'>", unsafe_allow_html=True)
 
 def tab2_top3_agencias(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t2")
@@ -262,7 +312,8 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
     W = winners_by_position(df)
     vc = W["R1"].value_counts()
     t3 = vc.head(3).rename_axis("Agência/Cia").reset_index(name="Vitórias")
-    if t3.empty: st.info("Sem dados para os filtros."); return
+    if t3.empty:
+        st.info("Sem dados para os filtros."); return
     total = int(vc.sum()) or 1
     cols = st.columns(len(t3))
     for i, (_, row) in enumerate(t3.iterrows()):
@@ -276,7 +327,8 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t3")
     st.subheader("Top 3 Preços Mais Baratos (geral filtrado)")
     t = df.sort_values("PRECO").head(3)[["AGENCIA_NORM","TRECHO","PRECO","DATAHORA_BUSCA"]]
-    if t.empty: st.info("Sem dados."); return
+    if t.empty:
+        st.info("Sem dados."); return
     cols = st.columns(len(t))
     for i, (_,row) in enumerate(t.iterrows()):
         with cols[i]:
@@ -290,11 +342,13 @@ def tab4_ranking_agencias(df_raw: pd.DataFrame):
     W = winners_by_position(df)
     wins = W["R1"].value_counts().rename_axis("Agência/Cia").reset_index(name="Vitórias 1º")
     vol  = df["AGENCIA_NORM"].value_counts().rename_axis("Agência/Cia").reset_index(name="Ofertas")
-    rt   = vol.merge(wins, on="Agência/Cia", how="left").fillna(0)
+    rt = vol.merge(wins, on="Agência/Cia", how="left").fillna(0)
     rt["Taxa Vitória (%)"] = (rt["Vitórias 1º"]/rt["Ofertas"]*100).round(2)
     c1,c2 = st.columns(2)
-    with c1: st.altair_chart(make_bar(rt[["Agência/Cia","Vitórias 1º"]], "Vitórias 1º", "Agência/Cia"))
-    with c2: st.altair_chart(make_bar(rt[["Agência/Cia","Ofertas"]], "Ofertas", "Agência/Cia"))
+    with c1:
+        st.altair_chart(make_bar(rt[["Agência/Cia","Vitórias 1º"]], "Vitórias 1º", "Agência/Cia"))
+    with c2:
+        st.altair_chart(make_bar(rt[["Agência/Cia","Ofertas"]], "Ofertas", "Agência/Cia"))
 
 def tab5_preco_periodo(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t5")
@@ -316,7 +370,8 @@ def tab7_comportamento_cias(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t7")
     st.subheader("Comportamento Cias (share por Trecho)")
     base = df.groupby(["TRECHO","AGENCIA_NORM"]).size().rename("Qtde").reset_index()
-    if base.empty: st.info("Sem dados."); return
+    if base.empty:
+        st.info("Sem dados."); return
     top_trechos = base.groupby("TRECHO")["Qtde"].sum().sort_values(ascending=False).head(10).index.tolist()
     base = base[base["TRECHO"].isin(top_trechos)]
     total_trecho = base.groupby("TRECHO")["Qtde"].transform("sum")
@@ -344,7 +399,8 @@ def tab9_melhor_preco_diario(df_raw: pd.DataFrame):
     t = df.groupby(df["DATAHORA_BUSCA"].dt.date, as_index=False)["PRECO"].min().rename(
         columns={"DATAHORA_BUSCA":"Data","PRECO":"Melhor Preço"}
     )
-    if t.empty: st.info("Sem dados."); return
+    if t.empty:
+        st.info("Sem dados."); return
     t["Data"] = pd.to_datetime(t["Data"], dayfirst=True)
     st.altair_chart(make_line(t, "Data", "Melhor Preço"))
 
@@ -352,8 +408,8 @@ def tab10_exportar(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t10")
     st.subheader("Exportar dados filtrados")
     csv_bytes = df.to_csv(index=False).encode("utf-8-sig")
-    st.download_button("⬇️ Baixar CSV (filtro aplicado)", data=csv_bytes,
-                       file_name="OFERTAS_filtrado.csv", mime="text/csv")
+    st.download_button("⬇️ Baixar CSV (filtro aplicado)",
+                       data=csv_bytes, file_name="OFERTAS_filtrado.csv", mime="text/csv")
 
 # ========= Main =========
 def main():
@@ -374,34 +430,34 @@ def main():
     t = st.tabs(labels)
 
     # Cada aba é independente; filtros aparecem no TOPO de cada aba
-    with t[0]: 
+    with t[0]:
         try: tab1_painel(df_raw)
         except Exception as e: st.error("Erro na aba Painel"); st.exception(e)
-    with t[1]: 
+    with t[1]:
         try: tab2_top3_agencias(df_raw)
         except Exception as e: st.error("Erro na aba Top 3 Agências"); st.exception(e)
-    with t[2]: 
+    with t[2]:
         try: tab3_top3_precos(df_raw)
         except Exception as e: st.error("Erro na aba Top 3 Preços"); st.exception(e)
-    with t[3]: 
+    with t[3]:
         try: tab4_ranking_agencias(df_raw)
         except Exception as e: st.error("Erro na aba Ranking por Agências"); st.exception(e)
-    with t[4]: 
+    with t[4]:
         try: tab5_preco_periodo(df_raw)
         except Exception as e: st.error("Erro na aba Preço por Período do Dia"); st.exception(e)
-    with t[5]: 
+    with t[5]:
         try: tab6_buscas_vs_ofertas(df_raw)
         except Exception as e: st.error("Erro na aba Qtde de Buscas x Ofertas"); st.exception(e)
-    with t[6]: 
+    with t[6]:
         try: tab7_comportamento_cias(df_raw)
         except Exception as e: st.error("Erro na aba Comportamento Cias"); st.exception(e)
-    with t[7]: 
+    with t[7]:
         try: tab8_competitividade(df_raw)
         except Exception as e: st.error("Erro na aba Competitividade"); st.exception(e)
-    with t[8]: 
+    with t[8]:
         try: tab9_melhor_preco_diario(df_raw)
         except Exception as e: st.error("Erro na aba Melhor Preço Diário"); st.exception(e)
-    with t[9]: 
+    with t[9]:
         try: tab10_exportar(df_raw)
         except Exception as e: st.error("Erro na aba Exportar"); st.exception(e)
 
