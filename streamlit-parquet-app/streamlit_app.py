@@ -540,28 +540,29 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
 
 
 
+
 # ──────────────────── ABA: Top 3 Preços Mais Baratos (START) ─────────────────
-# ──────────────────── ABA: Top 3 Preços Mais Baratos (START) ─────────────────
+@register_tab("Top 3 Preços Mais Baratos")
 def tab3_top3_precos(df_raw: pd.DataFrame):
     """
     Estilo Painel (cards em grid), mantendo:
       - Pódio Top1/2/3 por (TRECHO → ADVP)
-      - Preços sem casas decimais (R$ X.XXX)
+      - Preço sem casas decimais (R$ X.XXX)
       - Data (col. H: DATAHORA_BUSCA) + Hora (col. C: HORA_BUSCA → 'HH:MM:SS')
-    Totalmente independente (CSS e helpers locais).
+    Função independente (helpers e CSS locais).
     """
     import re
     import numpy as _np
     import pandas as _pd
 
-    # ========== Filtros globais ==========
+    # ========= Filtros globais =========
     df = render_filters(df_raw, key_prefix="t3")
     st.subheader("Top 3 Preços Mais Baratos — estilo Painel")
     if df.empty:
-        st.info("Sem dados para os filtros."); 
+        st.info("Sem dados para os filtros.")
         return
 
-    # ========== CSS (baseado no Painel) ==========
+    # ========= CSS (baseado no Painel) =========
     PODIO_CSS = """
     <style>
     .cards-grid { display:grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap:10px; }
@@ -571,8 +572,8 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
     .card { border:1px solid #e9e9ee; border-radius:14px; padding:10px 12px; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.04); }
     .card .title { font-weight:650; font-size:15px; margin-bottom:8px; }
 
-    .goldcard   { background:#FFF9E5; border-color:#D4AF37; } /* ouro */
-    .silvercard { background:#F7F7FA; border-color:#C0C0C0; } /* prata */
+    .goldcard   { background:#FFF9E5; border-color:#D4AF37; } /* ouro   */
+    .silvercard { background:#F7F7FA; border-color:#C0C0C0; } /* prata  */
     .bronzecard { background:#FFF1E8; border-color:#CD7F32; } /* bronze */
 
     .row  { display:flex; gap:8px; flex-direction:column; }
@@ -586,38 +587,49 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
     """
     st.markdown(PODIO_CSS, unsafe_allow_html=True)
 
-    # ========== Helpers ==========
+    # ========= Helpers locais =========
     def parse_hora_text(val) -> str | None:
         """Converte texto variado para 'HH:MM:SS'."""
         s = str(val).strip()
-        if s == "" or s.lower() in {"nan","none","null"}: return None
-        # tenta datetime completo
+        if s == "" or s.lower() in {"nan","none","null"}:
+            return None
+        # tenta datetime completo (pega só hora)
         try:
             ts = _pd.to_datetime(s, dayfirst=True, errors="raise")
             return ts.strftime("%H:%M:%S")
         except Exception:
             pass
-        # fallback por dígitos
+        # fallback numérico: HH, HHMM, HHMMSS
         digs = "".join(ch for ch in s if ch.isdigit())
-        h=m=sec=None
+        h = m = sec = None
         try:
-            if len(digs) >= 6:      h,m,sec = int(digs[-6:-4]), int(digs[-4:-2]), int(digs[-2:])
-            elif len(digs) == 4:    h,m,sec = int(digs[:2]),   int(digs[2:4]),   0
-            elif len(digs) in (1,2):h,m,sec = int(digs),       0,                0
-        except Exception: pass
+            if len(digs) >= 6:
+                h, m, sec = int(digs[-6:-4]), int(digs[-4:-2]), int(digs[-2:])
+            elif len(digs) == 4:
+                h, m, sec = int(digs[:2]), int(digs[2:4]), 0
+            elif len(digs) in (1,2):
+                h, m, sec = int(digs), 0, 0
+        except Exception:
+            pass
+        # tenta com separadores (: ou .)
         if h is None:
-            parts = [p for p in s.replace(".",":").split(":") if p]
+            parts = [p for p in s.replace(".", ":").split(":") if p]
             try:
-                if len(parts)==2:   h,m,sec = int(parts[0]), int(parts[1]), 0
-                elif len(parts)==3: h,m,sec = int(parts[0]), int(parts[1]), int(parts[2])
-            except Exception: return None
-        if not (0<=h<=23 and 0<=m<=59 and 0<=sec<=59): return None
+                if len(parts) == 2:
+                    h, m, sec = int(parts[0]), int(parts[1]), 0
+                elif len(parts) == 3:
+                    h, m, sec = int(parts[0]), int(parts[1]), int(parts[2])
+            except Exception:
+                return None
+        if not (0 <= h <= 23 and 0 <= m <= 59 and 0 <= sec <= 59):
+            return None
         return f"{h:02d}:{m:02d}:{sec:02d}"
 
     def fmt_moeda_br(x) -> str:
         try:
             xv = float(x)
-            if not _np.isfinite(xv): return "R$ -"
+            if not _np.isfinite(xv):
+                return "R$ -"
             return "R$ " + f"{xv:,.0f}".replace(",", ".")
         except Exception:
             return "R$ -"
@@ -626,93 +638,78 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
         m = re.search(r"\d+", str(v))
         return (0, int(m.group())) if m else (1, str(v))
 
-    # ========== Normalização mínima ==========
+    # ========= Normalização mínima =========
     advp_col = "ADVP_CANON" if "ADVP_CANON" in df.columns else "ADVP"
     need = ["TRECHO", advp_col, "AGENCIA_NORM", "PRECO", "DATAHORA_BUSCA"]
     miss = [c for c in need if c not in df.columns]
     if miss:
-        st.error("Faltam colunas: " + ", ".join(miss)); 
+        st.error("Faltam colunas: " + ", ".join(miss))
         return
 
     base = df[["TRECHO", advp_col, "AGENCIA_NORM", "PRECO", "DATAHORA_BUSCA", "HORA_BUSCA"]].copy()
     base["PRECO"] = _pd.to_numeric(base["PRECO"], errors="coerce")
     base = base[base["PRECO"].notna()]
-    base["HORA_NORM"] = base["HORA_BUSCA"].apply(parse_hora_text) if "HORA_BUSCA" in base.columns else None
     base["DATAHORA_BUSCA"] = _pd.to_datetime(base["DATAHORA_BUSCA"], errors="coerce")
+    base["HORA_NORM"] = base["HORA_BUSCA"].apply(parse_hora_text) if "HORA_BUSCA" in base.columns else None
 
     if base.empty:
-        st.info("Sem preços válidos no recorte atual."); 
+        st.info("Sem preços válidos no recorte atual.")
         return
 
-    # ========== Núcleo vetorizado (Top1/2/3 por Trecho→ADVP) ==========
-    # Para cada (TRECHO, ADVP, AGENCIA): menor PRECO; em empate, data/hora mais recente.
+    # ========= Núcleo vetorizado =========
+    # (1) Para cada (TRECHO, ADVP, AGENCIA): menor PRECO; em empate, data/hora mais recente.
     sort_cols = ["TRECHO", advp_col, "AGENCIA_NORM", "PRECO", "DATAHORA_BUSCA", "HORA_NORM"]
     best_ag = (base.sort_values(sort_cols, ascending=[True, True, True, True, False, False])
                     .drop_duplicates(subset=["TRECHO", advp_col, "AGENCIA_NORM"], keep="first"))
 
-    # Ranking 1..N por (TRECHO, ADVP)
+    # (2) Ranking por (TRECHO, ADVP)
     best_ag = best_ag.sort_values(["TRECHO", advp_col, "PRECO", "DATAHORA_BUSCA"], ascending=[True, True, True, False])
     best_ag["RANK"] = best_ag.groupby(["TRECHO", advp_col]).cumcount() + 1
 
-    # Escolhe Top3 e prepara label dd/mm HH:MM:SS
+    # (3) Seleciona Top3 e monta label dd/mm HH:MM:SS
     top3 = best_ag[best_ag["RANK"] <= 3].copy()
     top3["DT_LABEL"] = top3["DATAHORA_BUSCA"].dt.strftime("%d/%m").fillna("")
     top3["HORA_NORM"] = top3["HORA_NORM"].fillna("")
     top3["DT_HORA"] = (top3["DT_LABEL"] + " " + top3["HORA_NORM"]).str.strip()
 
     if top3.empty:
-        st.info("Não há pódios para exibir."); 
+        st.info("Não há pódios para exibir.")
         return
 
     # Ordena cartões pelo menor Top1 (mais interessante primeiro)
-    order_helper = (top3[top3["RANK"]==1]
+    order_helper = (top3[top3["RANK"] == 1]
                     .sort_values(["PRECO", "DATAHORA_BUSCA"], ascending=[True, False])
                     [["TRECHO", advp_col]])
     keys = list(order_helper.itertuples(index=False, name=None))
 
-    # ========== HTML de cartão (3 linhas: 1º/2º/3º) ==========
+    # ========= Card HTML =========
     def podio_card_html(trecho: str, advp, rows: _pd.DataFrame, card_rank_cls: str = "") -> str:
         title = f"{trecho} • ADVP {advp}"
-        items_html = []
         rows = rows.sort_values("RANK")
-
+        items = []
         for _, r in rows.iterrows():
-            rank = int(r["RANK"])
-            agen = str(r["AGENCIA_NORM"])
-            preco = fmt_moeda_br(r["PRECO"])
-            dt_hora = str(r["DT_HORA"])
-            items_html.append(
+            items.append(
                 "<div class='item'>"
-                f"<span class='pos'>{rank}º</span>"
+                f"<span class='pos'>{int(r['RANK'])}º</span>"
                 "<div class='mid'>"
-                f"<div class='ag'>{agen}</div>"
-                f"<div class='sub'>{dt_hora}</div>"
+                f"<div class='ag'>{str(r['AGENCIA_NORM'])}</div>"
+                f"<div class='sub'>{str(r['DT_HORA'])}</div>"
                 "</div>"
-                f"<span class='val'>{preco}</span>"
+                f"<span class='val'>{fmt_moeda_br(r['PRECO'])}</span>"
                 "</div>"
             )
-
         cls = f"card {card_rank_cls}".strip()
-        return (
-            f"<div class='{cls}'>"
-            f"<div class='title'>{title}</div>"
-            f"<div class='row'>{''.join(items_html)}</div>"
-            f"</div>"
-        )
+        return f"<div class='{cls}'><div class='title'>{title}</div><div class='row'>{''.join(items)}</div></div>"
 
-    # ========== Render (grid igual ao Painel) ==========
+    # ========= Render (grid igual ao Painel) =========
     cards = []
     for idx, (trecho, advp) in enumerate(keys):
-        bloc = top3[(top3["TRECHO"]==trecho) & (top3[advp_col]==advp)]
+        bloc = top3[(top3["TRECHO"] == trecho) & (top3[advp_col] == advp)]
         rank_cls = "goldcard" if idx == 0 else ("silvercard" if idx == 1 else ("bronzecard" if idx == 2 else ""))
         cards.append(podio_card_html(str(trecho), advp, bloc, rank_cls))
 
     st.markdown(f"<div class='cards-grid'>{''.join(cards)}</div>", unsafe_allow_html=True)
 # ───────────────────── ABA: Top 3 Preços Mais Baratos (END) ──────────────────
-
-# ───────────────────── ABA: Top 3 Preços Mais Baratos (END) ──────────────────
-
-
 
 # ───────────────────────── ABA: Ranking por Agências (START) ──────────────────
 @register_tab("Ranking por Agências")
