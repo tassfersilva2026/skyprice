@@ -292,23 +292,206 @@ def tab1_painel(df_raw: pd.DataFrame):
     st.markdown(f"<div class='cards-grid'>{''.join(cards)}</div>", unsafe_allow_html=True)
 
 def tab2_top3_agencias(df_raw: pd.DataFrame):
+    # === Filtros padrão da sua app ===
     df = render_filters(df_raw, key_prefix="t2")
-    st.subheader("Top 3 Agências (mais vitórias em 1º)")
-    W = winners_by_position(df)
-    vc = W["R1"].value_counts()
-    t3 = vc.head(3).rename_axis("Agência/Cia").reset_index(name="Vitórias")
-    if t3.empty:
-        st.info("Sem dados para os filtros."); return
-    total = int(vc.sum()) or 1
-    cols = st.columns(len(t3))
-    for i, (_, row) in enumerate(t3.iterrows()):
-        nome = str(row["Agência/Cia"]); v = int(row["Vitórias"]); pct = round(v/total*100, 2)
-        with cols[i]:
-            st.markdown(f"**{nome}**")
-            st.markdown(f"<div style='font-size:18px;margin-top:-6px'>{pct:.2f}%</div>", unsafe_allow_html=True)
-            st.markdown("<div style='height:6px;background:#eee;border-radius:4px;'>"
-                        f"<div style='height:6px;width:{pct:.2f}%;background:#2F80ED;border-radius:4px;'></div></div>",
-                        unsafe_allow_html=True)
+    st.subheader("Top 3 Agências (por menor preço no trecho)")
+    if df.empty:
+        st.info("Sem dados para os filtros."); 
+        return
+
+    # === Helpers locais (independentes) ===
+    import numpy as _np
+    import pandas as _pd
+
+    def _is_null_like(v) -> bool:
+        if v is None: return True
+        if isinstance(v, float) and _np.isnan(v): return True
+        if isinstance(v, str) and v.strip().lower() in {"none", "nan", ""}: return True
+        return False
+
+    def style_smart_colwise(df_show: _pd.DataFrame, fmt_map: dict, grad_cols: list[str]):
+        """Tabela com fundo branco, formatação PT-BR e gradiente por coluna (fallback para colormaps nativos)."""
+        sty = df_show.style
+        sty = sty.set_properties(**{"background-color": "#FFFFFF", "color": "#111111"})
+        if fmt_map:
+            sty = sty.format(fmt_map, na_rep="-", decimal=",", thousands=".")
+        # gradiente coluna-a-coluna (só onde houver número)
+        for c in grad_cols:
+            if c in df_show.columns:
+                s = _pd.to_numeric(df_show[c], errors="coerce")
+                if s.notna().any():
+                    # usa colormaps básicos (sem depender de matplotlib no deploy)
+                    cmap_name = "Blues"
+                    if "Maxmilhas" in c:   cmap_name = "Greens"
+                    if "123milhas" in c:   cmap_name = "Oranges"
+                    if "FlipMilhas" in c:  cmap_name = "YlOrBr"
+                    if "Capo Viagens" in c: cmap_name = "PuRd"
+                    sty = sty.background_gradient(cmap=cmap_name, subset=[c])
+        # força branco para nulos/None
+        sty = sty.applymap(lambda v: "background-color: #FFFFFF; color: #111111" if _is_null_like(v) else "")
+        # borda sutil
+        sty = sty.set_table_styles([{
+            "selector": "tbody td, th",
+            "props": [("border", "1px solid #EEE")]
+        }])
+        return sty
+
+    def pct_diff(base, other):
+        if _pd.isna(base) or base == 0 or _pd.isna(other): 
+            return _np.nan
+        return (other - base) / base * 100
+
+    # === Padronização de nomes que você já usa (AGENCIA_NORM) ===
+    # No seu dataset AGENCIA_NORM é algo como 'MAXMILHAS', '123MILHAS', 'FLIPMILHAS', 'CAPOVIAGENS'
+    A_MAX   = "MAXMILHAS"
+    A_123   = "123MILHAS"
+    A_FLIP  = "FLIPMILHAS"
+    A_CAPO  = "CAPOVIAGENS"
+
+    # ============ Tabela 1 — Ranking Top 3 por Trecho (menor preço) ============
+    by_ag = (
+        df.groupby(["TRECHO", "AGENCIA_NORM"], as_index=False)
+          .agg(PRECO_MIN=("PRECO", "min"))
+    )
+
+    def _row_top3(g: _pd.DataFrame) -> _pd.Series:
+        g = g.sort_values("PRECO_MIN", ascending=True).reset_index(drop=True)
+        def name(i):  return g.loc[i, "AGENCIA_NORM"] if i < len(g) else "-"
+        def price(i): return g.loc[i, "PRECO_MIN"]    if i < len(g) else _np.nan
+        def price_of(ag):
+            m = g[g["AGENCIA_NORM"] == ag]
+            return (m["PRECO_MIN"].min() if not m.empty else _np.nan)
+
+        # rótulos de colunas amigáveis (só display)
+        return _pd.Series({
+            "Trecho": g["TRECHO"].iloc[0] if len(g) else "-",
+            "Agencia Top 1": name(0), "Preço Top 1": price(0),
+            "Agencia Top 2": name(1), "Preço Top 2": price(1),
+            "Agencia Top 3": name(2), "Preço Top 3": price(2),
+            "123milhas":     price_of(A_123),
+            "Maxmilhas":     price_of(A_MAX),
+            "FlipMilhas":    price_of(A_FLIP),
+            "Capo Viagens":  price_of(A_CAPO),
+        })
+
+    t1 = by_ag.groupby("TRECHO").apply(_row_top3).reset_index(drop=True)
+    for c in ["Preço Top 1","Preço Top 2","Preço Top 3","123milhas","Maxmilhas","FlipMilhas","Capo Viagens"]:
+        t1[c] = _pd.to_numeric(t1[c], errors="coerce")
+
+    t1.index = _np.arange(1, len(t1) + 1); t1.index.name = "#"
+
+    st.markdown("**Ranking Top 3 (Agências)**")
+    cols_preco_t1 = ["Preço Top 1","Preço Top 2","Preço Top 3","123milhas","Maxmilhas","FlipMilhas","Capo Viagens"]
+    fmt_map_t1    = {c: "{:,.0f}" for c in cols_preco_t1}
+    sty1 = style_smart_colwise(t1, fmt_map_t1, grad_cols=cols_preco_t1)
+    st.dataframe(sty1, use_container_width=True)
+
+    # ============ Tabela 2 — % Diferença (base: Top1) ============
+    rows2 = []
+    for _, r in t1.reset_index().iterrows():
+        base = r["Preço Top 1"]
+        rows2.append({
+            "#": r["#"],
+            "Trecho": r["Trecho"],
+            "Agencia Top 1": r["Agencia Top 1"],
+            "Preço Top 1": r["Preço Top 1"],
+            "Agencia Top 2": r["Agencia Top 2"],
+            "% Dif Top2 vs Top1": pct_diff(base, r["Preço Top 2"]),
+            "Agencia Top 3": r["Agencia Top 3"],
+            "% Dif Top3 vs Top1": pct_diff(base, r["Preço Top 3"]),
+            "123milhas": pct_diff(base, r["123milhas"]),
+            "Maxmilhas": pct_diff(base, r["Maxmilhas"]),
+            "FlipMilhas": pct_diff(base, r["FlipMilhas"]),
+            "Capo Viagens": pct_diff(base, r["Capo Viagens"]),
+        })
+    t2 = _pd.DataFrame(rows2).set_index("#"); t2.index.name = "#"
+
+    st.markdown("**% Diferença entre Agências (base: Top 1)**")
+    pct_cols   = ["% Dif Top2 vs Top1","% Dif Top3 vs Top1","123milhas","Maxmilhas","FlipMilhas","Capo Viagens"]
+    fmt_map_t2 = {"Preço Top 1": "{:,.0f}"} | {c: "{:.2f}%" for c in pct_cols}
+    grad_cols  = ["Preço Top 1"] + pct_cols
+    sty2 = style_smart_colwise(t2, fmt_map_t2, grad_cols=grad_cols)
+    st.dataframe(sty2, use_container_width=True)
+
+    # ============ Tabela 3/4 — Comparativo com Cia Aérea (se existir col 'CIA') ============
+    if "CIA" not in df.columns:
+        st.info("Coluna de Cia Aérea ('CIA') não encontrada. As tabelas 3/4 dependem dela.")
+        return
+
+    by_air = (
+        df.groupby(["TRECHO","CIA"], as_index=False)
+          .agg(PRECO_AIR_MIN=("PRECO", "min"))
+    )
+    idx = by_air.groupby("TRECHO")["PRECO_AIR_MIN"].idxmin()
+    min_air = by_air.loc[idx, ["TRECHO", "CIA", "PRECO_AIR_MIN"]] \
+                    .rename(columns={"CIA": "Cia Menor Preço", "PRECO_AIR_MIN": "Preço Menor Valor"})
+
+    def best_ag(sub: _pd.DataFrame, ag_norm: str):
+        dfa = sub[sub["AGENCIA_NORM"] == ag_norm]
+        if dfa.empty: 
+            return (_np.nan, "-")
+        i = dfa["PRECO"].idxmin()
+        return (float(dfa.loc[i, "PRECO"]), str(dfa.loc[i, "CIA"]))
+
+    rows3 = []
+    for trecho, sub in df.groupby("TRECHO"):
+        p123, c123   = best_ag(sub, A_123)
+        pmax, cmax   = best_ag(sub, A_MAX)
+        pflip, cflip = best_ag(sub, A_FLIP)
+        pcapo, ccapo = best_ag(sub, A_CAPO)
+
+        base = min_air[min_air["TRECHO"] == trecho]
+        if base.empty:
+            cia_min, pmin = "-", _np.nan
+        else:
+            cia_min = base["Cia Menor Preço"].iloc[0]
+            pmin    = float(base["Preço Menor Valor"].iloc[0])
+
+        rows3.append({
+            "Trecho": trecho,
+            "Cia Menor Preço": cia_min,
+            "Preço Menor Valor": pmin,
+            "Preço Maxmilhas": pmax, "Cia Maxmilhas": cmax,
+            "Preço 123milhas": p123, "Cia 123milhas": c123,
+            "Preço FlipMilhas": pflip, "Cia FlipMilhas": cflip,
+            "Preço Capo Viagens": pcapo, "Cia Capo Viagens": ccapo,
+        })
+
+    t3 = _pd.DataFrame(rows3)
+    t3.index = _np.arange(1, len(t3) + 1); t3.index.name = "#"
+
+    st.markdown("**Comparativo Menor Preço Cia × Agências de Milhas**")
+    preco_cols_t3 = [c for c in t3.columns if c.startswith("Preço")] + ["Preço Menor Valor"]
+    preco_cols_t3 = list(dict.fromkeys(preco_cols_t3))
+    fmt_map_t3 = {c: "{:,.0f}" for c in preco_cols_t3}
+    sty3 = style_smart_colwise(t3, fmt_map_t3, grad_cols=preco_cols_t3)
+    st.dataframe(sty3, use_container_width=True)
+
+    # Tabela 4 — % comparativo vs menor preço da Cia
+    def pct_vs_base(base, x):
+        if _pd.isna(base) or base == 0 or _pd.isna(x): 
+            return _np.nan
+        return (x - base) / base * 100
+
+    t4 = t3[["Trecho", "Cia Menor Preço", "Preço Menor Valor"]].copy()
+    for label, col_cia, col_preco in [
+        ("Maxmilhas", "Cia Maxmilhas", "Preço Maxmilhas"),
+        ("123milhas", "Cia 123milhas", "Preço 123milhas"),
+        ("FlipMilhas", "Cia FlipMilhas", "Preço FlipMilhas"),
+        ("Capo Viagens", "Cia Capo Viagens", "Preço Capo Viagens"),
+    ]:
+        t4[f"Cia {label}"]   = t3[col_cia]
+        t4[f"% Dif {label}"] = [pct_vs_base(b, x) for b, x in zip(t3["Preço Menor Valor"], t3[col_preco])]
+
+    t4.index = _np.arange(1, len(t4) + 1); t4.index.name = "#"
+
+    st.markdown("**%Comparativo Menor Preço Cia × Agências de Milhas**")
+    pct_cols_t4 = [c for c in t4.columns if c.startswith("% Dif ")]
+    fmt_map_t4  = {"Preço Menor Valor": "{:,.0f}"} | {c: "{:.2f}%" for c in pct_cols_t4}
+    grad_cols_t4 = ["Preço Menor Valor"] + pct_cols_t4
+    sty4 = style_smart_colwise(t4, fmt_map_t4, grad_cols=grad_cols_t4)
+    st.dataframe(sty4, use_container_width=True)
+
 
 def tab3_top3_precos(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t3")
