@@ -48,9 +48,9 @@ def advp_nearest(x) -> int:
 def load_base(path: Path) -> pd.DataFrame:
     if not path.exists():
         st.error(f"Arquivo obrigatório não encontrado: {path.as_posix()}"); st.stop()
-
     df = pd.read_parquet(path)
 
+    # mapear colunas pela posição se necessário
     colmap = {
         0:"IDPESQUISA", 1:"CIA", 2:"HORA_BUSCA", 3:"HORA_PARTIDA", 4:"HORA_CHEGADA",
         5:"TIPO_VOO", 6:"DATA_EMBARQUE", 7:"DATAHORA_BUSCA", 8:"AGENCIA_COMP",
@@ -115,12 +115,21 @@ def last_update_from_cols(df: pd.DataFrame) -> str:
         return f"{max_d.strftime('%d/%m/%Y')} - {max_h.strftime('%H:%M:%S')}"
     return f"{max_d.strftime('%d/%m/%Y')}"
 
-# ========= Estilos das caixinhas =========
+# ========= Estilos das caixinhas e grade (4 por linha) =========
 CARD_CSS = """
 <style>
+.cards-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+@media (max-width: 1200px) { .cards-grid { grid-template-columns: repeat(3, minmax(0,1fr)); } }
+@media (max-width: 900px)  { .cards-grid { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+@media (max-width: 600px)  { .cards-grid { grid-template-columns: 1fr; } }
+
 .card {
   border:1px solid #e9e9ee; border-radius:14px; padding:10px 12px;
-  margin:6px 0; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.04);
+  background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.04);
 }
 .card .title { font-weight:650; font-size:15px; margin-bottom:6px; }
 .row { display:flex; gap:10px; }
@@ -148,7 +157,7 @@ def card_html(nome: str, p1: float, p2: float, p3: float) -> str:
     </div>
     """
 
-# ========= Gráficos genéricos =========
+# ========= Gráficos (Altair) =========
 def make_bar(df: pd.DataFrame, x_col: str, y_col: str, sort_y_desc: bool = True):
     d = df[[y_col, x_col]].copy()
     d[x_col] = pd.to_numeric(d[x_col], errors="coerce")
@@ -240,7 +249,7 @@ def tab1_painel(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t1")
     st.subheader("Painel")
 
-    # KPIs rápidos e CSS dos cards
+    # KPIs rápidos + CSS
     total_pesq = df["IDPESQUISA"].nunique() or 1
     cov = {r: df.loc[df["RANKING"].eq(r), "IDPESQUISA"].nunique() for r in (1,2,3)}
     st.markdown(
@@ -264,7 +273,7 @@ def tab1_painel(df_raw: pd.DataFrame):
 
     # Alvos: TODAS (mesmo zeradas) + GRUPO 123 + SEM OFERTAS
     agencias_all = sorted(set(df_raw["AGENCIA_NORM"].dropna().astype(str)))
-    targets_base = list(agencias_all)  # inclui 123MILHAS e MAXMILHAS separadas
+    targets_base = list(agencias_all)  # inclui 123MILHAS e MAXMILHAS separados
     if "GRUPO 123" not in targets_base:
         targets_base.insert(0, "GRUPO 123")
     if "SEM OFERTAS" not in targets_base:
@@ -280,10 +289,12 @@ def tab1_painel(df_raw: pd.DataFrame):
     # Ordena pelo % em 1º (desc)
     targets_sorted = sorted(targets_base, key=lambda t: pcts_for_target(t)[0], reverse=True)
 
-    # Render caixinhas (vertical)
+    # Render caixinhas em grade (4 por linha)
+    cards = []
     for tgt in targets_sorted:
         p1, p2, p3 = pcts_for_target(tgt)
-        st.markdown(card_html(tgt, p1, p2, p3), unsafe_allow_html=True)
+        cards.append(card_html(tgt, p1, p2, p3))
+    st.markdown(f"<div class='cards-grid'>{''.join(cards)}</div>", unsafe_allow_html=True)
 
 def tab2_top3_agencias(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t2")
