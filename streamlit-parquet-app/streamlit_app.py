@@ -221,7 +221,7 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
 # ========= Abas (funções 100% independentes) =========
 def tab1_painel(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t1") # FILTROS NO TOPO
-    st.subheader("Painel")
+    st.subheader("Painel de Performance")
     st.markdown("**Pesquisas únicas**")
     st.markdown(f"<h2 style='margin-top:-10px;'>{fmt_int(df['IDPESQUISA'].nunique())}</h2>", unsafe_allow_html=True)
     
@@ -234,39 +234,44 @@ def tab1_painel(df_raw: pd.DataFrame):
         f"<b>3º</b>: {fmt_int(cov[3])} ({cov[3]/total_pesq*100:.1f}%)</div>",
         unsafe_allow_html=True
     )
-    st.markdown("<hr>", unsafe_allow_html=True)
+    st.markdown("---",)
 
     W = winners_by_position(df)
 
-    def bloco_percent(title: str, base: pd.DataFrame, target: str):
+    # --- INÍCIO DA CORREÇÃO DE LAYOUT ---
+    def bloco_percent_compacto(title: str, base: pd.DataFrame, target: str):
+        """Função redesenhada para ser mais compacta, usando st.metric."""
         if base.empty:
             p1, p2, p3 = 0.0, 0.0, 0.0
         else:
-            p1 = (base["R1"] == target).mean()*100
-            p2 = (base["R2"] == target).mean()*100
-            p3 = (base["R3"] == target).mean()*100
+            p1 = (base["R1"] == target).mean() * 100
+            p2 = (base["R2"] == target).mean() * 100
+            p3 = (base["R3"] == target).mean() * 100
         
-        # Garante que NaN vire 0 para evitar erros
         p1, p2, p3 = np.nan_to_num(p1), np.nan_to_num(p2), np.nan_to_num(p3)
         
-        st.markdown(f"### {title}")
-        c1,c2,c3 = st.columns(3)
-        for i,(lab,val) in enumerate([("1º",p1),("2º",p2),("3º",p3)]):
-            with (c1 if i==0 else c2 if i==1 else c3):
-                st.caption(lab);
-                st.markdown(f"<h3 style='margin-top:-8px;'>{val:.2f}%</h3>", unsafe_allow_html=True)
-                st.progress(int(round(val)))
+        # Usa um título menos espaçoso
+        st.markdown(f"**{title}**")
+        
+        # Usa st.metric em colunas para uma visão compacta, sem barra de progresso
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("1º lugar", f"{p1:.2f}%")
+        with c2:
+            st.metric("2º lugar", f"{p2:.2f}%")
+        with c3:
+            st.metric("3º lugar", f"{p3:.2f}%")
+    # --- FIM DA CORREÇÃO DE LAYOUT ---
 
-    # --- INÍCIO DA CORREÇÃO ---
-    
     # 1. Apresentar GRUPO 123 (Visão Consolidada)
     Wg = W.replace({
         "R1": {"MAXMILHAS": "GRUPO 123", "123MILHAS": "GRUPO 123"},
         "R2": {"MAXMILHAS": "GRUPO 123", "123MILHAS": "GRUPO 123"},
         "R3": {"MAXMILHAS": "GRUPO 123", "123MILHAS": "GRUPO 123"}
     })
-    bloco_percent("GRUPO 123", Wg, "GRUPO 123")
-    st.markdown("<hr>", unsafe_allow_html=True)
+    bloco_percent_compacto("GRUPO 123", Wg, "GRUPO 123")
+    st.markdown("---")
+
 
     # 2. Apresentar TODAS as agências individualmente (incluindo 123Milhas e MaxMilhas)
     if not W.empty:
@@ -281,13 +286,12 @@ def tab1_painel(df_raw: pd.DataFrame):
         
         # Loop para exibir o bloco de cada agência individual
         for agency in agencies_to_show:
-            bloco_percent(agency, W, agency)
-            st.markdown("<hr>", unsafe_allow_html=True)
+            bloco_percent_compacto(agency, W, agency)
+            # Remove o <hr> para economizar espaço
+    st.markdown("---")
 
     # 3. Apresentar o bloco de "% SEM OFERTAS"
-    bloco_percent("SEM OFERTAS", W, "SEM OFERTAS")
-    
-    # --- FIM DA CORREÇÃO ---
+    bloco_percent_compacto("SEM OFERTAS", W, "SEM OFERTAS")
 
 def tab2_top3_agencias(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t2")
