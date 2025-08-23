@@ -976,18 +976,375 @@ def tab4_ranking_agencias(df_raw: pd.DataFrame):
     )
 # ───────────────────── ABA 4: Ranking por Agências (END) ─────────────────────
 
-# ─────────────────────────── ABA: Ranking por Agências (END) ──────────────────
+# ──────────────── ABA 4: Melhor Preço por Período do Dia (START) ───────────────
+@register_tab("Melhor Preço por Período do Dia")
+def tab4_melhor_preco_por_periodo(df_raw: pd.DataFrame):
+    """
+    Adaptação da página "04 Melhor Preço por Hora":
+      • Usa df filtrado via render_filters (app).
+      • Hora do VOO: tenta HORA_PARTIDA; se faltar, tenta HORA_CHEGADA; senão usa HORA_HH (hora da busca).
+      • Séries por hora (0–23): Melhor Preço (concorrente vencedor), 123MILHAS, MAXMILHAS.
+      • 4 seções: Madrugada / Manhã / Tarde / Noite (Y invertido: menor em cima).
+      • Top3 por hora com rótulos; 123 e MAX viram “Grupo 123” se diferença ≤ R$0,01.
+    """
+    import re
+    import numpy as np
+    import pandas as pd
+    import plotly.express as px
+    import plotly.graph_objects as go
+    import streamlit as st
 
+    # ================== 1) Base com filtros globais ==================
+    df = render_filters(df_raw, key_prefix="t4_new")
+    st.subheader("Ranking de Melhor Preço por Período do Dia")
+    if df.empty:
+        st.info("Sem resultados para os filtros selecionados."); 
+        return
 
-# ─────────────────────── ABA: Preço por Período do Dia (START) ────────────────
-@register_tab("Preço por Período do Dia")
-def tab5_preco_periodo(df_raw: pd.DataFrame):
-    df = render_filters(df_raw, key_prefix="t5")
-    st.subheader("Preço por Período do Dia (HH da busca)")
-    t = df.groupby("HORA_HH", as_index=False)["PRECO"].median().rename(columns={"PRECO":"Preço Mediano"})
-    st.altair_chart(make_line(t, "HORA_HH", "Preço Mediano"), use_container_width=True)
-# ───────────────────────── ABA: Preço por Período do Dia (END) ────────────────
+    # ================== 2) Colunas-alvo & normalizações ==================
+    # Agência normalizada já existe no app como AGENCIA_NORM
+    if "AGENCIA_NORM" not in df.columns:
+        st.error("Coluna AGENCIA_NORM não encontrada."); 
+        return
 
+    # Preço: já está numérico no app, mas deixo robusto se vier texto
+    def parse_price_cell(x) -> float | None:
+        if pd.isna(x): return None
+        try:
+            # se já for número, vai direto
+            if isinstance(x, (int, float, np.number)):
+                v = float(x)
+                return v if np.isfinite(v) and v > 0 else None
+            s = str(x)
+            m = re.search(
+                r"(?:R\$\s*)?("                       # opcional "R$"
+                r"\d{1,3}(?:\.\d{3})*,\d{2}"          # 1.234,56
+                r"|\d+,\d{2}"                         # 1234,56
+                r"|\d{1,3}(?:\.\d{3})+"               # 1.234
+                r"|\d+"                               # 1234
+                r")", s
+            )
+            if not m: return None
+            num = m.group(1).replace(".", "").replace(",", ".")
+            v = float(num)
+            return v if np.isfinite(v) and v > 0 else None
+        except:
+            return None
+
+    price_series = (
+        df["PRECO"] if "PRECO" in df.columns else df.get("VALOR", pd.Series([np.nan]*len(df)))
+    )
+    df["_PRICE_NUM"] = pd.to_numeric(price_series, errors="coerce")
+    # fallback de parse se veio tudo NaN (ex.: strings)
+    if df["_PRICE_NUM"].isna().all():
+        df["_PRICE_NUM"] = price_series.apply(parse_price_cell)
+
+    df = df[df["_PRICE_NUM"].notna() & (df["_PRICE_NUM"] > 0)].copy()
+    if df.empty:
+        st.info("Sem preços válidos no recorte atual."); 
+        return
+
+    # Hora do voo → 0..23
+    def to_hour_any(v) -> float | None:
+        try:
+            if pd.isna(v): return np.nan
+            s = str(v).strip()
+            if ":" in s:
+                # pega HH dos formatos HH:MM[:SS]
+                hh = s.split(":")[0]
+                return float(int(hh))
+            return float(int(float(s)))
+        except:
+            return np.nan
+
+    # preferência: HORA_PARTIDA > HORA_CHEGADA > HORA_HH (hora da busca)
+    if "HORA_PARTIDA" in df.columns:
+        hour_src = df["HORA_PARTIDA"].apply(to_hour_any)
+    elif "HORA_CHEGADA" in df.columns:
+        hour_src = df["HORA_CHEGADA"].apply(to_hour_any)
+    else:
+        # HORA_HH já é int 0..23 calculado no app; converto p/ float
+        hour_src = pd.to_numeric(df.get("HORA_HH", pd.Series([np.nan]*len(df))), errors="coerce").astype(float)
+
+    df["HORA"] = hour_src
+    df = df[df["HORA"].between(0, 23, inclusive="both")].copy()
+    if df.empty:
+        st.info("Não há horas do voo (0–23) válidas no recorte."); 
+        return
+
+    # ConcorrenteNome = Agência + cia (se existir)
+    cia_col = "CIA" if "CIA" in df.columns else None
+
+    # ================== 3) Séries por hora (Melhor / 123 / MAX) ==================
+    A_123 = "123MILHAS"
+    A_MAX = "MAXMILHAS"
+
+    g_123 = (df[df["AGENCIA_NORM"].eq(A_123)]
+             .groupby("HORA", as_index=False)["_PRICE_NUM"].min()
+             .rename(columns={"_PRICE_NUM": "Preco_123"}))
+
+    g_max = (df[df["AGENCIA_NORM"].eq(A_MAX)]
+             .groupby("HORA", as_index=False)["_PRICE_NUM"].min()
+             .rename(columns={"_PRICE_NUM": "Preco_MAX"}))
+
+    idxmin_all = df.groupby("HORA")["_PRICE_NUM"].idxmin()
+    cols = ["HORA", "_PRICE_NUM", "AGENCIA_NORM"]
+    if cia_col: cols.append(cia_col)
+    melhor = df.loc[idxmin_all, cols].copy()
+    melhor.rename(columns={"_PRICE_NUM": "Preco_MELHOR"}, inplace=True)
+    if cia_col:
+        melhor["ConcorrenteNome"] = melhor["AGENCIA_NORM"].astype(str) + " • " + melhor[cia_col].astype(str)
+    else:
+        melhor["ConcorrenteNome"] = melhor["AGENCIA_NORM"].astype(str)
+
+    base = pd.DataFrame({"HORA": list(range(24))})
+    base = (base.merge(g_123, how="left", on="HORA")
+                .merge(g_max,  how="left", on="HORA")
+                .merge(melhor[["HORA", "Preco_MELHOR", "ConcorrenteNome"]], how="left", on="HORA"))
+
+    long_main = base.melt(
+        id_vars=["HORA","ConcorrenteNome"],
+        value_vars=["Preco_MELHOR","Preco_123","Preco_MAX"],
+        var_name="Serie", value_name="Preco"
+    )
+    legend_main = {"Preco_MELHOR":"Melhor Preço", "Preco_123":"123MILHAS", "Preco_MAX":"MAXMILHAS"}
+    long_main["Agência"] = long_main["Serie"].map(legend_main)
+    long_main.drop(columns=["Serie"], inplace=True)
+
+    def periodo(h):
+        h = int(h)
+        if   0 <= h <= 5:  return "Madrugada"
+        elif 6 <= h <= 11: return "Manhã"
+        elif 12 <= h <= 17:return "Tarde"
+        else:              return "Noite"
+
+    long_main["Período"] = long_main["HORA"].apply(periodo)
+
+    COLORS_MAIN = {
+        "Melhor Preço":"#2962FF",  # azul
+        "123MILHAS":   "#FF8A00",  # laranja
+        "MAXMILHAS":   "#00C853",  # verde
+    }
+
+    secoes = [
+        ("Madrugada", [0, 1, 2, 3, 4, 5]),
+        ("Manhã",     [6, 7, 8, 9, 10, 11]),
+        ("Tarde",     [12, 13, 14, 15, 16, 17]),
+        ("Noite",     [18, 19, 20, 21, 22, 23]),
+    ]
+
+    def desenha_secao_main(titulo: str, horas_fixas: list[int]):
+        dfp = long_main[(long_main["HORA"].isin(horas_fixas)) & (~long_main["Preco"].isna())].copy()
+        if dfp.empty:
+            st.info(f"Sem dados para {titulo}."); return
+
+        fig = px.line(
+            dfp.sort_values(["Agência","HORA"]),
+            x="HORA", y="Preco",
+            color="Agência", markers=True,
+            color_discrete_map=COLORS_MAIN,
+            category_orders={"Agência":["Melhor Preço","123MILHAS","MAXMILHAS"]},
+            labels={"HORA":"Hora do Voo", "Preco":"Preço (R$)"},
+            title=titulo
+        )
+        fig.update_traces(line=dict(width=3))
+        # hovers
+        for tr in fig.data:
+            name = tr.name
+            sub = dfp[dfp["Agência"]==name].sort_values("HORA")
+            if name == "Melhor Preço":
+                nomes = sub["ConcorrenteNome"].fillna("").tolist()
+                tr.customdata = np.array(nomes, dtype=object).reshape(-1,1)
+                tr.hovertemplate = "Hora %{x} • %{customdata[0]}<br>Preço R$ %{y:,.0f}<extra></extra>"
+            else:
+                tr.hovertemplate = "Hora %{x}<br>%{fullData.name}<br>Preço R$ %{y:,.0f}<extra></extra>"
+
+        # padding + eixo Y invertido
+        x0, x1 = min(horas_fixas), max(horas_fixas)
+        fig.update_xaxes(
+            tickmode="array",
+            tickvals=horas_fixas, ticktext=[str(h) for h in horas_fixas],
+            range=[x0 - 0.35, x1 + 0.35],
+            showgrid=False, showline=False, zeroline=False, ticks="", ticklen=0
+        )
+        fig.update_yaxes(
+            autorange="reversed",  # menor em cima
+            tickprefix="R$ ", separatethousands=True,
+            showgrid=True, gridcolor="rgba(0,0,0,0.06)",
+            showline=False, zeroline=False, ticks="", ticklen=0
+        )
+        fig.update_layout(
+            template="simple_white",
+            legend_title_text="Agência",
+            legend=dict(orientation="v", x=1.02, y=1.0, bgcolor="rgba(0,0,0,0)"),
+            margin=dict(l=20, r=28, t=45, b=10),
+            height=420
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
+    for titulo, horas in secoes:
+        desenha_secao_main(titulo, horas)
+
+    # ================== 4) Agências campeãs (TOP3) por hora ==================
+    st.subheader("Agências Campeãs (TOP3)")
+    st.caption("123MILHAS e MAXMILHAS viram “Grupo 123” quando a diferença entre eles for ≤ R$0,01 no mesmo horário.")
+
+    df_min_ag_h = (
+        df.groupby(["HORA","AGENCIA_NORM"], as_index=False)["_PRICE_NUM"]
+          .min()
+          .rename(columns={"_PRICE_NUM":"Preco"})
+    )
+
+    # Colapsa 123/MAX em "Grupo 123" quando diferença ≤ R$0,01 no MESMO horário
+    piv = df_min_ag_h.pivot(index="HORA", columns="AGENCIA_NORM", values="Preco")
+    s123 = piv.get(A_123)
+    smax = piv.get(A_MAX)
+    eq_hours = []
+    if s123 is not None and smax is not None:
+        mask_eq = s123.notna() & smax.notna() & (s123.sub(smax).abs() <= 0.01)
+        eq_hours = piv.index[mask_eq].tolist()
+
+    df_group = pd.DataFrame({
+        "HORA": eq_hours,
+        "AGENCIA_NORM": "Grupo 123",
+        "Preco": s123.loc[eq_hours].values if s123 is not None and len(eq_hours)>0 else []
+    })
+
+    mask_remove = (df_min_ag_h["HORA"].isin(eq_hours)) & (df_min_ag_h["AGENCIA_NORM"].isin([A_123, A_MAX]))
+    df_min_ag_h2 = pd.concat([df_min_ag_h.loc[~mask_remove], df_group], ignore_index=True)
+
+    # Top 3 por hora
+    top3 = (
+        df_min_ag_h2.sort_values(["HORA","Preco"])
+                    .groupby("HORA", as_index=False, group_keys=False)
+                    .apply(lambda g: g.head(3))
+                    .reset_index(drop=True)
+    )
+    top3["Rank"] = top3.groupby("HORA").cumcount() + 1
+    top3["RankLabel"] = top3["Rank"].map({1:"Top 1", 2:"Top 2", 3:"Top 3"})
+
+    def _apply_label_jitter(d: pd.DataFrame) -> pd.DataFrame:
+        if d.empty:
+            d = d.copy(); d["Preco_text"] = d.get("Preco", pd.Series(dtype=float)); return d
+        d = d.copy()
+        d["dup_idx"]  = d.groupby(["HORA","Preco"]).cumcount()
+        d["dup_size"] = d.groupby(["HORA","Preco"])["Preco"].transform("size")
+        y_min, y_max = float(d["Preco"].min()), float(d["Preco"].max())
+        y_range = max(1.0, y_max - y_min)
+        step = max(y_range * 0.003, 0.3)
+        center = (d["dup_size"] - 1) / 2.0
+        d["Preco_text"] = d["Preco"] + (d["dup_idx"] - center) * step
+        return d
+
+    def _offset_for_reversed(d: pd.DataFrame, horas_fixas: list[int]) -> pd.DataFrame:
+        if d.empty:
+            d = d.copy(); d["x_text"]=d.get("HORA", pd.Series(dtype=float)); d["y_text"]=d.get("Preco_text", pd.Series(dtype=float)); d["textpos"]="middle left"; return d
+        d = d.copy()
+        x_min, x_max = min(horas_fixas), max(horas_fixas)
+        x_span = max(1.0, x_max - x_min)
+        dx = max(x_span * 0.002, 0.02)
+        y_min, y_max = float(d["Preco_text"].min()), float(d["Preco_text"].max())
+        y_range = max(1.0, y_max - y_min)
+        dy = max(y_range * 0.003, 0.3)
+        d["x_text"] = d["HORA"] + dx
+        d["y_text"] = d["Preco_text"] - dy   # invertido: “acima” é menor
+        d["textpos"] = "middle left"
+        is_first = d["HORA"] <= x_min
+        is_last  = d["HORA"] >= x_max
+        d.loc[is_first, "x_text"] = np.maximum(d.loc[is_first, "HORA"] + dx, x_min + 0.06)
+        d.loc[is_last,  "x_text"] = d.loc[is_last,  "HORA"] - dx
+        d.loc[is_last,  "textpos"] = "middle right"
+        return d
+
+    LABEL_COLORS = {
+        "Grupo 123": "#0D47A1",  # azul forte
+        "MAXMILHAS": "#00C853",  # verde
+        "123MILHAS": "#FF8A00",  # laranja
+    }
+    RANK_COLORS = {"Top 1":"#FFD700", "Top 2":"#9E9E9E", "Top 3":"#CD7F32"}
+    BOLD_FAMILY = "Arial Black, DejaVu Sans, sans-serif"
+
+    def desenha_secao_top3(titulo: str, horas_fixas: list[int]):
+        dfp = top3[top3["HORA"].isin(horas_fixas)].copy()
+        if dfp.empty:
+            st.info(f"Sem dados para {titulo}."); return
+
+        dfp["EmpresaRotulo"] = dfp["AGENCIA_NORM"].astype(str)
+
+        fig = px.line(
+            dfp.sort_values(["Rank","HORA"]),
+            x="HORA", y="Preco",
+            color="RankLabel", markers=True, text=None,
+            color_discrete_map=RANK_COLORS,
+            category_orders={"RankLabel":["Top 1","Top 2","Top 3"]},
+            labels={"HORA":"Hora do Voo", "Preco":"Preço (R$)"},
+            title=titulo
+        )
+        fig.update_traces(line=dict(width=3))
+        for tr in fig.data:
+            sub = dfp[dfp["RankLabel"]==tr.name].sort_values("HORA")
+            tr.customdata = np.array(sub["AGENCIA_NORM"], dtype=object).reshape(-1,1)
+            tr.hovertemplate = "Hora %{x} • %{customdata[0]}<br>Preço R$ %{y:,.0f}<extra></extra>"
+
+        # Rótulos colados (com Y invertido)
+        dfp_lbl = _apply_label_jitter(dfp)
+        dfp_lbl = _offset_for_reversed(dfp_lbl, horas_fixas)
+
+        # Especiais em negrito/cor
+        for key in ["Grupo 123", "123MILHAS", "MAXMILHAS"]:
+            sub = dfp_lbl[dfp_lbl["EmpresaRotulo"]==key].sort_values(["Rank","HORA"])
+            if sub.empty: continue
+            fig.add_trace(go.Scatter(
+                x=sub["x_text"], y=sub["y_text"], mode="text",
+                text=sub["EmpresaRotulo"], textposition=sub["textpos"].tolist(),
+                textfont=dict(size=14, color=LABEL_COLORS[key], family=BOLD_FAMILY),
+                showlegend=False, hoverinfo="skip", cliponaxis=False
+            ))
+        # Demais em preto
+        sub_n = dfp_lbl[~dfp_lbl["EmpresaRotulo"].isin(LABEL_COLORS.keys())].sort_values(["Rank","HORA"])
+        if not sub_n.empty:
+            fig.add_trace(go.Scatter(
+                x=sub_n["x_text"], y=sub_n["y_text"], mode="text",
+                text=sub_n["EmpresaRotulo"], textposition=sub_n["textpos"].tolist(),
+                textfont=dict(size=14, color="black"),
+                showlegend=False, hoverinfo="skip", cliponaxis=False
+            ))
+
+        # Padding + Y invertido
+        x0, x1 = min(horas_fixas), max(horas_fixas)
+        pad_x = 0.40
+        y_min = float(dfp["Preco"].min()); y_max = float(dfp["Preco"].max())
+        fig.add_trace(go.Scatter(
+            x=[x0, x1], y=[y_min - 1.0, y_max + 1.0],
+            mode="markers", marker=dict(size=0, opacity=0),
+            showlegend=False, hoverinfo="skip"
+        ))
+        fig.update_xaxes(
+            tickmode="array",
+            tickvals=horas_fixas, ticktext=[str(h) for h in horas_fixas],
+            range=[x0 - pad_x, x1 + pad_x],
+            showgrid=False, showline=False, zeroline=False, ticks="", ticklen=0
+        )
+        fig.update_yaxes(
+            autorange="reversed",
+            tickprefix="R$ ", separatethousands=True,
+            showgrid=True, gridcolor="rgba(0,0,0,0.06)",
+            showline=False, zeroline=False, ticks="", ticklen=0
+        )
+        fig.update_layout(
+            template="simple_white",
+            legend_title_text="Ranking",
+            legend=dict(orientation="v", x=1.02, y=1.0, bgcolor="rgba(0,0,0,0)"),
+            margin=dict(l=20, r=28, t=45, b=10),
+            height=440
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
+    for titulo, horas in secoes:
+        desenha_secao_top3(titulo, horas)
+# ──────────────── ABA 4: Melhor Preço por Período do Dia (END) ────────────────
 
 # ─────────────────────── ABA: Buscas x Ofertas (START) ────────────────────────
 @register_tab("Qtde de Buscas x Ofertas")
