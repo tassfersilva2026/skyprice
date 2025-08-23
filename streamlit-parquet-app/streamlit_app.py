@@ -561,7 +561,7 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
         st.info("Sem dados para os filtros."); 
         return
 
-    # ========== CSS (inspirado no Painel) ==========
+    # ========== CSS (baseado no Painel) ==========
     PODIO_CSS = """
     <style>
     .cards-grid { display:grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap:10px; }
@@ -571,11 +571,11 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
     .card { border:1px solid #e9e9ee; border-radius:14px; padding:10px 12px; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.04); }
     .card .title { font-weight:650; font-size:15px; margin-bottom:8px; }
 
-    .goldcard   { background:#FFF9E5; border-color:#D4AF37; }
-    .silvercard { background:#F7F7FA; border-color:#C0C0C0; }
-    .bronzecard { background:#FFF1E8; border-color:#CD7F32; }
+    .goldcard   { background:#FFF9E5; border-color:#D4AF37; } /* ouro */
+    .silvercard { background:#F7F7FA; border-color:#C0C0C0; } /* prata */
+    .bronzecard { background:#FFF1E8; border-color:#CD7F32; } /* bronze */
 
-    .row  { display:flex; flex-direction:column; gap:8px; }
+    .row  { display:flex; gap:8px; flex-direction:column; }
     .item { display:flex; align-items:center; gap:8px; padding:8px 10px; border-radius:10px; border:1px solid #e3e3e8; background:#fafbfc; }
     .pos  { font-weight:900; font-size:12px; opacity:.85; min-width:22px; text-align:center; }
     .mid  { display:flex; flex-direction:column; gap:2px; flex:1; min-width:0; }
@@ -588,6 +588,7 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
 
     # ========== Helpers ==========
     def parse_hora_text(val) -> str | None:
+        """Converte texto variado para 'HH:MM:SS'."""
         s = str(val).strip()
         if s == "" or s.lower() in {"nan","none","null"}: return None
         # tenta datetime completo
@@ -621,6 +622,10 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
         except Exception:
             return "R$ -"
 
+    def _advp_key(v):
+        m = re.search(r"\d+", str(v))
+        return (0, int(m.group())) if m else (1, str(v))
+
     # ========== Normalização mínima ==========
     advp_col = "ADVP_CANON" if "ADVP_CANON" in df.columns else "ADVP"
     need = ["TRECHO", advp_col, "AGENCIA_NORM", "PRECO", "DATAHORA_BUSCA"]
@@ -633,13 +638,14 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
     base["PRECO"] = _pd.to_numeric(base["PRECO"], errors="coerce")
     base = base[base["PRECO"].notna()]
     base["HORA_NORM"] = base["HORA_BUSCA"].apply(parse_hora_text) if "HORA_BUSCA" in base.columns else None
+    base["DATAHORA_BUSCA"] = _pd.to_datetime(base["DATAHORA_BUSCA"], errors="coerce")
 
     if base.empty:
         st.info("Sem preços válidos no recorte atual."); 
         return
 
     # ========== Núcleo vetorizado (Top1/2/3 por Trecho→ADVP) ==========
-    # Escolhe, para cada (TRECHO, ADVP, AGENCIA), o menor preço; em empate, pega a data mais recente.
+    # Para cada (TRECHO, ADVP, AGENCIA): menor PRECO; em empate, data/hora mais recente.
     sort_cols = ["TRECHO", advp_col, "AGENCIA_NORM", "PRECO", "DATAHORA_BUSCA", "HORA_NORM"]
     best_ag = (base.sort_values(sort_cols, ascending=[True, True, True, True, False, False])
                     .drop_duplicates(subset=["TRECHO", advp_col, "AGENCIA_NORM"], keep="first"))
@@ -648,14 +654,17 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
     best_ag = best_ag.sort_values(["TRECHO", advp_col, "PRECO", "DATAHORA_BUSCA"], ascending=[True, True, True, False])
     best_ag["RANK"] = best_ag.groupby(["TRECHO", advp_col]).cumcount() + 1
 
-    # Escolhe Top3 e prepara carimbo dd/mm HH:MM:SS
+    # Escolhe Top3 e prepara label dd/mm HH:MM:SS
     top3 = best_ag[best_ag["RANK"] <= 3].copy()
-    top3["DATAHORA_BUSCA"] = _pd.to_datetime(top3["DATAHORA_BUSCA"], errors="coerce")
     top3["DT_LABEL"] = top3["DATAHORA_BUSCA"].dt.strftime("%d/%m").fillna("")
     top3["HORA_NORM"] = top3["HORA_NORM"].fillna("")
     top3["DT_HORA"] = (top3["DT_LABEL"] + " " + top3["HORA_NORM"]).str.strip()
 
-    # Ordena cartões por menor Top1 (mais interessante primeiro)
+    if top3.empty:
+        st.info("Não há pódios para exibir."); 
+        return
+
+    # Ordena cartões pelo menor Top1 (mais interessante primeiro)
     order_helper = (top3[top3["RANK"]==1]
                     .sort_values(["PRECO", "DATAHORA_BUSCA"], ascending=[True, False])
                     [["TRECHO", advp_col]])
@@ -695,13 +704,8 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
     cards = []
     for idx, (trecho, advp) in enumerate(keys):
         bloc = top3[(top3["TRECHO"]==trecho) & (top3[advp_col]==advp)]
-        # pinta o "top card" (menor TOP1) com ouro/prata/bronze
         rank_cls = "goldcard" if idx == 0 else ("silvercard" if idx == 1 else ("bronzecard" if idx == 2 else ""))
         cards.append(podio_card_html(str(trecho), advp, bloc, rank_cls))
-
-    if not cards:
-        st.info("Não há pódios para exibir."); 
-        return
 
     st.markdown(f"<div class='cards-grid'>{''.join(cards)}</div>", unsafe_allow_html=True)
 # ───────────────────── ABA: Top 3 Preços Mais Baratos (END) ──────────────────
