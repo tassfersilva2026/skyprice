@@ -12,7 +12,8 @@ st.set_page_config(page_title="Skyscanner — Painel", layout="wide", initial_si
 APP_DIR   = Path(__file__).resolve().parent
 DATA_PATH = APP_DIR / "data" / "OFERTAS.parquet"
 
-# ========= Normalização / Parsing =========
+# ============================== UTILIDADES GERAIS ==============================
+
 def std_agencia(raw: str) -> str:
     ag = (raw or "").strip().upper()
     if ag == "BOOKINGCOM":            return "BOOKING.COM"
@@ -59,29 +60,24 @@ def load_base(path: Path) -> pd.DataFrame:
         rename = {df.columns[i]: colmap[i] for i in range(min(13, df.shape[1]))}
         df = df.rename(columns=rename)
 
-    # horas -> "HH:MM:SS" e HH
     for c in ["HORA_BUSCA", "HORA_PARTIDA", "HORA_CHEGADA"]:
         if c in df.columns:
             df[c] = pd.to_datetime(df[c].astype(str).str.strip(), errors="coerce").dt.strftime("%H:%M:%S")
     df["HORA_HH"] = pd.to_datetime(df["HORA_BUSCA"], errors="coerce").dt.hour
 
-    # datas
     for c in ["DATA_EMBARQUE", "DATAHORA_BUSCA"]:
         if c in df.columns:
             df[c] = pd.to_datetime(df[c], errors="coerce", dayfirst=True)
 
-    # preço
     if "PRECO" in df.columns:
         df["PRECO"] = (df["PRECO"].astype(str)
                         .str.replace(r"[^\d,.-]", "", regex=True)
                         .str.replace(",", ".", regex=False))
         df["PRECO"] = pd.to_numeric(df["PRECO"], errors="coerce")
 
-    # ranking
     if "RANKING" in df.columns:
         df["RANKING"] = pd.to_numeric(df["RANKING"], errors="coerce").astype("Int64")
 
-    # normalizações
     df["AGENCIA_NORM"] = df["AGENCIA_COMP"].apply(std_agencia)
     df["ADVP_CANON"]   = df["ADVP"].apply(advp_nearest)
     return df
@@ -114,7 +110,7 @@ def last_update_from_cols(df: pd.DataFrame) -> str:
         return f"{max_d.strftime('%d/%m/%Y')} - {max_h.strftime('%H:%M:%S')}"
     return f"{max_d.strftime('%d/%m/%Y')}"
 
-# ========= Estilos (3 cards por linha; cor só nos TOP 3) =========
+# ---- Estilos dos cards (Painel) ----
 CARD_CSS = """
 <style>
 .cards-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
@@ -122,13 +118,9 @@ CARD_CSS = """
 @media (max-width: 700px)  { .cards-grid { grid-template-columns: 1fr; } }
 .card { border:1px solid #e9e9ee; border-radius:14px; padding:10px 12px; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.04); }
 .card .title { font-weight:650; font-size:15px; margin-bottom:8px; }
-.goldcard   { background:#FFF9E5; border-color:#D4AF37; }
-.silvercard { background:#F7F7FA; border-color:#C0C0C0; }
-.bronzecard { background:#FFF1E8; border-color:#CD7F32; }
-.row  { display:flex; gap:8px; }
-.item { flex:1; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px; border-radius:10px; border:1px solid #e3e3e8; background:#fafbfc; }
-.pos  { font-weight:700; font-size:12px; opacity:.85; }
-.pct  { font-size:16px; font-weight:650; }
+.goldcard{background:#FFF9E5;border-color:#D4AF37;} .silvercard{background:#F7F7FA;border-color:#C0C0C0;} .bronzecard{background:#FFF1E8;border-color:#CD7F32;}
+.row{display:flex;gap:8px;} .item{flex:1;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:10px;border:1px solid #e3e3e8;background:#fafbfc;}
+.pos{font-weight:700;font-size:12px;opacity:.85;} .pct{font-size:16px;font-weight:650;}
 </style>
 """
 
@@ -147,7 +139,7 @@ def card_html(nome: str, p1: float, p2: float, p3: float, rank_cls: str = "") ->
         f"</div></div>"
     )
 
-# ========= Gráficos utilitários =========
+# ---- Gráficos utilitários ----
 def make_bar(df: pd.DataFrame, x_col: str, y_col: str, sort_y_desc: bool = True):
     d = df[[y_col, x_col]].copy()
     d[x_col] = pd.to_numeric(d[x_col], errors="coerce")
@@ -178,7 +170,7 @@ def make_line(df: pd.DataFrame, x_col: str, y_col: str, color: str | None = None
     if color: enc["color"] = alt.Color(f"{color}:N", title=color)
     return alt.Chart(d).mark_line(point=True).encode(**enc).properties(height=300)
 
-# ========= Estado global dos filtros =========
+# ---- Estado dos filtros ----
 def _init_filter_state(df_raw: pd.DataFrame):
     if "flt" in st.session_state: return
     dmin = pd.to_datetime(df_raw["DATAHORA_BUSCA"], errors="coerce").min()
@@ -234,7 +226,20 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
     st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
     return df
 
-# ========= Abas =========
+# ============================ REGISTRO DE ABAS ================================
+TAB_REGISTRY: list[tuple[str, callable]] = []
+
+def register_tab(label: str):
+    """Decorator para registrar uma aba por nome. Troque só a função da aba e pronto."""
+    def _wrap(fn):
+        TAB_REGISTRY.append((label, fn))
+        return fn
+    return _wrap
+
+# =============================== ABAS (INÍCIO) ===============================
+
+# ──────────────────────────── ABA: Painel (START) ────────────────────────────
+@register_tab("Painel")
 def tab1_painel(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t1")
     st.subheader("Painel")
@@ -279,9 +284,12 @@ def tab1_painel(df_raw: pd.DataFrame):
         rank_cls = "goldcard" if idx == 0 else "silvercard" if idx == 1 else "bronzecard" if idx == 2 else ""
         cards.append(card_html(tgt, p1, p2, p3, rank_cls))
     st.markdown(f"<div class='cards-grid'>{''.join(cards)}</div>", unsafe_allow_html=True)
+# ───────────────────────────── ABA: Painel (END) ─────────────────────────────
 
+
+# ──────────────────────── ABA: Top 3 Agências (START) ────────────────────────
+@register_tab("Top 3 Agências")
 def tab2_top3_agencias(df_raw: pd.DataFrame):
-    # === Filtros padrão ===
     df = render_filters(df_raw, key_prefix="t2")
     st.subheader("Top 3 Agências (por menor preço no trecho)")
     if df.empty:
@@ -291,7 +299,7 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
     import numpy as _np
     import pandas as _pd
 
-    # --------- HELPERS (sem matplotlib) ----------
+    # ---- Helpers de estilo sem matplotlib ----
     def _is_null_like(v) -> bool:
         if v is None: return True
         if isinstance(v, float) and _np.isnan(v): return True
@@ -299,7 +307,6 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
         return False
 
     def style_smart_colwise(df_show: _pd.DataFrame, fmt_map: dict, grad_cols: list[str]):
-        """Formatação + gradiente leve por coluna usando CSS (sem matplotlib)."""
         sty = df_show.style
         sty = sty.set_properties(**{"background-color": "#FFFFFF", "color": "#111111"})
         if fmt_map:
@@ -311,9 +318,8 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
             r = tuple(int(round(f[i] + (to[i]-f[i])*t)) for i in range(3))
             return f"#{r[0]:02x}{r[1]:02x}{r[2]:02x}"
 
-        # Cores base por coluna (paleta pedida)
         base_color_by_col = {
-            "preço top":     "#cfe3ff",  # AZUL → Preço Top 1/2/3
+            "preço top":     "#cfe3ff",  # AZUL (Top1/2/3)
             "123milhas":     "#fdd0a2",  # LARANJA
             "maxmilhas":     "#c7e9c0",  # VERDE
             "flipmilhas":    "#fee391",  # AMARELO
@@ -323,7 +329,7 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
         default_base = "#cfe3ff"
 
         for c in grad_cols:
-            if c not in df_show.columns:
+            if c not in df_show.columns: 
                 continue
             name = c.lower()
             base_hex = default_base
@@ -354,12 +360,11 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
         sty = sty.applymap(lambda v: "background-color: #FFFFFF; color: #111111" if _is_null_like(v) else "")
         sty = sty.set_table_styles([{"selector": "tbody td, th","props": [("border", "1px solid #EEE")]}])
         return sty
-    # --------------------------------------------
 
-    # Constantes
+    # ---- Constantes ----
     A_MAX, A_123, A_FLIP, A_CAPO = "MAXMILHAS", "123MILHAS", "FLIPMILHAS", "CAPOVIAGENS"
 
-    # ============ Tabela 1 — Ranking Top 3 por Trecho (menor preço) ============
+    # ---- Tabela 1: Top3 por trecho (menor preço) ----
     by_ag = (
         df.groupby(["TRECHO", "AGENCIA_NORM"], as_index=False)
           .agg(PRECO_MIN=("PRECO", "min"))
@@ -385,12 +390,9 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
         })
 
     t1 = by_ag.groupby("TRECHO").apply(_row_top3).reset_index(drop=True)
-
-    # >>> Preço sem casas decimais (mantém NA)
     preco_cols = ["Preço Top 1","Preço Top 2","Preço Top 3","123milhas","Maxmilhas","FlipMilhas","Capo Viagens"]
     for c in preco_cols:
         t1[c] = _pd.to_numeric(t1[c], errors="coerce").round(0).astype("Int64")
-
     t1.index = _np.arange(1, len(t1) + 1); t1.index.name = "#"
 
     st.markdown("**Ranking Top 3 (Agências)**")
@@ -398,7 +400,7 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
     sty1 = style_smart_colwise(t1, fmt_map_t1, grad_cols=preco_cols)
     st.dataframe(sty1, use_container_width=True)
 
-    # ============ Tabela 2 — % Diferença (base: Top1) ============
+    # ---- Tabela 2: % diferença (base Top1) ----
     def pct_diff(base, other):
         if _pd.isna(base) or base == 0 or _pd.isna(other): 
             return _np.nan
@@ -430,7 +432,7 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
     sty2 = style_smart_colwise(t2, fmt_map_t2, grad_cols=grad_cols)
     st.dataframe(sty2, use_container_width=True)
 
-    # ============ Tabela 3/4 — Comparativo com Cia Aérea (se existir col 'CIA') ============
+    # ---- Tabelas 3/4: Comparativo com Cia (se existir 'CIA') ----
     if "CIA" not in df.columns:
         st.info("Coluna de Cia Aérea ('CIA') não encontrada. As tabelas 3/4 dependem dela.")
         return
@@ -475,7 +477,6 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
         })
 
     t3 = _pd.DataFrame(rows3)
-    # Inteiros também aqui
     for c in [c for c in t3.columns if c.startswith("Preço ")]:
         t3[c] = _pd.to_numeric(t3[c], errors="coerce").round(0).astype("Int64")
     t3.index = _np.arange(1, len(t3) + 1); t3.index.name = "#"
@@ -486,7 +487,6 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
     sty3 = style_smart_colwise(t3, fmt_map_t3, grad_cols=preco_cols_t3)
     st.dataframe(sty3, use_container_width=True)
 
-    # Tabela 4 — % comparativo vs menor preço da Cia
     def pct_vs_base(base, x):
         if _pd.isna(base) or base == 0 or _pd.isna(x): 
             return _np.nan
@@ -510,7 +510,11 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
     grad_cols_t4 = ["Preço Menor Valor"] + pct_cols_t4
     sty4 = style_smart_colwise(t4, fmt_map_t4, grad_cols=grad_cols_t4)
     st.dataframe(sty4, use_container_width=True)
+# ───────────────────────── ABA: Top 3 Agências (END) ─────────────────────────
 
+
+# ──────────────────── ABA: Top 3 Preços Mais Baratos (START) ─────────────────
+@register_tab("Top 3 Preços Mais Baratos")
 def tab3_top3_precos(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t3")
     st.subheader("Top 3 Preços Mais Baratos (geral filtrado)")
@@ -525,7 +529,11 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
                 value=f"R$ {row['PRECO']:,.0f}".replace(",", "X").replace(".", ",").replace("X","."),
                 delta=f"{row['DATAHORA_BUSCA']:%d/%m/%Y}"
             )
+# ───────────────────── ABA: Top 3 Preços Mais Baratos (END) ──────────────────
 
+
+# ───────────────────────── ABA: Ranking por Agências (START) ──────────────────
+@register_tab("Ranking por Agências")
 def tab4_ranking_agencias(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t4")
     st.subheader("Ranking por Agências")
@@ -537,13 +545,21 @@ def tab4_ranking_agencias(df_raw: pd.DataFrame):
     c1,c2 = st.columns(2)
     with c1: st.altair_chart(make_bar(rt[["Agência/Cia","Vitórias 1º"]], "Vitórias 1º", "Agência/Cia"), use_container_width=True)
     with c2: st.altair_chart(make_bar(rt[["Agência/Cia","Ofertas"]], "Ofertas", "Agência/Cia"), use_container_width=True)
+# ─────────────────────────── ABA: Ranking por Agências (END) ──────────────────
 
+
+# ─────────────────────── ABA: Preço por Período do Dia (START) ────────────────
+@register_tab("Preço por Período do Dia")
 def tab5_preco_periodo(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t5")
     st.subheader("Preço por Período do Dia (HH da busca)")
     t = df.groupby("HORA_HH", as_index=False)["PRECO"].median().rename(columns={"PRECO":"Preço Mediano"})
     st.altair_chart(make_line(t, "HORA_HH", "Preço Mediano"), use_container_width=True)
+# ───────────────────────── ABA: Preço por Período do Dia (END) ────────────────
 
+
+# ─────────────────────── ABA: Buscas x Ofertas (START) ────────────────────────
+@register_tab("Qtde de Buscas x Ofertas")
 def tab6_buscas_vs_ofertas(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t6")
     st.subheader("Quantidade de Buscas x Ofertas")
@@ -553,7 +569,11 @@ def tab6_buscas_vs_ofertas(df_raw: pd.DataFrame):
     c2.metric("Ofertas (linhas)", fmt_int(offers))
     t = pd.DataFrame({"Métrica":["Pesquisas","Ofertas"], "Valor":[searches, offers]})
     st.altair_chart(make_bar(t, "Valor", "Métrica"), use_container_width=True)
+# ─────────────────────────── ABA: Buscas x Ofertas (END) ──────────────────────
 
+
+# ────────────────────────── ABA: Comportamento Cias (START) ───────────────────
+@register_tab("Comportamento Cias")
 def tab7_comportamento_cias(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t7")
     st.subheader("Comportamento Cias (share por Trecho)")
@@ -571,7 +591,11 @@ def tab7_comportamento_cias(df_raw: pd.DataFrame):
         tooltip=["TRECHO","AGENCIA_NORM","Share"]
     ).properties(height=320)
     st.altair_chart(chart, use_container_width=True)
+# ──────────────────────────── ABA: Comportamento Cias (END) ───────────────────
 
+
+# ──────────────────────────── ABA: Competitividade (START) ────────────────────
+@register_tab("Competitividade")
 def tab8_competitividade(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t8")
     st.subheader("Competitividade (Δ mediano vs melhor preço por pesquisa)")
@@ -580,7 +604,11 @@ def tab8_competitividade(df_raw: pd.DataFrame):
     t["DELTA"] = t["PRECO"] - t["BEST"]
     agg = t.groupby("AGENCIA_NORM", as_index=False)["DELTA"].median().rename(columns={"DELTA":"Δ Mediano"})
     st.altair_chart(make_bar(agg, "Δ Mediano", "AGENCIA_NORM"), use_container_width=True)
+# ───────────────────────────── ABA: Competitividade (END) ─────────────────────
 
+
+# ─────────────────────────── ABA: Melhor Preço Diário (START) ─────────────────
+@register_tab("Melhor Preço Diário")
 def tab9_melhor_preco_diario(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t9")
     st.subheader("Melhor Preço Diário (col. H - Data da busca)")
@@ -591,15 +619,23 @@ def tab9_melhor_preco_diario(df_raw: pd.DataFrame):
         st.info("Sem dados."); return
     t["Data"] = pd.to_datetime(t["Data"], dayfirst=True)
     st.altair_chart(make_line(t, "Data", "Melhor Preço"), use_container_width=True)
+# ────────────────────────────── ABA: Melhor Preço Diário (END) ────────────────
 
+
+# ─────────────────────────────── ABA: Exportar (START) ────────────────────────
+@register_tab("Exportar")
 def tab10_exportar(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t10")
     st.subheader("Exportar dados filtrados")
     csv_bytes = df.to_csv(index=False).encode("utf-8-sig")
     st.download_button("⬇️ Baixar CSV (filtro aplicado)",
                        data=csv_bytes, file_name="OFERTAS_filtrado.csv", mime="text/csv")
+# ───────────────────────────────── ABA: Exportar (END) ────────────────────────
 
-# ========= Main =========
+# ================================ ABAS (FIM) ==================================
+
+
+# =================================== MAIN =====================================
 def main():
     df_raw = load_base(DATA_PATH)
 
@@ -610,43 +646,17 @@ def main():
             st.image(imgs[0].as_posix(), use_container_width=True)
             break
 
-    labels = [
-        "Painel","Top 3 Agências","Top 3 Preços Mais Baratos","Ranking por Agências",
-        "Preço por Período do Dia","Qtde de Buscas x Ofertas","Comportamento Cias",
-        "Competitividade","Melhor Preço Diário","Exportar"
-    ]
-    t = st.tabs(labels)
+    # monta as tabs dinamicamente a partir do registro
+    labels = [label for label, _ in TAB_REGISTRY]
+    tabs = st.tabs(labels)
 
-    with t[0]:
-        try: tab1_painel(df_raw)
-        except Exception as e: st.error("Erro na aba Painel"); st.exception(e)
-    with t[1]:
-        try: tab2_top3_agencias(df_raw)
-        except Exception as e: st.error("Erro na aba Top 3 Agências"); st.exception(e)
-    with t[2]:
-        try: tab3_top3_precos(df_raw)
-        except Exception as e: st.error("Erro na aba Top 3 Preços"); st.exception(e)
-    with t[3]:
-        try: tab4_ranking_agencias(df_raw)
-        except Exception as e: st.error("Erro na aba Ranking por Agências"); st.exception(e)
-    with t[4]:
-        try: tab5_preco_periodo(df_raw)
-        except Exception as e: st.error("Erro na aba Preço por Período do Dia"); st.exception(e)
-    with t[5]:
-        try: tab6_buscas_vs_ofertas(df_raw)
-        except Exception as e: st.error("Erro na aba Qtde de Buscas x Ofertas"); st.exception(e)
-    with t[6]:
-        try: tab7_comportamento_cias(df_raw)
-        except Exception as e: st.error("Erro na aba Comportamento Cias"); st.exception(e)
-    with t[7]:
-        try: tab8_competitividade(df_raw)
-        except Exception as e: st.error("Erro na aba Competitividade"); st.exception(e)
-    with t[8]:
-        try: tab9_melhor_preco_diario(df_raw)
-        except Exception as e: st.error("Erro na aba Melhor Preço Diário"); st.exception(e)
-    with t[9]:
-        try: tab10_exportar(df_raw)
-        except Exception as e: st.error("Erro na aba Exportar"); st.exception(e)
+    for i, (label, fn) in enumerate(TAB_REGISTRY):
+        with tabs[i]:
+            try:
+                fn(df_raw)
+            except Exception as e:
+                st.error(f"Erro na aba {label}")
+                st.exception(e)
 
 if __name__ == "__main__":
     main()
