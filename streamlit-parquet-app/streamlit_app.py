@@ -48,9 +48,9 @@ def advp_nearest(x) -> int:
 def load_base(path: Path) -> pd.DataFrame:
     if not path.exists():
         st.error(f"Arquivo obrigatório não encontrado: {path.as_posix()}"); st.stop()
+
     df = pd.read_parquet(path)
 
-    # mapear colunas pela posição se necessário
     colmap = {
         0:"IDPESQUISA", 1:"CIA", 2:"HORA_BUSCA", 3:"HORA_PARTIDA", 4:"HORA_CHEGADA",
         5:"TIPO_VOO", 6:"DATA_EMBARQUE", 7:"DATAHORA_BUSCA", 8:"AGENCIA_COMP",
@@ -60,7 +60,7 @@ def load_base(path: Path) -> pd.DataFrame:
         rename = {df.columns[i]: colmap[i] for i in range(min(13, df.shape[1]))}
         df = df.rename(columns=rename)
 
-    # horas e HH
+    # horas -> "HH:MM:SS" e HH
     for c in ["HORA_BUSCA", "HORA_PARTIDA", "HORA_CHEGADA"]:
         if c in df.columns:
             df[c] = pd.to_datetime(df[c].astype(str).str.strip(), errors="coerce").dt.strftime("%H:%M:%S")
@@ -83,8 +83,8 @@ def load_base(path: Path) -> pd.DataFrame:
         df["RANKING"] = pd.to_numeric(df["RANKING"], errors="coerce").astype("Int64")
 
     # normalizações
-    df["AGENCIA_NORM"]  = df["AGENCIA_COMP"].apply(std_agencia)
-    df["ADVP_CANON"]    = df["ADVP"].apply(advp_nearest)
+    df["AGENCIA_NORM"] = df["AGENCIA_COMP"].apply(std_agencia)
+    df["ADVP_CANON"]   = df["ADVP"].apply(advp_nearest)
     return df
 
 def winners_by_position(df: pd.DataFrame) -> pd.DataFrame:
@@ -93,8 +93,10 @@ def winners_by_position(df: pd.DataFrame) -> pd.DataFrame:
         s = (df[df["RANKING"]==r]
              .sort_values(["IDPESQUISA"])
              .drop_duplicates(subset=["IDPESQUISA"]))
-        base = base.merge(s[["IDPESQUISA","AGENCIA_NORM"]].rename(columns={"AGENCIA_NORM":f"R{r}"}),
-                          on="IDPESQUISA", how="left")
+        base = base.merge(
+            s[["IDPESQUISA","AGENCIA_NORM"]].rename(columns={"AGENCIA_NORM":f"R{r}"}),
+            on="IDPESQUISA", how="left"
+        )
     for r in (1,2,3):
         base[f"R{r}"] = base[f"R{r}"].fillna("SEM OFERTAS")
     return base
@@ -113,17 +115,40 @@ def last_update_from_cols(df: pd.DataFrame) -> str:
         return f"{max_d.strftime('%d/%m/%Y')} - {max_h.strftime('%H:%M:%S')}"
     return f"{max_d.strftime('%d/%m/%Y')}"
 
-# ========= UI helpers compactos =========
-def tiny_bar(pct: float) -> str:
-    # barra horizontal fina via HTML (bem compacta)
-    pct = max(0.0, min(100.0, float(pct or 0)))
-    return (
-        f"<div style='height:6px;background:#eee;border-radius:4px;'>"
-        f"<div style='height:6px;width:{pct:.2f}%;background:#2F80ED;border-radius:4px;'></div>"
-        f"</div>"
-    )
+# ========= Estilos das caixinhas =========
+CARD_CSS = """
+<style>
+.card {
+  border:1px solid #e9e9ee; border-radius:14px; padding:10px 12px;
+  margin:6px 0; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.04);
+}
+.card .title { font-weight:650; font-size:15px; margin-bottom:6px; }
+.row { display:flex; gap:10px; }
+.item { flex:1; display:flex; align-items:center; gap:6px; }
+.badge { min-width:26px; padding:2px 8px; font-weight:700; font-size:11px; color:#fff; border-radius:999px; text-align:center; }
+.gold  { background:#D4AF37; }   /* ouro */
+.silver{ background:#C0C0C0; }   /* prata */
+.bronze{ background:#CD7F32; }   /* bronze */
+.pct   { font-size:16px; font-weight:650; }
+</style>
+"""
 
-# ========= Gráficos (Altair) =========
+def card_html(nome: str, p1: float, p2: float, p3: float) -> str:
+    p1 = max(0.0, min(100.0, float(p1 or 0.0)))
+    p2 = max(0.0, min(100.0, float(p2 or 0.0)))
+    p3 = max(0.0, min(100.0, float(p3 or 0.0)))
+    return f"""
+    <div class='card'>
+      <div class='title'>{nome}</div>
+      <div class='row'>
+        <div class='item'><span class='badge gold'>1º</span><span class='pct'>{p1:.2f}%</span></div>
+        <div class='item'><span class='badge silver'>2º</span><span class='pct'>{p2:.2f}%</span></div>
+        <div class='item'><span class='badge bronze'>3º</span><span class='pct'>{p3:.2f}%</span></div>
+      </div>
+    </div>
+    """
+
+# ========= Gráficos genéricos =========
 def make_bar(df: pd.DataFrame, x_col: str, y_col: str, sort_y_desc: bool = True):
     d = df[[y_col, x_col]].copy()
     d[x_col] = pd.to_numeric(d[x_col], errors="coerce")
@@ -131,13 +156,11 @@ def make_bar(df: pd.DataFrame, x_col: str, y_col: str, sort_y_desc: bool = True)
     d = d.dropna(subset=[x_col])
     if sort_y_desc: d = d.sort_values(x_col, ascending=False)
     if d.empty: return alt.Chart(pd.DataFrame({x_col: [], y_col: []})).mark_bar()
-    return (
-        alt.Chart(d).mark_bar().encode(
-            x=alt.X(f"{x_col}:Q", title=x_col),
-            y=alt.Y(f"{y_col}:N", sort="-x", title=y_col),
-            tooltip=[f"{y_col}:N", f"{x_col}:Q"],
-        ).properties(height=300, use_container_width=True)
-    )
+    return alt.Chart(d).mark_bar().encode(
+        x=alt.X(f"{x_col}:Q", title=x_col),
+        y=alt.Y(f"{y_col}:N", sort="-x", title=y_col),
+        tooltip=[f"{y_col}:N", f"{x_col}:Q"],
+    ).properties(height=300, use_container_width=True)
 
 def make_line(df: pd.DataFrame, x_col: str, y_col: str, color: str | None = None):
     cols = [x_col, y_col] + ([color] if color else [])
@@ -152,10 +175,7 @@ def make_line(df: pd.DataFrame, x_col: str, y_col: str, color: str | None = None
     if color: d[color] = d[color].astype(str)
     d = d.dropna(subset=[x_col, y_col])
     if d.empty: return alt.Chart(pd.DataFrame({x_col: [], y_col: []})).mark_line()
-    enc = dict(
-        x=x_enc, y=alt.Y(f"{y_col}:Q", title=y_col),
-        tooltip=[f"{x_col}", f"{y_col}:Q"]
-    )
+    enc = dict(x=x_enc, y=alt.Y(f"{y_col}:Q", title=y_col), tooltip=[f"{x_col}", f"{y_col}:Q"])
     if color: enc["color"] = alt.Color(f"{color}:N", title=color)
     return alt.Chart(d).mark_line(point=True).encode(**enc).properties(height=300, use_container_width=True)
 
@@ -220,7 +240,7 @@ def tab1_painel(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t1")
     st.subheader("Painel")
 
-    # KPIs rápidos
+    # KPIs rápidos e CSS dos cards
     total_pesq = df["IDPESQUISA"].nunique() or 1
     cov = {r: df.loc[df["RANKING"].eq(r), "IDPESQUISA"].nunique() for r in (1,2,3)}
     st.markdown(
@@ -231,28 +251,25 @@ def tab1_painel(df_raw: pd.DataFrame):
         f"3º: {cov[3]/total_pesq*100:.1f}%</div>",
         unsafe_allow_html=True
     )
+    st.markdown(CARD_CSS, unsafe_allow_html=True)
     st.markdown("<hr style='margin:6px 0'>", unsafe_allow_html=True)
 
-    # Vencedores por posição
+    # Winners base e versão agregada pro GRUPO 123
     W = winners_by_position(df)
-
-    # Versão agregada para GRUPO 123
     Wg = W.replace({
         "R1":{"MAXMILHAS":"GRUPO 123","123MILHAS":"GRUPO 123"},
         "R2":{"MAXMILHAS":"GRUPO 123","123MILHAS":"GRUPO 123"},
         "R3":{"MAXMILHAS":"GRUPO 123","123MILHAS":"GRUPO 123"},
     })
 
-    # --- ALVOS: todas as agências (mesmo zeradas) + GRUPO 123 + SEM OFERTAS ---
+    # Alvos: TODAS (mesmo zeradas) + GRUPO 123 + SEM OFERTAS
     agencias_all = sorted(set(df_raw["AGENCIA_NORM"].dropna().astype(str)))
-    targets_base = list(agencias_all)  # inclui 123MILHAS e MAXMILHAS
-    if "SEM OFERTAS" not in targets_base:
-        targets_base.append("SEM OFERTAS")
-    # Insere GRUPO 123 (mesmo que 0%)
+    targets_base = list(agencias_all)  # inclui 123MILHAS e MAXMILHAS separadas
     if "GRUPO 123" not in targets_base:
         targets_base.insert(0, "GRUPO 123")
+    if "SEM OFERTAS" not in targets_base:
+        targets_base.append("SEM OFERTAS")
 
-    # cálculo de % por alvo
     def pcts_for_target(tgt: str):
         base = Wg if tgt == "GRUPO 123" else W
         p1 = float((base["R1"] == tgt).mean())*100
@@ -260,20 +277,13 @@ def tab1_painel(df_raw: pd.DataFrame):
         p3 = float((base["R3"] == tgt).mean())*100
         return p1, p2, p3
 
-    # ordenar por 1º lugar (desc)
+    # Ordena pelo % em 1º (desc)
     targets_sorted = sorted(targets_base, key=lambda t: pcts_for_target(t)[0], reverse=True)
 
-    # render compacto, vertical
+    # Render caixinhas (vertical)
     for tgt in targets_sorted:
         p1, p2, p3 = pcts_for_target(tgt)
-        st.markdown(f"<div style='font-weight:600;margin:2px 0 0;'>{tgt}</div>", unsafe_allow_html=True)
-        c1,c2,c3 = st.columns(3)
-        for (lab, val, col) in [("1º", p1, c1), ("2º", p2, c2), ("3º", p3, c3)]:
-            with col:
-                col.markdown(f"<div style='font-size:11px;opacity:.7'>{lab}</div>", unsafe_allow_html=True)
-                col.markdown(f"<div style='font-size:16px;margin-top:-2px'>{val:.2f}%</div>", unsafe_allow_html=True)
-                col.markdown(tiny_bar(val), unsafe_allow_html=True)
-        st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+        st.markdown(card_html(tgt, p1, p2, p3), unsafe_allow_html=True)
 
 def tab2_top3_agencias(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t2")
@@ -290,7 +300,9 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
         with cols[i]:
             st.markdown(f"**{nome}**")
             st.markdown(f"<div style='font-size:18px;margin-top:-6px'>{pct:.2f}%</div>", unsafe_allow_html=True)
-            st.markdown(tiny_bar(pct), unsafe_allow_html=True)
+            st.markdown("<div style='height:6px;background:#eee;border-radius:4px;'>"
+                        f"<div style='height:6px;width:{pct:.2f}%;background:#2F80ED;border-radius:4px;'></div></div>",
+                        unsafe_allow_html=True)
 
 def tab3_top3_precos(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t3")
