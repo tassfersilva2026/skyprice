@@ -855,9 +855,10 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
             st.markdown("<div style='" + GRID_STYLE + "'>" + "".join(boxes) + "</div>", unsafe_allow_html=True)
 # ───────────────────── ABA: Top 3 Preços Mais Baratos (END) ──────────────────
 
-
-# ───────────────────────── ABA: Ranking por Agências (START) ──────────────────
 # ───────────────────── ABA 4: Ranking por Agências (START) ───────────────────
+
+# ───────────────────── ABA 4: Ranking por Agências (START) ───────────────────
+@register_tab("Ranking por Agências")
 def tab4_ranking_agencias(df_raw: pd.DataFrame):
     """
     Ranking por posição (1..15) com 3 visões:
@@ -870,6 +871,8 @@ def tab4_ranking_agencias(df_raw: pd.DataFrame):
     """
     import numpy as np
     import pandas as pd
+    # ... resto da função ...
+
 
     # ------------- Filtros globais (do app) -------------
     df = render_filters(df_raw, key_prefix="t4")
