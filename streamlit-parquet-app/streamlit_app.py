@@ -286,8 +286,6 @@ def tab1_painel(df_raw: pd.DataFrame):
     st.markdown(f"<div class='cards-grid'>{''.join(cards)}</div>", unsafe_allow_html=True)
 # ───────────────────────────── ABA: Painel (END) ─────────────────────────────
 
-
-# ──────────────────────── ABA: Top 3 Agências (START) ────────────────────────
 # ──────────────────────── ABA: Top 3 Agências (START) ────────────────────────
 @register_tab("Top 3 Agências")
 def tab2_top3_agencias(df_raw: pd.DataFrame):
@@ -300,84 +298,54 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
     import numpy as _np
     import pandas as _pd
 
-    # ---- Helpers de estilo sem matplotlib (cores fixas por coluna) ----
+    # ======= Paleta fixa por coluna =======
     BLUE   = "#cfe3ff"  # Preços Top 1/2/3
     ORANGE = "#fdd0a2"  # 123milhas
     GREEN  = "#c7e9c0"  # Maxmilhas
     YELLOW = "#fee391"  # FlipMilhas
     PINK   = "#f1b6da"  # Capo Viagens/Capoviagens
 
-    def _norm(s: str) -> str:
-        return str(s).strip().casefold()
+    # ======= util: tons discretos (5 níveis) a partir da cor base =======
+    def _hex_to_rgb(h): return tuple(int(h[i:i+2], 16) for i in (1,3,5))
+    def _rgb_to_hex(t): return f"#{t[0]:02x}{t[1]:02x}{t[2]:02x}"
+    def _blend(c_from, c_to, t):
+        f, to = _hex_to_rgb(c_from), _hex_to_rgb(c_to)
+        return _rgb_to_hex(tuple(int(round(f[i] + (to[i]-f[i])*t)) for i in range(3)))
+    def make_scale(base_hex, steps=5):
+        # do branco -> base, 5 níveis (mais escuro = valor maior)
+        return [_blend("#ffffff", base_hex, k/(steps-1)) for k in range(steps)]
 
-    # nomes normalizados -> cor
-    _COLOR_BY_NAME = {
-        _norm("Preço Top 1"): BLUE,
-        _norm("Preço Top 2"): BLUE,
-        _norm("Preço Top 3"): BLUE,
-        _norm("123milhas"):   ORANGE,
-        _norm("Maxmilhas"):   GREEN,
-        _norm("FlipMilhas"):  YELLOW,
-        _norm("Capo Viagens"):PINK,
-        _norm("Capoviagens"): PINK,  # variação
-    }
+    SCALE_BLUE   = make_scale(BLUE)
+    SCALE_ORANGE = make_scale(ORANGE)
+    SCALE_GREEN  = make_scale(GREEN)
+    SCALE_YELLOW = make_scale(YELLOW)
+    SCALE_PINK   = make_scale(PINK)
 
-    def _base_color_for(col_name: str) -> str:
-        n = _norm(col_name)
-        if n in _COLOR_BY_NAME:
-            return _COLOR_BY_NAME[n]
-        # fallback: qualquer coisa que comece com "preço top" fica azul
-        if n.startswith(_norm("Preço Top")):
-            return BLUE
-        return BLUE
+    def style_heatmap_discrete(styler: _pd.io.formats.style.Styler, col: str, scale_colors: list[str]):
+        """Aplica 5 faixas por quantis (ou rank) à coluna informada."""
+        s = _pd.to_numeric(styler.data[col], errors="coerce")
+        if s.notna().sum() == 0:
+            return styler
+        # tenta quantis; se tiver poucos valores distintos, usa rank
+        try:
+            bins = _pd.qcut(s.rank(method="average"), q=5, labels=False, duplicates="drop")
+        except Exception:
+            bins = _pd.cut(s.rank(method="average"), bins=5, labels=False)
+        bins = bins.fillna(-1).astype(int)
 
-    def _blend(hex_from: str, hex_to: str, t: float) -> str:
-        f = tuple(int(hex_from[i:i+2], 16) for i in (1,3,5))
-        to = tuple(int(hex_to[i:i+2], 16) for i in (1,3,5))
-        r = tuple(int(round(f[i] + (to[i]-f[i])*t)) for i in range(3))
-        return f"#{r[0]:02x}{r[1]:02x}{r[2]:02x}"
+        def _fmt(val, idx):
+            if _pd.isna(val) or bins.iloc[idx] == -1:
+                return "background-color: #ffffff; color:#111111"
+            color = scale_colors[int(bins.iloc[idx])]
+            return f"background-color: {color}; color:#111111"
 
-    def style_smart_colwise(df_show: _pd.DataFrame, fmt_map: dict, grad_cols: list[str]):
-        sty = df_show.style
-        sty = sty.set_properties(**{"background-color": "#FFFFFF", "color": "#111111"})
-        if fmt_map:
-            sty = sty.format(fmt_map, na_rep="-", decimal=",", thousands=".")
+        styler = styler.apply(lambda col_vals: [_fmt(v, i) for i, v in enumerate(col_vals)], subset=[col])
+        return styler
 
-        for c in grad_cols:
-            if c not in df_show.columns:
-                continue
-            base_hex = _base_color_for(c)
-            series = _pd.to_numeric(df_show[c], errors="coerce")
-            mn, mx = series.min(skipna=True), series.max(skipna=True)
-            if _pd.isna(mn) or _pd.isna(mx) or mn == mx:
-                continue
-            rng = (mx - mn) or 1.0
-
-            def _col_styles(col):
-                out = []
-                for v in col:
-                    x = _pd.to_numeric(v, errors="coerce")
-                    if _pd.isna(x):
-                        out.append("")
-                    else:
-                        # intensidade do claro -> forte
-                        t = max(0.0, min(1.0, float((x - mn) / rng))) ** 0.6
-                        out.append(f"background-color: {_blend('#ffffff', base_hex, t)} !important")
-                return out
-
-            sty = sty.apply(_col_styles, subset=[c])
-
-        # nulos: branco forçado
-        sty = sty.applymap(lambda v: "background-color: #FFFFFF !important; color: #111111" 
-                           if (v is None or (isinstance(v, float) and _np.isnan(v))) else "")
-        # bordas
-        sty = sty.set_table_styles([{"selector": "tbody td, th","props": [("border", "1px solid #EEE")]}])
-        return sty
-
-    # ---- Constantes ----
+    # ======= Constantes de nomes =======
     A_MAX, A_123, A_FLIP, A_CAPO = "MAXMILHAS", "123MILHAS", "FLIPMILHAS", "CAPOVIAGENS"
 
-    # ---- Tabela 1: Top3 por trecho (menor preço) ----
+    # ======= Tabela 1: Top3 por trecho (menor preço) =======
     by_ag = (
         df.groupby(["TRECHO", "AGENCIA_NORM"], as_index=False)
           .agg(PRECO_MIN=("PRECO", "min"))
@@ -404,7 +372,7 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
 
     t1 = by_ag.groupby("TRECHO").apply(_row_top3).reset_index(drop=True)
 
-    # preços como inteiros (0 casas), preservando NA
+    # preços inteiros (0 casas) preservando NA
     preco_cols = ["Preço Top 1","Preço Top 2","Preço Top 3","123milhas","Maxmilhas","FlipMilhas","Capo Viagens"]
     for c in preco_cols:
         t1[c] = _pd.to_numeric(t1[c], errors="coerce").round(0).astype("Int64")
@@ -413,10 +381,25 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
 
     st.markdown("**Ranking Top 3 (Agências)**")
     fmt_map_t1 = {c: "{:,.0f}" for c in preco_cols}
-    sty1 = style_smart_colwise(t1, fmt_map_t1, grad_cols=preco_cols)
+    sty1 = t1.style.format(fmt_map_t1, na_rep="-", decimal=",", thousands=".") \
+                   .set_table_styles([{"selector":"tbody td, th","props":[("border","1px solid #EEE")]}]) \
+                   .set_properties(**{"background-color":"#ffffff","color":"#111111"})
+
+    # heatmap discreto por coluna com sua cor
+    for c in ["Preço Top 1","Preço Top 2","Preço Top 3"]:
+        sty1 = style_heatmap_discrete(sty1, c, SCALE_BLUE)
+    sty1 = style_heatmap_discrete(sty1, "123milhas",    SCALE_ORANGE)
+    sty1 = style_heatmap_discrete(sty1, "Maxmilhas",    SCALE_GREEN)
+    sty1 = style_heatmap_discrete(sty1, "FlipMilhas",   SCALE_YELLOW)
+    # aceita as duas grafias:
+    if "Capo Viagens" in t1.columns:
+        sty1 = style_heatmap_discrete(sty1, "Capo Viagens", SCALE_PINK)
+    if "Capoviagens" in t1.columns:
+        sty1 = style_heatmap_discrete(sty1, "Capoviagens", SCALE_PINK)
+
     st.dataframe(sty1, use_container_width=True)
 
-    # ---- Tabela 2: % diferença (base Top1) ----
+    # ======= Tabela 2: % Diferença (base: Top1) =======
     def pct_diff(base, other):
         if _pd.isna(base) or base == 0 or _pd.isna(other): 
             return _np.nan
@@ -440,10 +423,22 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
     st.markdown("**% Diferença entre Agências (base: Top 1)**")
     pct_cols   = ["% Dif Top2 vs Top1","% Dif Top3 vs Top1","123milhas","Maxmilhas","FlipMilhas","Capo Viagens"]
     fmt_map_t2 = {"Preço Top 1": "{:,.0f}"} | {c: "{:.2f}%" for c in pct_cols}
-    sty2 = style_smart_colwise(t2, fmt_map_t2, grad_cols=["Preço Top 1"] + pct_cols)
+    sty2 = t2.style.format(fmt_map_t2, na_rep="-", decimal=",", thousands=".") \
+                   .set_table_styles([{"selector":"tbody td, th","props":[("border","1px solid #EEE")]}]) \
+                   .set_properties(**{"background-color":"#ffffff","color":"#111111"})
+
+    # cores dos % seguem a mesma lógica das colunas
+    sty2 = style_heatmap_discrete(sty2, "Preço Top 1",      SCALE_BLUE)
+    sty2 = style_heatmap_discrete(sty2, "% Dif Top2 vs Top1", SCALE_BLUE)
+    sty2 = style_heatmap_discrete(sty2, "% Dif Top3 vs Top1", SCALE_BLUE)
+    sty2 = style_heatmap_discrete(sty2, "123milhas",        SCALE_ORANGE)
+    sty2 = style_heatmap_discrete(sty2, "Maxmilhas",        SCALE_GREEN)
+    sty2 = style_heatmap_discrete(sty2, "FlipMilhas",       SCALE_YELLOW)
+    sty2 = style_heatmap_discrete(sty2, "Capo Viagens",     SCALE_PINK)
+
     st.dataframe(sty2, use_container_width=True)
 
-    # ---- Tabelas 3/4: com CIA (se existir) ----
+    # ======= Tabelas 3/4: Comparativo com Cia (se existir 'CIA') =======
     if "CIA" not in df.columns:
         st.info("Coluna de Cia Aérea ('CIA') não encontrada. As tabelas 3/4 dependem dela.")
         return
@@ -463,10 +458,10 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
 
     rows3 = []
     for trecho, sub in df.groupby("TRECHO"):
-        p123, c123   = best_ag(sub, "123MILHAS")
-        pmax, cmax   = best_ag(sub, "MAXMILHAS")
-        pflip, cflip = best_ag(sub, "FLIPMILHAS")
-        pcapo, ccapo = best_ag(sub, "CAPOVIAGENS")
+        p123, c123   = best_ag(sub, A_123)
+        pmax, cmax   = best_ag(sub, A_MAX)
+        pflip, cflip = best_ag(sub, A_FLIP)
+        pcapo, ccapo = best_ag(sub, A_CAPO)
 
         base = min_air[min_air["TRECHO"] == trecho]
         if base.empty:
@@ -493,9 +488,21 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
     st.markdown("**Comparativo Menor Preço Cia × Agências de Milhas**")
     preco_cols_t3 = [c for c in t3.columns if c.startswith("Preço ")]
     fmt_map_t3 = {c: "{:,.0f}" for c in preco_cols_t3}
-    sty3 = style_smart_colwise(t3, fmt_map_t3, grad_cols=preco_cols_t3)
+    sty3 = t3.style.format(fmt_map_t3, na_rep="-", decimal=",", thousands=".") \
+                   .set_table_styles([{"selector":"tbody td, th","props":[("border","1px solid #EEE")]}]) \
+                   .set_properties(**{"background-color":"#ffffff","color":"#111111"})
+
+    # heatmap cores
+    for c in [c for c in t3.columns if c.startswith("Preço ")]:
+        if "Maxmilhas"   in c: sty3 = style_heatmap_discrete(sty3, c, SCALE_GREEN)
+        elif "123milhas" in c: sty3 = style_heatmap_discrete(sty3, c, SCALE_ORANGE)
+        elif "FlipMilhas" in c: sty3 = style_heatmap_discrete(sty3, c, SCALE_YELLOW)
+        elif "Capo Viagens" in c or "Capoviagens" in c: sty3 = style_heatmap_discrete(sty3, c, SCALE_PINK)
+        else: sty3 = style_heatmap_discrete(sty3, c, SCALE_BLUE)
+
     st.dataframe(sty3, use_container_width=True)
 
+    # % comparativo vs Cia
     def pct_vs_base(base, x):
         if _pd.isna(base) or base == 0 or _pd.isna(x): 
             return _np.nan
@@ -516,12 +523,19 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
     st.markdown("**%Comparativo Menor Preço Cia × Agências de Milhas**")
     pct_cols_t4 = [c for c in t4.columns if c.startswith("% Dif ")]
     fmt_map_t4  = {"Preço Menor Valor": "{:,.0f}"} | {c: "{:.2f}%" for c in pct_cols_t4}
-    sty4 = style_smart_colwise(t4, fmt_map_t4, grad_cols=["Preço Menor Valor"] + pct_cols_t4)
+    sty4 = t4.style.format(fmt_map_t4, na_rep="-", decimal=",", thousands=".") \
+                   .set_table_styles([{"selector":"tbody td, th","props":[("border","1px solid #EEE")]}]) \
+                   .set_properties(**{"background-color":"#ffffff","color":"#111111"})
+    sty4 = style_heatmap_discrete(sty4, "Preço Menor Valor", SCALE_BLUE)
+    for c in pct_cols_t4:
+        if "Maxmilhas"   in c: sty4 = style_heatmap_discrete(sty4, c, SCALE_GREEN)
+        elif "123milhas" in c: sty4 = style_heatmap_discrete(sty4, c, SCALE_ORANGE)
+        elif "FlipMilhas" in c: sty4 = style_heatmap_discrete(sty4, c, SCALE_YELLOW)
+        elif "Capo Viagens" in c: sty4 = style_heatmap_discrete(sty4, c, SCALE_PINK)
+        else: sty4 = style_heatmap_discrete(sty4, c, SCALE_BLUE)
+
     st.dataframe(sty4, use_container_width=True)
 # ───────────────────────── ABA: Top 3 Agências (END) ─────────────────────────
-
-# ───────────────────────── ABA: Top 3 Agências (END) ─────────────────────────
-
 
 # ──────────────────── ABA: Top 3 Preços Mais Baratos (START) ─────────────────
 @register_tab("Top 3 Preços Mais Baratos")
