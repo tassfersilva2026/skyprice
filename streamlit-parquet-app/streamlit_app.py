@@ -544,91 +544,106 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
 @register_tab("Top 3 Preços Mais Baratos")
 def tab3_top3_precos(df_raw: pd.DataFrame):
     """
-    Versão leve:
-      - Usa groupby vetorizado para achar o menor preço por (TRECHO, ADVP, AGENCIA)
-      - Pódio Top1/2/3 por (TRECHO, ADVP)
-      - Mostra data (col. H) + hora (col. C) -> HH:MM:SS
-      - Limites de renderização para performance
+    Pódio por Trecho → ADVP
+    - Preço sem casas decimais
+    - Cards 1º/2º/3º por Trecho×ADVP
+    - Badge com ID da pesquisa e data+hora (data = col. H, hora = col. C normalizada)
+    - Independente do resto (faz parsing de HORA_BUSCA aqui mesmo)
     """
     import re
     import numpy as _np
     import pandas as _pd
 
-    # ---------- Filtros globais ----------
+    # ====== Filtros globais do app ======
     df = render_filters(df_raw, key_prefix="t3")
-    st.subheader("Pódio por Trecho → ADVP (versão leve)")
-
+    st.subheader("Pódio por Trecho → ADVP")
     if df.empty:
         st.info("Sem dados para os filtros.")
         return
 
-    # ---------- Controles de performance ----------
-    c1, c2, c3 = st.columns([0.32, 0.24, 0.44])
-    max_trechos = c1.number_input("Máx. trechos exibidos", min_value=1, max_value=500, value=20, step=1)
-    max_advp    = c2.number_input("Máx. ADVP por trecho",  min_value=1, max_value=30,  value=10, step=1)
-    c3.caption("Dica: aumente esses limites só quando precisar.")
+    # ====== UI fina da aba ======
+    c1, c2, c3 = st.columns([0.28, 0.18, 0.54])
+    agencias_known = ["Todos", "123MILHAS", "MAXMILHAS"]
+    agencia_foco   = c1.selectbox("Agência alvo", agencias_known, index=0)
+    posicao_foco   = c2.selectbox("Ranking", ["Todas", 1, 2, 3], index=0)
+    c3.caption("Agrupamento"); c3.write("Todos os registros filtrados")
 
-    # ---------- Parser robusto da HORA (coluna C) ----------
+    # ====== Helpers ======
+    def _canon(s: str) -> str:
+        return re.sub(r"[^A-Z0-9]+", "", str(s).upper())
+
+    def _brand_tag(s: str) -> str | None:
+        cs = _canon(s)
+        if cs.startswith("123MILHAS") or cs == "123":
+            return "123MILHAS"
+        if cs.startswith("MAXMILHAS") or cs == "MAX":
+            return "MAXMILHAS"
+        return None
+
+    def fmt_moeda_br(x) -> str:
+        try:
+            xv = float(x)
+            if not _np.isfinite(xv): return "R$ -"
+            return "R$ " + f"{xv:,.0f}".replace(",", ".")
+        except Exception:
+            return "R$ -"
+
+    def fmt_pct_plus(x) -> str:
+        try:
+            v = float(x)
+            if not _np.isfinite(v): return "—"
+            return f"+{round(v):.0f}%"
+        except Exception:
+            return "—"
+
+    def _normalize_id(val) -> str | None:
+        if val is None or (isinstance(val, float) and _np.isnan(val)): return None
+        s = str(val)
+        try:
+            f = float(s.replace(",", "."))
+            if f.is_integer(): return str(int(f))
+        except Exception:
+            pass
+        return s
+
+    # --- Parser robusto para HORA_BUSCA (coluna C) → "HH:MM:SS"
     def parse_hora_text(val) -> str | None:
         s = str(val).strip()
         if s == "" or s.lower() in {"nan", "none", "null"}:
             return None
+        # tenta datetime completo primeiro
         try:
             ts = _pd.to_datetime(s, dayfirst=True, errors="raise")
             return ts.strftime("%H:%M:%S")
         except Exception:
             pass
+        # limpa só dígitos
         digs = "".join(ch for ch in s if ch.isdigit())
         h = m = sec = None
         try:
-            if len(digs) >= 6:      # HHMMSS (6 últimos)
+            if len(digs) >= 6:      # HHMMSS (pega os 6 últimos)
                 h, m, sec = int(digs[-6:-4]), int(digs[-4:-2]), int(digs[-2:])
             elif len(digs) == 4:    # HHMM
                 h, m, sec = int(digs[:2]), int(digs[2:4]), 0
-            elif len(digs) in (1,2):
+            elif len(digs) in (1,2):# H / HH
                 h, m, sec = int(digs), 0, 0
         except Exception:
             pass
+        # tenta formatos com ':' ou '.'
         if h is None:
             parts = [p for p in s.replace(".", ":").split(":") if p != ""]
             try:
-                if len(parts) == 2:   h, m, sec = int(parts[0]), int(parts[1]), 0
-                elif len(parts) == 3: h, m, sec = int(parts[0]), int(parts[1]), int(parts[2])
+                if len(parts) == 2:
+                    h, m, sec = int(parts[0]), int(parts[1]), 0
+                elif len(parts) == 3:
+                    h, m, sec = int(parts[0]), int(parts[1]), int(parts[2])
             except Exception:
                 return None
         if not (0 <= h <= 23 and 0 <= m <= 59 and 0 <= sec <= 59):
             return None
         return f"{h:02d}:{m:02d}:{sec:02d}"
 
-    # ---------- Normalização mínima ----------
-    advp_col = "ADVP_CANON" if "ADVP_CANON" in df.columns else "ADVP"
-    cols_need = ["TRECHO", advp_col, "AGENCIA_NORM", "PRECO", "DATAHORA_BUSCA"]
-    miss = [c for c in cols_need if c not in df.columns]
-    if miss:
-        st.error(f"Colunas faltando: {', '.join(miss)}"); return
-
-    dfp = df[["TRECHO", advp_col, "AGENCIA_NORM", "PRECO", "DATAHORA_BUSCA", "HORA_BUSCA", "IDPESQUISA"]].copy()
-    dfp["PRECO"] = _pd.to_numeric(dfp["PRECO"], errors="coerce")
-    dfp = dfp[dfp["PRECO"].notna()]
-
-    # hora normalizada (coluna C)
-    if "HORA_BUSCA" in dfp.columns:
-        dfp["HORA_NORM"] = dfp["HORA_BUSCA"].apply(parse_hora_text)
-    else:
-        dfp["HORA_NORM"] = None
-
-    # ---------- Núcleo leve (100% vetorizado) ----------
-    # 1) Para cada (TRECHO, ADVP, AGENCIA): pegar linha do menor PRECO e, em caso de empate, a mais recente
-    sort_cols = ["TRECHO", advp_col, "AGENCIA_NORM", "PRECO", "DATAHORA_BUSCA"]
-    df_sorted = dfp.sort_values(sort_cols + ["HORA_NORM"], ascending=[True, True, True, True, False, False])
-    best_ag = df_sorted.drop_duplicates(subset=["TRECHO", advp_col, "AGENCIA_NORM"], keep="first")
-
-    # 2) Ordenar por preço dentro de cada (TRECHO, ADVP) e marcar Top1/2/3
-    best_ag = best_ag.sort_values(["TRECHO", advp_col, "PRECO", "DATAHORA_BUSCA"], ascending=[True, True, True, False])
-    best_ag["RANK"] = best_ag.groupby(["TRECHO", advp_col]).cumcount() + 1
-    podium = best_ag[best_ag["RANK"] <= 3].copy()
-
-    # ---------- Layout ----------
+    # ====== Layout (CSS) ======
     GRID_STYLE    = "display:grid;grid-auto-flow:column;grid-auto-columns:260px;gap:10px;overflow-x:auto;padding:6px 2px 10px 2px;scrollbar-width:thin;"
     BOX_STYLE     = "border:1px solid #e5e7eb;border-radius:12px;background:#fff;"
     HEAD_STYLE    = "padding:8px 10px;border-bottom:1px solid #f1f5f9;font-weight:700;color:#111827;"
@@ -640,64 +655,199 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
     AG_STYLE      = "font-weight:800;font-size:15px;color:#111827;margin-top:2px;"
     PR_STYLE      = "font-weight:900;font-size:18px;color:#111827;margin-top:2px;"
     SUB_STYLE     = "font-weight:700;font-size:12px;color:#374151;"
+    NO_STYLE      = "padding:22px 12px;color:#6b7280;font-weight:800;text-align:center;border:1px dashed #e5e7eb;border-radius:10px;background:#fafafa;"
     TRE_HDR_STYLE = "margin:14px 0 10px 0;padding:10px 12px;border-left:4px solid #0B5FFF;background:#ECF3FF;border-radius:8px;font-weight:800;color:#0A2A6B;"
+    EXTRAS_STYLE  = "border-top:1px dashed #e5e7eb;margin:6px 8px 8px 8px;padding-top:6px;display:flex;gap:6px;flex-wrap:wrap;"
+    CHIP_STYLE    = "background:#f3f4f6;border:1px solid #e5e7eb;border-radius:10px;padding:2px 6px;font-weight:700;font-size:11px;color:#111827;white-space:nowrap;line-height:1.1;"
 
-    def fmt_moeda_br(x) -> str:
-        try:
-            xv = float(x)
-            if not _np.isfinite(xv): return "R$ -"
-            return "R$ " + f"{xv:,.0f}".replace(",", ".")
-        except Exception:
-            return "R$ -"
+    BADGE_POP_CSS = """
+    <style>
+    .idp-wrap{position:relative; display:inline-flex; align-items:center;}
+    .idp-badge{display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; border:1px solid #cbd5e1; border-radius:50%; font-size:11px; font-weight:900; color:#64748b; background:#fff; user-select:none; cursor:default; line-height:1;}
+    .idp-pop{position:absolute; top:18px; right:0; background:#fff; color:#0f172a; border:1px solid #e5e7eb; border-radius:8px; padding:6px 8px; font-size:12px; font-weight:700; box-shadow:0 6px 16px rgba(0,0,0,.08); display:none; z-index:9999; white-space:nowrap;}
+    .idp-wrap:hover .idp-pop{ display:block; }
+    .idp-idbox{border:1px solid #e5e7eb; background:#f8fafc; border-radius:6px; padding:2px 6px; font-weight:800; font-size:12px; min-width:60px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; user-select:text; cursor:text;}
+    </style>
+    """
+    st.markdown(BADGE_POP_CSS, unsafe_allow_html=True)
 
-    def _card_html(rank: int, agencia: str, preco: float, dt_hora: str) -> str:
+    # ====== Dados normalizados desta aba ======
+    dfp = df.copy()
+    dfp["__TRECHO__"]  = dfp["TRECHO"].astype(str)
+    advp_col           = "ADVP_CANON" if "ADVP_CANON" in dfp.columns else "ADVP"
+    dfp["__ADVP__"]    = dfp[advp_col].astype(str)
+    dfp["__AG__"]      = dfp["AGENCIA_NORM"].astype(str)
+    dfp["__PRECO__"]   = _pd.to_numeric(dfp["PRECO"], errors="coerce")
+    dfp["__DTKEY__"]   = _pd.to_datetime(dfp.get("DATAHORA_BUSCA"), errors="coerce")  # data (col. H)
+    # hora (col. C) — normalizada
+    hora_raw           = dfp.get("HORA_BUSCA")
+    dfp["__HORA__"]    = hora_raw.apply(parse_hora_text) if hora_raw is not None else None
+    dfp["__ID__"]      = dfp.get("IDPESQUISA")
+
+    dfp = dfp[dfp["__PRECO__"].notna()].copy()
+    if dfp.empty:
+        st.info("Sem preços válidos no recorte atual.")
+        return
+
+    # ====== Funções de cálculo ======
+    def build_rank(df_subset: _pd.DataFrame) -> _pd.DataFrame:
+        tmp = df_subset.copy()
+        rank = (tmp.groupby("__AG__", as_index=False)["__PRECO__"].min()
+                  .sort_values("__PRECO__").reset_index(drop=True))
+        if not rank.empty:
+            rank["_CAN"]   = rank["__AG__"].apply(_canon)
+            rank["_BRAND"] = rank["__AG__"].apply(_brand_tag)
+        return rank
+
+    def presence_flags(df_all_rows: _pd.DataFrame, label: str) -> dict:
+        sub = df_all_rows[df_all_rows["__AG__"].astype(str).apply(_brand_tag) == _brand_tag(label)]
+        present_any = not sub.empty
+        present_with_price = present_any and _np.isfinite(sub["__PRECO__"]).any()
+        return {"present_any": present_any, "present_with_price": present_with_price}
+
+    def dt_and_id_for(trecho: str, advp: str, agencia: str, preco: float) -> tuple[str, str | None]:
+        """Retorna label 'dd/mm HH:MM:SS' e ID da pesquisa."""
+        sub = dfp[
+            (dfp["__TRECHO__"] == str(trecho)) &
+            (dfp["__ADVP__"]   == str(advp)) &
+            (dfp["__AG__"].apply(_canon) == _canon(agencia))
+        ].copy()
+        if sub.empty:
+            return "", None
+
+        # escolhe linha de preço igual/mais próximo, usando data mais recente
+        near = _np.isclose(sub["__PRECO__"], float(preco), rtol=0, atol=1)
+        sub_price = sub[near]
+        if sub_price.empty:
+            sub_price = sub.iloc[[sub["__PRECO__"].idxmin()]]
+        # data (H)
+        ts = _pd.to_datetime(sub_price["__DTKEY__"], errors="coerce").max()
+        d_lbl = ts.strftime("%d/%m") if _pd.notna(ts) else ""
+        # hora (C) — pega a mais recente entre as candidatas
+        h_lbl = sub_price["__HORA__"].dropna().astype(str)
+        h_lbl = h_lbl.iloc[-1] if not h_lbl.empty else ""
+        dt_lbl = (d_lbl + " " + h_lbl).strip()
+
+        # ID de pesquisa (coluna A)
+        row_latest = sub_price.loc[sub_price["__DTKEY__"].idxmax()] if _pd.notna(ts) else sub_price.iloc[-1]
+        id_val = _normalize_id(row_latest["__ID__"]) if "__ID__" in row_latest.index else None
+        return dt_lbl, id_val
+
+    def _popover_html(id_val: str | None) -> str:
+        if not id_val:
+            return ""
+        sid = str(id_val).replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ")
+        return (
+            f"<span class='idp-wrap'>"
+            f"  <span class='idp-badge' title='Duplo clique para selecionar'>?</span>"
+            f"  <span class='idp-pop'>ID:&nbsp;<input class='idp-idbox' type='text' value='{sid}' readonly></span>"
+            f"</span>"
+        )
+
+    def _card_html(rank: int, agencia: str, preco: float, subtxt: str, dt: str, id_to_copy: str | None) -> str:
         stripe = "#D4AF37" if rank == 1 else ("#9CA3AF" if rank == 2 else "#CD7F32")
         stripe_div = f"<div style='position:absolute;left:0;top:0;bottom:0;width:6px;border-radius:10px 0 0 10px;background:{stripe};'></div>"
+        badge = _popover_html(id_to_copy)
         return (
             f"<div style='{CARD_BASE}'>"
             f"{stripe_div}"
-            f"<div style='{DT_WRAP_STYLE}'><span style='{DT_TXT_STYLE}'>{dt_hora}</span></div>"
+            f"<div style='{DT_WRAP_STYLE}'><span style='{DT_TXT_STYLE}'>{dt}</span>{badge}</div>"
             f"<div style='{RANK_STYLE}'>{rank}º</div>"
             f"<div style='{AG_STYLE}'>{agencia}</div>"
             f"<div style='{PR_STYLE}'>{fmt_moeda_br(preco)}</div>"
-            f"<div style='{SUB_STYLE}'></div>"
+            f"<div style='{SUB_STYLE}'>{subtxt}</div>"
             f"</div>"
         )
 
-    # ---------- Render por trecho/advp com limites ----------
-    # Ordem de trechos pelo menor preço observado (mais interessante primeiro)
-    trecho_order = (podium.groupby("TRECHO")["PRECO"].min()
-                    .sort_values(ascending=True)
-                    .head(int(max_trechos))
-                    .index.tolist())
+    # ====== Render: por Trecho → ADVP ======
+    for trecho in sorted(dfp["__TRECHO__"].dropna().unique(), key=str):
+        df_t = dfp[dfp["__TRECHO__"] == trecho]
 
-    for trecho in trecho_order:
-        pod_t = podium[podium["TRECHO"] == trecho].copy()
-
-        # ordenar ADVP numericamente quando der
+        # ordenar ADVP numericamente quando possível
         def _advp_key(v):
             m = re.search(r"\d+", str(v))
             return (0, int(m.group())) if m else (1, str(v))
-        advp_vals = sorted(pod_t[advp_col].unique(), key=_advp_key)[:int(max_advp)]
+        advps = sorted(df_t["__ADVP__"].dropna().unique(), key=_advp_key)
 
         boxes = []
-        for advp in advp_vals:
-            g = pod_t[pod_t[advp_col] == advp].sort_values("RANK")
-            if g.empty:
+        for advp in advps:
+            all_rows = df_t[df_t["__ADVP__"] == str(advp)].copy()
+            base_rank = build_rank(all_rows)
+
+            # filtro fino: só renderiza se a agência/posição escolhida bater
+            if not base_rank.empty and agencia_foco != "Todos":
+                rk_map = {row["__AG__"]: i+1 for i, row in base_rank.head(3).iterrows()}
+                found_target = any(_canon(ag) == _canon(agencia_foco) and (posicao_foco == "Todas" or posicao_foco == i)
+                                   for ag, i in rk_map.items())
+                if not found_target:
+                    continue
+
+            box = [f"<div style='{BOX_STYLE}'>", f"<div style='{HEAD_STYLE}'>ADVP: <b>{advp}</b></div>"]
+
+            if base_rank.empty:
+                box.append(f"<div style='{NO_STYLE}'>Sem ofertas</div>")
+                extras = []
+                for label in ["123MILHAS", "MAXMILHAS"]:
+                    pres = presence_flags(all_rows, label)
+                    if not pres["present_any"]:
+                        extras.append(f"<span style='{CHIP_STYLE}'>{label}: Não apareceu</span>")
+                    elif not pres["present_with_price"]:
+                        extras.append(f"<span style='{CHIP_STYLE}'>{label}: Sem ofertas</span>")
+                if extras:
+                    box.append(f"<div style='{EXTRAS_STYLE}'>" + "".join(extras) + "</div>")
+                box.append("</div>")
+                boxes.append("".join(box))
                 continue
 
-            header = f"<div style='{HEAD_STYLE}'>ADVP: <b>{advp}</b></div>"
-            stack  = [f"<div style='{STACK_STYLE}'>"]
+            podium = base_rank.head(3).copy()
+            box.append(f"<div style='{STACK_STYLE}'>")
+            for i in range(len(podium)):
+                row = podium.iloc[i]
+                preco_i = float(row["__PRECO__"])
+                ag_i    = row["__AG__"]
 
-            for _, row in g.iterrows():
-                dt = _pd.to_datetime(row["DATAHORA_BUSCA"], errors="coerce")
-                d_lbl = dt.strftime("%d/%m") if _pd.notna(dt) else ""
-                h_lbl = (row.get("HORA_NORM") or "").strip()
-                dt_lbl = (d_lbl + " " + h_lbl).strip()
-                stack.append(_card_html(int(row["RANK"]), str(row["AGENCIA_NORM"]), float(row["PRECO"]), dt_lbl))
+                dt_i, id_i = dt_and_id_for(trecho, advp, ag_i, preco_i)
 
-            stack.append("</div>")
-            boxes.append("<div style='{BOX_STYLE}'>".replace("{BOX_STYLE}", BOX_STYLE) + header + "".join(stack) + "</div>")
+                # subtítulo do card
+                if i == 0 and len(podium) >= 2:
+                    p2 = float(podium.iloc[1]["__PRECO__"])
+                    subtxt = f"−{int(round((p2 - preco_i) / p2 * 100.0))}% vs 2º" if _np.isfinite(p2) and p2 != 0 else "—"
+                else:
+                    p1 = float(podium.iloc[0]["__PRECO__"])
+                    subtxt = fmt_pct_plus((preco_i - p1) / p1 * 100.0) + " vs 1º" if (_np.isfinite(p1) and p1 != 0 and _np.isfinite(preco_i)) else "—"
+
+                box.append(_card_html(i+1, ag_i, preco_i, subtxt, dt_i, id_i))
+            box.append("</div>")  # stack
+
+            # chips extras para 123/MAX se não estão no pódio
+            extras = []
+            p1 = float(podium.iloc[0]["__PRECO__"])
+            podium_tags = {_canon(r['__AG__']) for _, r in podium.iterrows()}
+
+            for target in ["123MILHAS", "MAXMILHAS"]:
+                if _canon(target) in podium_tags:
+                    continue
+                match = base_rank[base_rank["_BRAND"] == _brand_tag(target)]
+                if match.empty:
+                    pres = presence_flags(all_rows, target)
+                    if not pres["present_any"]:
+                        extras.append(f"<span style='{CHIP_STYLE}'>{target}: Não apareceu</span>")
+                    elif not pres["present_with_price"]:
+                        extras.append(f"<span style='{CHIP_STYLE}'>{target}: Sem ofertas</span>")
+                else:
+                    pos = int(match.index[0]) + 1
+                    preco_v = float(match.iloc[0]["__PRECO__"])
+                    delta = ((preco_v - p1) / p1 * 100.0) if (_np.isfinite(preco_v) and _np.isfinite(p1) and p1 != 0) else None
+                    ts_lbl, _ = dt_and_id_for(trecho, advp, target, preco_v)
+                    pct_str = f" {fmt_pct_plus(delta)}" if delta is not None else ""
+                    ts_part = f" | {ts_lbl}" if ts_lbl else ""
+                    extras.append(f"<span style='{CHIP_STYLE}'>{pos}º {target}: {fmt_moeda_br(preco_v)}{pct_str}{ts_part}</span>")
+
+            if extras:
+                box.append(f"<div style='{EXTRAS_STYLE}'>" + "".join(extras) + "</div>")
+
+            box.append("</div>")  # box
+            boxes.append("".join(box))
 
         if boxes:
             st.markdown(f"<div style='{TRE_HDR_STYLE}'>Trecho: <b>{trecho}</b></div>", unsafe_allow_html=True)
