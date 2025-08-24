@@ -194,11 +194,11 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
     with c1:
         dt_ini = st.date_input ("Data inicial"), key=f"{key_prefix}_dtini",
                                value=st.session_state["flt"]["dt_ini"],
-                               min_value=dmin_abs, max_value=dmax_abs, format="DD/MM/YYYY")
+                               min_value=dmin_abs, max_value=dmax_abs, format=("DD/MM/YYYY")
     with c2:
         dt_fim = st.date_input ("Data final"), key=f"{key_prefix}_dtfim",
                                value=st.session_state["flt"]["dt_fim"],
-                               min_value=dmin_abs, max_value=dmax_abs, format="DD/MM/YYYY")
+                               min_value=dmin_abs, max_value=dmax_abs, format=("DD/MM/YYYY")
     with c3:
         advp_all = sorted(set(pd.to_numeric(df_raw["ADVP_CANON"], errors="coerce").dropna().astype(int).tolist()))
         advp_sel = st.multiselect ADVP", options=advp_all,
