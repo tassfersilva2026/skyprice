@@ -192,11 +192,11 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
     dmax_abs = dmax_abs.date() if pd.notna(dmax_abs) else date.today()
 
     with c1:
-        dt_ini = st.date_input("Data inicial (col. H)", key=f"{key_prefix}_dtini",
+        dt_ini = st.date_input("Data inicial)", key=f"{key_prefix}_dtini",
                                value=st.session_state["flt"]["dt_ini"],
                                min_value=dmin_abs, max_value=dmax_abs, format="DD/MM/YYYY")
     with c2:
-        dt_fim = st.date_input("Data final (col. H)", key=f"{key_prefix}_dtfim",
+        dt_fim = st.date_input("Data final", key=f"{key_prefix}_dtfim",
                                value=st.session_state["flt"]["dt_fim"],
                                min_value=dmin_abs, max_value=dmax_abs, format="DD/MM/YYYY")
     with c3:
@@ -208,7 +208,7 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
         tr_sel = st.multiselect("Trechos (col. K)", trechos_all,
                                 default=st.session_state["flt"]["trechos"], key=f"{key_prefix}_trechos")
     with c5:
-        hh_sel = st.multiselect("Hora da busca HH (col. C)", list(range(24)),
+        hh_sel = st.multiselect("Hora da busca)", list(range(24)),
                                 default=st.session_state["flt"]["hh"], key=f"{key_prefix}_hh")
 
     st.session_state["flt"] = {"dt_ini": dt_ini, "dt_fim": dt_fim,
