@@ -202,7 +202,7 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
     with c3:
         advp_all = sorted(set(pd.to_numeric(df_raw["ADVP_CANON"], errors="coerce").dropna().astype(int).tolist()))
         advp_sel = st.multiselect ("ADVP"), options=advp_all,
-                                  default=st.session_state["flt"]["advp"], key=f"{key_prefix}_advp")
+                                  default=st.session_state["flt"]["advp"], key=f"{key_prefix}_("advp")
     with c4:
         trechos_all = sorted([t for t in df_raw["TRECHO"].dropna().unique().tolist() if str(t).strip()!=""])
         tr_sel = st.multiselect ("Trechos"), trechos_all,
