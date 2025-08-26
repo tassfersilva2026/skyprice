@@ -40,7 +40,7 @@ def std_agencia(raw: str) -> str:
 
 def advp_nearest(x) -> int:
     try:
-        v = float(str(x).replace(",", "."))
+        v = float(str(x).replace(",", "."))  # entrada pode vir "11,0"
     except Exception:
         v = np.nan
     if np.isnan(v):
@@ -192,13 +192,15 @@ def _init_filter_state(df_raw: pd.DataFrame):
     st.session_state["flt"] = {
         "dt_ini": (dmin.date() if pd.notna(dmin) else date(2000, 1, 1)),
         "dt_fim": (dmax.date() if pd.notna(dmax) else date.today()),
-        "advp": [], "trechos": [], "hh": [],
+        "advp": [], "trechos": [], "hh": [], "cia": []  # <- novo: filtro global de Cia
     }
 
 def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
     _init_filter_state(df_raw)
     st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
-    c1, c2, c3, c4, c5 = st.columns([1.1, 1.1, 1, 2, 1])
+
+    # 6 colunas: datas, advp, trecho, hora, cia
+    c1, c2, c3, c4, c5, c6 = st.columns([1.1, 1.1, 1, 2, 1, 1.2])
 
     dmin_abs = pd.to_datetime(df_raw["DATAHORA_BUSCA"], errors="coerce").min()
     dmax_abs = pd.to_datetime(df_raw["DATAHORA_BUSCA"], errors="coerce").max()
@@ -242,12 +244,26 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
             default=st.session_state["flt"]["hh"],
             key=f"{key_prefix}_hh"
         )
+    with c6:
+        # Opções restritas a Azul/Gol/Latam, mantendo ordem e mostrando só as presentes; se não houver, lista padrão
+        cia_presentes = set(str(x).upper() for x in df_raw.get("CIA", pd.Series([], dtype=str)).dropna().unique())
+        ordem = ["AZUL", "GOL", "LATAM"]
+        cia_opts = [c for c in ordem if (not cia_presentes or c in cia_presentes)] or ordem
+        cia_default = [c for c in st.session_state["flt"]["cia"] if c in cia_opts]
+        cia_sel = st.multiselect(
+            "Cia (Azul/Gol/Latam)",
+            options=cia_opts,
+            default=cia_default,
+            key=f"{key_prefix}_cia"
+        )
 
+    # Persistência global de estado
     st.session_state["flt"] = {
         "dt_ini": dt_ini, "dt_fim": dt_fim,
-        "advp": advp_sel or [], "trechos": tr_sel or [], "hh": hh_sel or []
+        "advp": advp_sel or [], "trechos": tr_sel or [], "hh": hh_sel or [], "cia": cia_sel or []
     }
 
+    # Aplicação dos filtros
     mask = pd.Series(True, index=df_raw.index)
     mask &= (pd.to_datetime(df_raw["DATAHORA_BUSCA"], errors="coerce") >= pd.Timestamp(dt_ini))
     mask &= (pd.to_datetime(df_raw["DATAHORA_BUSCA"], errors="coerce") <= pd.Timestamp(dt_fim))
@@ -257,6 +273,8 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
         mask &= df_raw["TRECHO"].isin(tr_sel)
     if hh_sel:
         mask &= df_raw["HORA_HH"].isin(hh_sel)
+    if cia_sel and "CIA" in df_raw.columns:
+        mask &= df_raw["CIA"].astype(str).str.upper().isin(cia_sel)
 
     df = df_raw[mask].copy()
     st.caption(f"Linhas após filtros: {fmt_int(len(df))} • Última atualização: {last_update_from_cols(df)}")
@@ -568,7 +586,6 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
     st.dataframe(sty4, use_container_width=True)
 # ───────────────────────── ABA: Top 3 Agências (END) ─────────────────────────
 
-
 # ──────────────────── ABA: Top 3 Preços Mais Baratos (START) ─────────────────
 @register_tab("Top 3 Preços Mais Baratos")
 def tab3_top3_precos(df_raw: pd.DataFrame):
@@ -726,17 +743,21 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
             last_id  = last_rows_idx.loc[key, "IDPESQUISA"]
             dt_last  = last_rows_idx.loc[key, "__DTKEY__"]
             hh_last  = last_rows_idx.loc[key, "__HORA__"]
-            dt_label = (dt_last.strftime("%d/%m/%Y") if _pd.notna(dt_last) else "") + (f" {hh_last}" if isinstance(hh_last, str) and hh_last else "")
+            dt_label = (dt_last.strftime("%d/%m/%Y") if _np.notna(dt_last) else "") + (f" {hh_last}" if isinstance(hh_last, str) and hh_last else "")
 
             rows = df_t[(df_t["__ADVP__"] == str(advp)) & (df_t["IDPESQUISA"] == last_id)].copy()
             rank = build_rank(rows)
 
+            # Filtros locais de foco (opcionais)
+            from_pos_ok = True
             if not rank.empty and agencia_foco != "Todos":
                 rk_map = {row["__AG__"]: i+1 for i, row in rank.head(3).iterrows()}
                 found = any(_canon(ag) == _canon(agencia_foco) and (posicao_foco == "Todas" or posicao_foco == i)
                             for ag, i in rk_map.items())
                 if not found:
-                    continue
+                    from_pos_ok = False
+            if not from_pos_ok:
+                continue
 
             box = [f"<div style='{BOX}'>", f"<div style='{HEAD}'>ADVP: <b>{advp}</b></div>"]
 
@@ -800,7 +821,6 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
             st.markdown("<div style='" + GRID + "'>" + "".join(boxes) + "</div>", unsafe_allow_html=True)
 # ───────────────────── ABA: Top 3 Preços Mais Baratos (END) ──────────────────
 
-
 # ───────────────────── ABA 4: Ranking por Agências (START) ───────────────────
 @register_tab("Ranking por Agências")
 def tab4_ranking_agencias(df_raw: pd.DataFrame):
@@ -809,9 +829,6 @@ def tab4_ranking_agencias(df_raw: pd.DataFrame):
       1) Quantidade de ofertas por ranking (com Total)
       2) % participação do ranking DENTRO da agência (linha)
       3) % participação da agência DENTRO do ranking (coluna)
-    Observações:
-      - Usa colunas do app: AGENCIA_NORM, RANKING, TRECHO (opcional), DATAHORA_BUSCA
-      - Heatmap sem matplotlib (css via Styler.apply), com destaque para 123MILHAS e MAXMILHAS
     """
     import numpy as np
     import pandas as pd
@@ -1162,8 +1179,8 @@ def tab4_melhor_preco_por_periodo(df_raw: pd.DataFrame):
     )
 
     piv = df_min_ag_h.pivot(index="HORA", columns="AGENCIA_NORM", values="Preco")
-    s123 = piv.get(A_123)
-    smax = piv.get(A_MAX)
+    s123 = piv.get("123MILHAS")
+    smax = piv.get("MAXMILHAS")
     eq_hours = []
     if s123 is not None and smax is not None:
         mask_eq = s123.notna() & smax.notna() & (s123.sub(smax).abs() <= 0.01)
@@ -1175,7 +1192,7 @@ def tab4_melhor_preco_por_periodo(df_raw: pd.DataFrame):
         "Preco": s123.loc[eq_hours].values if s123 is not None and len(eq_hours)>0 else []
     })
 
-    mask_remove = (df_min_ag_h["HORA"].isin(eq_hours)) & (df_min_ag_h["AGENCIA_NORM"].isin([A_123, A_MAX]))
+    mask_remove = (df_min_ag_h["HORA"].isin(eq_hours)) & (df_min_ag_h["AGENCIA_NORM"].isin(["123MILHAS", "MAXMILHAS"]))
     df_min_ag_h2 = pd.concat([df_min_ag_h.loc[~mask_remove], df_group], ignore_index=True)
 
     top3 = (
