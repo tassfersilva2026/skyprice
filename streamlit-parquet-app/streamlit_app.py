@@ -939,7 +939,7 @@ def tab4_ranking_agencias(df_raw: pd.DataFrame):
     if t_qtd.columns[0] != "Agência/Companhia":
         t_qtd = t_qtd.rename(columns={t_qtd.columns[0]: "Agência/Companhia"})
 
-    st.subheader("Quantidade de Ofertas por Ranking (Ofertas)")
+    st.subheader("Quantidade de Pesquisas")
     _show_table(
         t_qtd[["Agência/Companhia"] + RANKS + ["Total"]],
         highlight_total_row=True,
