@@ -473,339 +473,194 @@ def tab1_painel(df_raw: pd.DataFrame):
     render_por_cia(c1, df, "AZUL"); render_por_cia(c2, df, "GOL"); render_por_cia(c3, df, "LATAM")
 
 # ──────────────────────── ABA: Top 3 Agências (START) ────────────────────────
+# ──────────────────────── ABA: Top 3 Agências (CORRIGIDA) ─────────────────────
 @register_tab("Top 3 Agências")
 def tab2_top3_agencias(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t2")
     st.subheader("Top 3 Agências (por menor preço no trecho)")
-    if df.empty: st.info("Sem resultados para os filtros selecionados."); return
+    if df.empty:
+        st.info("Sem resultados para os filtros selecionados.")
+        return
 
-    # === usar SEMPRE a MESMA PESQUISA (última por Trecho)
+    # 1) Garantir mesma pesquisa (pega a última por Trecho)
     df2 = df.copy()
     df2["DT"] = pd.to_datetime(df2["DATAHORA_BUSCA"], errors="coerce")
-    tmp = df2.dropna(subset=["TRECHO","IDPESQUISA","DT"]).copy()
-    g   = tmp.groupby(["TRECHO","IDPESQUISA"], as_index=False)["DT"].max()
-    idx = g.groupby("TRECHO")["DT"].idxmax()
-    last_ids = {r["TRECHO"]: r["IDPESQUISA"] for _, r in g.loc[idx].iterrows()}
+    g = (df2.dropna(subset=["TRECHO","IDPESQUISA","DT"])
+              .groupby(["TRECHO","IDPESQUISA"], as_index=False)["DT"].max())
+    last_idx = g.groupby("TRECHO")["DT"].idxmax()
+    last_ids = {r["TRECHO"]: r["IDPESQUISA"] for _, r in g.loc[last_idx].iterrows()}
     df2["__ID_TARGET__"] = df2["TRECHO"].map(last_ids)
     df_last = df2[df2["IDPESQUISA"].astype(str) == df2["__ID_TARGET__"].astype(str)].copy()
 
-    # Mapa Trecho -> Data/Hora Busca (data de DATAHORA_BUSCA + hora da HORA_BUSCA)
-    def _fmt_dt_hh(sub: pd.DataFrame) -> str:
+    # 2) Coluna "Data/Hora Busca" (DATAHORA + hora da coluna C/HORA_BUSCA)
+    def _compose_dt_hora(sub: pd.DataFrame) -> str:
         d = pd.to_datetime(sub["DATAHORA_BUSCA"], errors="coerce").max()
-        try:
-            hh_series = pd.to_datetime(sub["HORA_BUSCA"].astype(str), errors="coerce").dt.time
-            hh = max([t for t in hh_series if pd.notna(t)], default=None)
-        except Exception:
-            hh = None
-        if pd.isna(d) and not isinstance(hh, dtime): return "-"
-        if isinstance(hh, dtime):
-            return f"{(d.date() if pd.notna(d) else date.today()).strftime('%d/%m/%Y')} {hh.strftime('%H:%M:%S')}"
-        return d.strftime("%d/%m/%Y %H:%M:%S") if pd.notna(d) else "-"
+        # tenta extrair HH:MM:SS válidos da coluna C
+        hh = None
+        for v in sub["HORA_BUSCA"].tolist():
+            hh = _norm_hhmmss(v)
+            if hh: break
+        if pd.isna(d) and not hh:
+            return "-"
+        if not hh:
+            hh = pd.to_datetime(d, errors="coerce").strftime("%H:%M:%S")
+        return f"{d.strftime('%d/%m/%Y')} {hh}"
 
-    dt_by_trecho = {trecho: _fmt_dt_hh(sub) for trecho, sub in df_last.groupby("TRECHO")}
+    dt_by_trecho = {trecho: _compose_dt_hora(sub) for trecho, sub in df_last.groupby("TRECHO")}
 
+    # 3) Ranking Top-3 por Trecho (mesma pesquisa)
     PRICE_COL, TRECHO_COL, AGENCIA_COL = "PRECO", "TRECHO", "AGENCIA_NORM"
     by_ag = (
         df_last.groupby([TRECHO_COL, AGENCIA_COL], as_index=False)
                .agg(PRECO_MIN=(PRICE_COL, "min"))
-               .rename(columns={TRECHO_COL: "TRECHO_STD", AGENCIA_COL: "AGENCIA_UP"})
+               .rename(columns={TRECHO_COL:"TRECHO_STD", AGENCIA_COL:"AGENCIA_UP"})
     )
 
-    A_123, A_MAX, A_FLIP, A_CAPO = map(std_agencia, ["123MILHAS", "MAXMILHAS", "FLIPMILHAS", "CAPOVIAGENS"])
-
-    def build_row(g: pd.DataFrame) -> pd.Series:
+    def _row_top3(g: pd.DataFrame) -> pd.Series:
         g = g.sort_values("PRECO_MIN", ascending=True).reset_index(drop=True)
         trecho = g["TRECHO_STD"].iloc[0] if len(g) else "-"
-        id_pesq = last_ids.get(trecho, "-")
-        dt_busca = dt_by_trecho.get(trecho, "-")
         def name(i):  return g.loc[i, "AGENCIA_UP"] if i < len(g) else "-"
         def price(i): return g.loc[i, "PRECO_MIN"]  if i < len(g) else np.nan
-        def price_of(ag):
-            m = g[g["AGENCIA_UP"] == ag]
-            return (m["PRECO_MIN"].min() if not m.empty else np.nan)
         return pd.Series({
-            "Data/Hora Busca": dt_busca,
+            "Data/Hora Busca": dt_by_trecho.get(trecho, "-"),
             "Trecho": trecho,
-            "ID Pesquisa": id_pesq,
             "Agencia Top 1": name(0), "Preço Top 1": price(0),
             "Agencia Top 2": name(1), "Preço Top 2": price(1),
             "Agencia Top 3": name(2), "Preço Top 3": price(2),
-            "123milhas": price_of(A_123), "Maxmilhas": price_of(A_MAX),
-            "FlipMilhas": price_of(A_FLIP), "Capo Viagens": price_of(A_CAPO),
         })
 
-    t1 = by_ag.groupby("TRECHO_STD").apply(build_row).reset_index(drop=True)
-    cols_order = ["Data/Hora Busca", "Trecho", "ID Pesquisa",
-                  "Agencia Top 1","Preço Top 1","Agencia Top 2","Preço Top 2",
-                  "Agencia Top 3","Preço Top 3","123milhas","Maxmilhas","FlipMilhas","Capo Viagens"]
-    t1 = t1[cols_order]
-    preco_cols_t1 = ["Preço Top 1","Preço Top 2","Preço Top 3","123milhas","Maxmilhas","FlipMilhas","Capo Viagens"]
-    for c in preco_cols_t1: t1[c] = pd.to_numeric(t1[c], errors="coerce")
-    fmt_map_t1 = {c: fmt_num0_br for c in preco_cols_t1}
-    sty1 = style_smart_colwise(t1, fmt_map_t1, grad_cols=preco_cols_t1)
+    t1 = by_ag.groupby("TRECHO_STD").apply(_row_top3).reset_index(drop=True)
+    t1 = t1.reset_index(drop=True)  # remove a coluna "#"
+    for c in ["Preço Top 1","Preço Top 2","Preço Top 3"]:
+        t1[c] = pd.to_numeric(t1[c], errors="coerce")
+    sty1 = style_smart_colwise(t1, {c: fmt_num0_br for c in ["Preço Top 1","Preço Top 2","Preço Top 3"]},
+                               grad_cols=["Preço Top 1","Preço Top 2","Preço Top 3"])
     show_table(t1, sty1, caption="Ranking Top 3 (Agências) — por trecho")
 
+    # 4) % Diferença vs Top1 (mesma pesquisa)
     def pct_diff(base, other):
-        if pd.isna(base) or base == 0 or pd.isna(other): return np.nan
+        if pd.isna(base) or base == 0 or pd.isna(other):
+            return np.nan
         return (other - base) / base * 100
 
     rows2 = []
     for _, r in t1.iterrows():
         base = r["Preço Top 1"]
         rows2.append({
-            "Data/Hora Busca": r["Data/Hora Busca"], "Trecho": r["Trecho"], "ID Pesquisa": r["ID Pesquisa"],
-            "Agencia Top 1": r["Agencia Top 1"], "Preço Top 1": r["Preço Top 1"],
+            "Data/Hora Busca": r["Data/Hora Busca"],
+            "Trecho": r["Trecho"],
+            "Agencia Top 1": r["Agencia Top 1"], "Preço Top 1": base,
             "Agencia Top 2": r["Agencia Top 2"], "% Dif Top2 vs Top1": pct_diff(base, r["Preço Top 2"]),
             "Agencia Top 3": r["Agencia Top 3"], "% Dif Top3 vs Top1": pct_diff(base, r["Preço Top 3"]),
-            "123milhas": pct_diff(base, r["123milhas"]),
-            "Maxmilhas": pct_diff(base, r["Maxmilhas"]),
-            "FlipMilhas": pct_diff(base, r["FlipMilhas"]),
-            "Capo Viagens": pct_diff(base, r["Capo Viagens"]),
         })
-    t2 = pd.DataFrame(rows2)
-    pct_cols_t2 = ["% Dif Top2 vs Top1","% Dif Top3 vs Top1","123milhas","Maxmilhas","FlipMilhas","Capo Viagens"]
-    fmt_map_t2 = {"Preço Top 1": fmt_num0_br} | {c: fmt_pct2_br for c in pct_cols_t2}
-    sty2 = style_smart_colwise(t2, fmt_map_t2, grad_cols=["Preço Top 1"] + pct_cols_t2)
+    t2 = pd.DataFrame(rows2).reset_index(drop=True)
+    sty2 = style_smart_colwise(
+        t2,
+        {"Preço Top 1": fmt_num0_br, "% Dif Top2 vs Top1": fmt_pct2_br, "% Dif Top3 vs Top1": fmt_pct2_br},
+        grad_cols=["Preço Top 1", "% Dif Top2 vs Top1", "% Dif Top3 vs Top1"]
+    )
     show_table(t2, sty2, caption="% Diferença entre Agências (base: TOP1)")
 
-    AIR_COL = "CIA_NORM" if "CIA_NORM" in df_last.columns else None
-    if AIR_COL is None:
-        st.info("Coluna de Cia Aérea não encontrada. As tabelas 3/4 dependem de 'CIA_NORM'."); return
-
-    by_air = (
-        df_last.groupby(["TRECHO", AIR_COL], as_index=False)
-               .agg(PRECO_AIR_MIN=("PRECO", "min"))
-               .rename(columns={"TRECHO": "TRECHO_STD"})
-    )
+    # 5) Comparativo Cia × Agências de milhas (mesma pesquisa) – mantém largura e sem '#'
+    A_123, A_MAX, A_FLIP, A_CAPO = "123MILHAS", "MAXMILHAS", "FLIPMILHAS", "CAPOVIAGENS"
+    by_air = (df_last.groupby(["TRECHO","CIA_NORM"], as_index=False)
+                    .agg(PRECO_AIR_MIN=("PRECO","min"))
+                    .rename(columns={"TRECHO":"TRECHO_STD","CIA_NORM":"Cia Menor Preço"}))
     idx = by_air.groupby("TRECHO_STD")["PRECO_AIR_MIN"].idxmin()
-    min_air = by_air.loc[idx, ["TRECHO_STD", AIR_COL, "PRECO_AIR_MIN"]] \
-                    .rename(columns={AIR_COL: "Cia Menor Preço", "PRECO_AIR_MIN": "Preço Menor Valor"})
+    base_min = by_air.loc[idx, ["TRECHO_STD","Cia Menor Preço","PRECO_AIR_MIN"]] \
+                     .rename(columns={"PRECO_AIR_MIN":"Preço Menor Valor"})
 
-    def best_ag(df_ag, ag_norm):
-        dfa = df_ag[df_ag[AGENCIA_COL] == ag_norm]
-        if dfa.empty: return (np.nan, "-")
-        i = dfa[PRICE_COL].idxmin()
-        return (float(dfa.loc[i, PRICE_COL]), str(dfa.loc[i, AIR_COL]) if AIR_COL in dfa.columns else "-")
+    def _best_price(sub: pd.DataFrame, ag: str) -> float:
+        m = sub[sub["AGENCIA_NORM"] == ag]
+        return float(m["PRECO"].min()) if not m.empty else np.nan
 
     rows3 = []
     for trecho, sub in df_last.groupby("TRECHO"):
-        p123, c123 = best_ag(sub, A_123)
-        pmax, cmax = best_ag(sub, A_MAX)
-        pflip, cflip = best_ag(sub, A_FLIP)
-        pcapo, ccapo = best_ag(sub, A_CAPO)
-        base = min_air[min_air["TRECHO_STD"] == trecho]
-        if base.empty: cia_min, pmin = "-", np.nan
-        else:          cia_min, pmin = base["Cia Menor Preço"].iloc[0], float(base["Preço Menor Valor"].iloc[0])
         rows3.append({
             "Data/Hora Busca": dt_by_trecho.get(trecho, "-"),
             "Trecho": trecho,
-            "ID Pesquisa": last_ids.get(trecho, "-"),
-            "Cia Menor Preço": cia_min,
-            "Preço Menor Valor": pmin,
-            "Preço Maxmilhas": pmax, "Cia Maxmilhas": cmax,
-            "Preço 123milhas": p123, "Cia 123milhas": c123,
-            "Preço FlipMilhas": pflip, "Cia FlipMilhas": cflip,
-            "Preço Capo Viagens": pcapo, "Cia Capo Viagens": ccapo,
+            "Cia Menor Preço": base_min.loc[base_min["TRECHO_STD"].eq(trecho), "Cia Menor Preço"].squeeze() if (base_min["TRECHO_STD"]==trecho).any() else "-",
+            "Preço Menor Valor": base_min.loc[base_min["TRECHO_STD"].eq(trecho), "Preço Menor Valor"].squeeze() if (base_min["TRECHO_STD"]==trecho).any() else np.nan,
+            "123milhas": _best_price(sub, A_123),
+            "Maxmilhas": _best_price(sub, A_MAX),
+            "FlipMilhas": _best_price(sub, A_FLIP),
+            "Capo Viagens": _best_price(sub, A_CAPO),
         })
-    t3 = pd.DataFrame(rows3)
-    preco_cols_t3 = [c for c in t3.columns if c.startswith("Preço")] + ["Preço Menor Valor"]
-    preco_cols_t3 = list(dict.fromkeys(preco_cols_t3))
-    fmt_map_t3 = {c: fmt_num0_br for c in preco_cols_t3}
-    sty3 = style_smart_colwise(t3, fmt_map_t3, grad_cols=preco_cols_t3)
+    t3 = pd.DataFrame(rows3).reset_index(drop=True)
+    fmt3 = {c: fmt_num0_br for c in ["Preço Menor Valor","123milhas","Maxmilhas","FlipMilhas","Capo Viagens"]}
+    sty3 = style_smart_colwise(t3, fmt3, grad_cols=list(fmt3.keys()))
     show_table(t3, sty3, caption="Comparativo Menor Preço Cia × Agências de Milhas")
 
-    def pct_vs_base(base, x):
-        if pd.isna(base) or base == 0 or pd.isna(x): return np.nan
-        return (x - base) / base * 100
+    # 6) % Dif. vs menor valor por Cia
+    def pct_vs_base(b, x):
+        if pd.isna(b) or b == 0 or pd.isna(x): return np.nan
+        return (x - b) / b * 100
 
-    t4 = t3[["Data/Hora Busca","Trecho","ID Pesquisa", "Cia Menor Preço", "Preço Menor Valor"]].copy()
-    for label, col_cia, col_preco in [
-        ("Maxmilhas", "Cia Maxmilhas", "Preço Maxmilhas"),
-        ("123milhas", "Cia 123milhas", "Preço 123milhas"),
-        ("FlipMilhas", "Cia FlipMilhas", "Preço FlipMilhas"),
-        ("Capo Viagens", "Cia Capo Viagens", "Preço Capo Viagens"),
-    ]:
-        t4[f"Cia {label}"]   = t3[col_cia]
-        t4[f"% Dif {label}"] = [pct_vs_base(b, x) for b, x in zip(t3["Preço Menor Valor"], t3[col_preco])]
-    pct_cols_t4 = [c for c in t4.columns if c.startswith("% Dif ")]
-    fmt_map_t4 = {"Preço Menor Valor": fmt_num0_br} | {c: fmt_pct2_br for c in pct_cols_t4}
-    sty4 = style_smart_colwise(t4, fmt_map_t4, grad_cols=["Preço Menor Valor"] + pct_cols_t4)
+    t4 = t3[["Data/Hora Busca","Trecho","Cia Menor Preço","Preço Menor Valor"]].copy()
+    for label in ["123milhas","Maxmilhas","FlipMilhas","Capo Viagens"]:
+        t4[f"% Dif {label}"] = [pct_vs_base(b, x) for b, x in zip(t3["Preço Menor Valor"], t3[label])]
+    fmt4 = {"Preço Menor Valor": fmt_num0_br} | {c: fmt_pct2_br for c in t4.columns if c.startswith("% Dif ")}
+    sty4 = style_smart_colwise(t4.reset_index(drop=True), fmt4, grad_cols=list(fmt4.keys()))
     show_table(t4, sty4, caption="%Comparativo Menor Preço Cia × Agências de Milhas")
 
+
 # ──────────────────── ABA: Top 3 Preços Mais Baratos (START) ─────────────────
+# ─────────── ABA: Top 3 Preços Mais Baratos (CORRIGIDA) ───────────
 @register_tab("Top 3 Preços Mais Baratos")
 def tab3_top3_precos(df_raw: pd.DataFrame):
     """
-    Pódio por Trecho → ADVP (última pesquisa de cada par).
-    Horário do badge vem de HORA_BUSCA (coluna C) — HH:MM:SS.
+    Pódio por Trecho × ADVP usando SEMPRE a pesquisa mais recente daquele par.
+    O horário exibido vem da coluna C (HORA_BUSCA), normalizado para HH:MM:SS.
     """
-    import re
-
     df = render_filters(df_raw, key_prefix="t3")
     st.subheader("Pódio por Trecho → ADVP (última pesquisa de cada par)")
-
-    top_row = st.container()
-    with top_row:
-        c1, c2, c3 = st.columns([0.28, 0.18, 0.54])
-        agencia_foco = c1.selectbox("Agência alvo", ["Todos", "123MILHAS", "MAXMILHAS"], index=0)
-        posicao_foco = c2.selectbox("Ranking", ["Todas", 1, 2, 3], index=0)
-        por_pesquisa = c3.checkbox("Isolar última pesquisa por Trecho×ADVP", value=True)
-
     if df.empty:
-        st.info("Sem resultados para os filtros selecionados."); return
-
-    def fmt_moeda_br(x) -> str:
-        try:
-            xv = float(x)
-            if not np.isfinite(xv): return "R$ -"
-            return "R$ " + f"{xv:,.0f}".replace(",", ".")
-        except Exception:
-            return "R$ -"
-
-    def _find_id_col(df_: pd.DataFrame) -> str | None:
-        cands = ["IDPESQUISA","ID_PESQUISA","ID BUSCA","IDBUSCA","ID","NOME_ARQUIVO_STD","NOME_ARQUIVO","NOME DO ARQUIVO","ARQUIVO"]
-        norm = { re.sub(r"[^A-Z0-9]+","", c.upper()): c for c in df_.columns }
-        for nm in cands:
-            key = re.sub(r"[^A-Z0-9]+","", nm.upper())
-            if key in norm: return norm[key]
-        return df_.columns[0] if len(df_.columns) else None
-
-    GRID_STYLE    = "display:grid;grid-auto-flow:column;grid-auto-columns:260px;gap:10px;overflow-x:auto;padding:6px 2px 10px 2px;scrollbar-width:thin;"
-    BOX_STYLE     = "border:1px solid #e5e7eb;border-radius:12px;background:#fff;"
-    HEAD_STYLE    = "padding:8px 10px;border-bottom:1px solid #f1f5f9;font-weight:700;color:#111827;"
-    STACK_STYLE   = "display:grid;gap:8px;padding:8px;"
-    CARD_BASE     = "position:relative;border:1px solid #e5e7eb;border-radius:10px;padding:8px;background:#fff;min-height:78px;"
-    DT_WRAP_STYLE = "position:absolute;right:8px;top:6px;display:flex;align-items:center;gap:6px;"
-    DT_TXT_STYLE  = "font-size:10px;color:#94a3b8;font-weight:800;"
-    RANK_STYLE    = "font-weight:900;font-size:11px;color:#6b7280;letter-spacing:.3px;text-transform:uppercase;"
-    AG_STYLE      = "font-weight:800;font-size:15px;color:#111827;margin-top:2px;"
-    PR_STYLE      = "font-weight:900;font-size:18px;color:#111827;margin-top:2px;"
-    SUB_STYLE     = "font-weight:700;font-size:12px;color:#374151;"
-    NO_STYLE      = "padding:22px 12px;color:#6b7280;font-weight:800;text-align:center;border:1px dashed #e5e7eb;border-radius:10px;background:#fafafa;"
-    TRE_HDR_STYLE = "margin:14px 0 10px 0;padding:10px 12px;border-left:4px solid #0B5FFF;background:#ECF3FF;border-radius:8px;font-weight:800;color:#0A2A6B;"
-
-    BADGE_POP_CSS = """
-    <style>
-    .idp-wrap{position:relative; display:inline-flex; align-items:center;}
-    .idp-badge{
-      display:inline-flex; align-items:center; justify-content:center;
-      width:16px; height:16px; border:1px solid #cbd5e1; border-radius:50%;
-      font-size:11px; font-weight:900; color:#64748b; background:#fff;
-      user-select:none; cursor:default; line-height:1;
-    }
-    .idp-pop{
-      position:absolute; top:18px; right:0;
-      background:#fff; color:#0f172a; border:1px solid #e5e7eb;
-      border-radius:8px; padding:6px 8px; font-size:12px; font-weight:700;
-      box-shadow:0 6px 16px rgba(0,0,0,.08); display:none; z-index:9999; white-space:nowrap;
-    }
-    .idp-wrap:hover .idp-pop{ display:block; }
-    .idp-idbox{
-      border:1px solid #e5e7eb; background:#f8fafc; border-radius:6px;
-      padding:2px 6px; font-weight:800; font-size:12px; min-width:60px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-      user-select:text; cursor:text;
-    }
-    </style>
-    """
-    st.markdown(BADGE_POP_CSS, unsafe_allow_html=True)
+        st.info("Sem resultados para os filtros selecionados.")
+        return
 
     dfp = df.copy()
-    dfp["TRECHO_STD"] = dfp.get("TRECHO", "").astype(str)
-    dfp["AGENCIA_UP"] = dfp.get("AGENCIA_NORM", "").astype(str)
-    dfp["ADVP"]       = (dfp.get("ADVP_CANON").fillna(dfp.get("ADVP"))).astype(str)
-    dfp["__PRECO__"]  = pd.to_numeric(dfp.get("PRECO"), errors="coerce")
-    dfp["__DTKEY__"]  = pd.to_datetime(dfp.get("DATAHORA_BUSCA"), errors="coerce")
-
-    ID_COL = "IDPESQUISA" if "IDPESQUISA" in dfp.columns else _find_id_col(dfp)
+    dfp["TRECHO_STD"] = dfp["TRECHO"].astype(str)
+    dfp["ADVP_STD"]   = dfp["ADVP_CANON"].where(dfp["ADVP_CANON"].notna(), dfp["ADVP"]).astype(str)
+    dfp["__DTKEY__"]  = pd.to_datetime(dfp["DATAHORA_BUSCA"], errors="coerce")
+    dfp["__PRECO__"]  = pd.to_numeric(dfp["PRECO"], errors="coerce")
     dfp = dfp[dfp["__PRECO__"].notna()].copy()
-    if dfp.empty: st.info("Sem preços válidos no recorte atual."); return
 
-    pesq_por_ta = {}
-    tmp = dfp.dropna(subset=["TRECHO_STD","ADVP",ID_COL,"__DTKEY__"]).copy()
-    g = tmp.groupby(["TRECHO_STD","ADVP",ID_COL], as_index=False)["__DTKEY__"].max()
-    if not g.empty:
-        idx = g.groupby(["TRECHO_STD","ADVP"])["__DTKEY__"].idxmax()
-        last_by_ta = g.loc[idx]
-        pesq_por_ta = {(str(r["TRECHO_STD"]), str(r["ADVP"])): str(r[ID_COL]) for _, r in last_by_ta.iterrows()}
+    # última pesquisa por Trecho×ADVP
+    g = (dfp.dropna(subset=["TRECHO_STD","ADVP_STD","__DTKEY__"])
+            .groupby(["TRECHO_STD","ADVP_STD"], as_index=False)["__DTKEY__"].max())
+    last_dt = {(r["TRECHO_STD"], r["ADVP_STD"]): r["__DTKEY__"] for _, r in g.iterrows()}
+    dfp["__USE__"] = dfp.apply(lambda r: pd.notna(r["__DTKEY__"]) and
+                                         r["__DTKEY__"] == last_dt.get((r["TRECHO_STD"], r["ADVP_STD"])), axis=1)
+    df_last = dfp[dfp["__USE__"]].copy()
 
-    def _normalize_id(val):
-        if val is None or (isinstance(val, float) and np.isnan(val)): return None
-        s = str(val)
-        try:
-            f = float(s.replace(",", "."))
-            if f.is_integer(): return str(int(f))
-        except Exception:
-            pass
-        return s
+    # função para etiqueta "Data/Hora" (pega hora da coluna C)
+    def _badge_dt(sub: pd.DataFrame) -> str:
+        latest = sub.loc[sub["__DTKEY__"].idxmax()]
+        d = pd.to_datetime(latest["DATAHORA_BUSCA"], errors="coerce")
+        hh = _norm_hhmmss(latest.get("HORA_BUSCA"))
+        if not hh:
+            hh = pd.to_datetime(latest["__DTKEY__"], errors="coerce").strftime("%H:%M:%S")
+        return f"{d.strftime('%d/%m/%Y')} {hh}"
 
-    def dt_and_id_for(sub_rows: pd.DataFrame) -> tuple[str, str | None]:
-        if sub_rows.empty: return "", None
-        r = sub_rows.loc[sub_rows["__DTKEY__"].idxmax()]
-        date_part = pd.to_datetime(r["DATAHORA_BUSCA"], errors="coerce")
-        date_txt  = date_part.strftime("%d/%m") if pd.notna(date_part) else ""
-        htxt_raw  = str(r.get("HORA_BUSCA","")).strip()
-        htxt = htxt_raw if htxt_raw else (pd.to_datetime(r["__DTKEY__"], errors="coerce").strftime("%H:%M:%S") if pd.notna(r["__DTKEY__"]) else "")
-        id_val = _normalize_id(r.get("IDPESQUISA"))
-        lbl = f"{date_txt} {htxt}".strip()
-        return lbl, id_val
-
-    trechos_sorted = sorted(dfp["TRECHO_STD"].dropna().astype(str).unique(), key=lambda x: str(x))
-    for trecho in trechos_sorted:
-        df_t = dfp[dfp["TRECHO_STD"] == trecho]
-        advps = sorted(df_t["ADVP"].dropna().astype(str).unique(),
-                       key=lambda v: (0, int("".join([d for d in v if d.isdigit()]) or 9999), str(v)))
-
-        boxes = []
-        for advp in advps:
-            df_ta = df_t[df_t["ADVP"].astype(str) == str(advp)].copy()
-            pesq_id = pesq_por_ta.get((trecho, advp))
-            if pesq_id:
-                all_rows = df_ta[df_ta[ID_COL].astype(str) == pesq_id]
-            else:
-                all_rows = df_ta.iloc[0:0]
-
-            base_rank = (all_rows.groupby("AGENCIA_UP", as_index=False)["__PRECO__"]
-                                   .min().sort_values("__PRECO__").reset_index(drop=True))
-            box_content = []
-            box_content.append(f"<div style='{BOX_STYLE}'>")
-            box_content.append(f"<div style='{HEAD_STYLE}'>ADVP: <b>{advp}</b></div>")
-
-            if base_rank.empty:
-                box_content.append(f"<div style='{NO_STYLE}'>Sem ofertas</div>")
-                box_content.append("</div>"); boxes.append("".join(box_content)); continue
-
-            box_content.append(f"<div style='{STACK_STYLE}'>")
-            for i in range(min(3, len(base_rank))):
-                row_i = base_rank.iloc[i]
-                preco_i = float(row_i["__PRECO__"])
-                sub_rows = all_rows[(all_rows["AGENCIA_UP"] == row_i["AGENCIA_UP"]) & (np.isclose(all_rows["__PRECO__"], preco_i, atol=1))]
-                dt_lbl, id_val = dt_and_id_for(sub_rows)
-                subtxt = "—"
-                if i > 0:
-                    p1 = float(base_rank.iloc[0]["__PRECO__"])
-                    if np.isfinite(p1) and p1 != 0:
-                        subtxt = f"+{int(round((preco_i - p1)/p1*100))}% vs 1º"
-                stripe = "#D4AF37" if i==0 else "#9CA3AF" if i==1 else "#CD7F32"
-                box_content.append(
-                    f"<div style='{CARD_BASE}'>"
-                    f"<div style='position:absolute;left:0;top:0;bottom:0;width:6px;border-radius:10px 0 0 10px;background:{stripe};'></div>"
-                    f"<div style='{DT_WRAP_STYLE}'><span style='{DT_TXT_STYLE}'>{dt_lbl}</span>"
-                    f"<span class='idp-wrap'><span class='idp-badge'>?</span>"
-                    f"<span class='idp-pop'>ID:&nbsp;<input class='idp-idbox' type='text' value='{_normalize_id(id_val)}' readonly></span></span></div>"
-                    f"<div style='{RANK_STYLE}'>{i+1}º</div>"
-                    f"<div style='{AG_STYLE}'>{row_i['AGENCIA_UP']}</div>"
-                    f"<div style='{PR_STYLE}'>{fmt_moeda_br(preco_i)}</div>"
-                    f"<div style='{SUB_STYLE}'>{subtxt}</div>"
-                    f"</div>"
-                )
-            box_content.append("</div>")
-            box_content.append("</div>")
-            boxes.append("".join(box_content))
-
-        if boxes:
-            st.markdown(f"<div style='{TRE_HDR_STYLE}'>Trecho: <b>{trecho}</b></div>", unsafe_allow_html=True)
-            st.markdown("<div style='" + GRID_STYLE + "'>" + "".join(boxes) + "</div>", unsafe_allow_html=True)
+    # render: por trecho, listar cada ADVP com top-3
+    for trecho, df_t in df_last.groupby("TRECHO_STD"):
+        st.markdown(f"**Trecho: {trecho}**")
+        for advp, sub in df_t.groupby("ADVP_STD"):
+            rank = (sub.groupby("AGENCIA_NORM", as_index=False)["__PRECO__"]
+                        .min().sort_values("__PRECO__").reset_index(drop=True))
+            if rank.empty:
+                st.write("— Sem ofertas —");  # mantém largura padrão do container
+                continue
+            label = _badge_dt(sub)
+            # tabela simples e larga
+            out = pd.DataFrame({
+                "Data/Hora Busca": [label]*min(3, len(rank)),
+                "Agência": rank.loc[:2, "AGENCIA_NORM"].tolist(),
+                "Preço":  rank.loc[:2, "__PRECO__"].tolist(),
+            })
+            out = out.reset_index(drop=True)
+            sty = style_smart_colwise(out, {"Preço": fmt_num0_br}, grad_cols=["Preço"])
+            show_table(out, sty, caption=f"ADVP {advp} — Top 3")
 
 # ─────────────────────── ABA: Ranking por Agências (START) ────────────────────
 @register_tab("Ranking por Agências")
