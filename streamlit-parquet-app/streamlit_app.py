@@ -308,6 +308,14 @@ def show_table(df: pd.DataFrame, styler: pd.io.formats.style.Styler | None = Non
         st.warning(f"Falha ao aplicar estilo ({e}). Exibindo tabela simples.")
         st.dataframe(df, use_container_width=True)
 
+# ============================ REGISTRO DE ABAS ================================
+TAB_REGISTRY: List[Tuple[str, Callable]] = []
+def register_tab(label: str):
+    def _wrap(fn: Callable):
+        TAB_REGISTRY.append((label, fn))
+        return fn
+    return _wrap
+
 # ============================ FILTROS =========================================
 def _init_filter_state(df_raw: pd.DataFrame):
     if "flt" in st.session_state: return
@@ -411,8 +419,8 @@ def tab1_painel(df_raw: pd.DataFrame):
         base = (base_df.replace({
             "R1": {"MAXMILHAS": "GRUPO 123", "123MILHAS": "GRUPO 123"},
             "R2": {"MAXMILHAS": "GRUPO 123", "123MILHAS": "GRUPO 123"},
-            "R3": {"MAXMILHAS": "GRURO 123", "123MILHAS": "GRUPO 123"},
-        }).replace({"GRURO 123":"GRUPO 123"}) if agrupado else base_df)
+            "R3": {"MAXMILHAS": "GRUPO 123", "123MILHAS": "GRUPO 123"},
+        }) if agrupado else base_df)
         p1 = float((base["R1"] == tgt).mean())*100
         p2 = float((base["R2"] == tgt).mean())*100
         p3 = float((base["R3"] == tgt).mean())*100
@@ -484,7 +492,6 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
     # Mapa Trecho -> Data/Hora Busca (data de DATAHORA_BUSCA + hora da HORA_BUSCA)
     def _fmt_dt_hh(sub: pd.DataFrame) -> str:
         d = pd.to_datetime(sub["DATAHORA_BUSCA"], errors="coerce").max()
-        # hora real pela coluna C (HORA_BUSCA), mesmo se for texto
         try:
             hh_series = pd.to_datetime(sub["HORA_BUSCA"].astype(str), errors="coerce").dt.time
             hh = max([t for t in hh_series if pd.notna(t)], default=None)
@@ -493,12 +500,9 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
         if pd.isna(d) and not isinstance(hh, dtime): return "-"
         if isinstance(hh, dtime):
             return f"{(d.date() if pd.notna(d) else date.today()).strftime('%d/%m/%Y')} {hh.strftime('%H:%M:%S')}"
-        # fallback: usa o time da própria DATAHORA_BUSCA
         return d.strftime("%d/%m/%Y %H:%M:%S") if pd.notna(d) else "-"
 
-    dt_by_trecho = {}
-    for trecho, sub in df_last.groupby("TRECHO"):
-        dt_by_trecho[trecho] = _fmt_dt_hh(sub)
+    dt_by_trecho = {trecho: _fmt_dt_hh(sub) for trecho, sub in df_last.groupby("TRECHO")}
 
     PRICE_COL, TRECHO_COL, AGENCIA_COL = "PRECO", "TRECHO", "AGENCIA_NORM"
     by_ag = (
@@ -531,7 +535,6 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
         })
 
     t1 = by_ag.groupby("TRECHO_STD").apply(build_row).reset_index(drop=True)
-    # garante ordem pedida: Data/Hora, Trecho, ID...
     cols_order = ["Data/Hora Busca", "Trecho", "ID Pesquisa",
                   "Agencia Top 1","Preço Top 1","Agencia Top 2","Preço Top 2",
                   "Agencia Top 3","Preço Top 3","123milhas","Maxmilhas","FlipMilhas","Capo Viagens"]
@@ -542,7 +545,6 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
     sty1 = style_smart_colwise(t1, fmt_map_t1, grad_cols=preco_cols_t1)
     show_table(t1, sty1, caption="Ranking Top 3 (Agências) — por trecho")
 
-    # % diferença vs Top1 (mesma pesquisa por trecho)
     def pct_diff(base, other):
         if pd.isna(base) or base == 0 or pd.isna(other): return np.nan
         return (other - base) / base * 100
@@ -566,7 +568,6 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
     sty2 = style_smart_colwise(t2, fmt_map_t2, grad_cols=["Preço Top 1"] + pct_cols_t2)
     show_table(t2, sty2, caption="% Diferença entre Agências (base: TOP1)")
 
-    # Cia × Agências (mesma pesquisa por Trecho)
     AIR_COL = "CIA_NORM" if "CIA_NORM" in df_last.columns else None
     if AIR_COL is None:
         st.info("Coluna de Cia Aérea não encontrada. As tabelas 3/4 dependem de 'CIA_NORM'."); return
@@ -720,7 +721,6 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
     dfp = dfp[dfp["__PRECO__"].notna()].copy()
     if dfp.empty: st.info("Sem preços válidos no recorte atual."); return
 
-    # Última pesquisa por Trecho×ADVP
     pesq_por_ta = {}
     tmp = dfp.dropna(subset=["TRECHO_STD","ADVP",ID_COL,"__DTKEY__"]).copy()
     g = tmp.groupby(["TRECHO_STD","ADVP",ID_COL], as_index=False)["__DTKEY__"].max()
@@ -750,7 +750,6 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
         lbl = f"{date_txt} {htxt}".strip()
         return lbl, id_val
 
-    # Render
     trechos_sorted = sorted(dfp["TRECHO_STD"].dropna().astype(str).unique(), key=lambda x: str(x))
     for trecho in trechos_sorted:
         df_t = dfp[dfp["TRECHO_STD"] == trecho]
