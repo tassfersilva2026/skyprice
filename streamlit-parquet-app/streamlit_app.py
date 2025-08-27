@@ -9,12 +9,24 @@ import pandas as pd
 import streamlit as st
 import altair as alt
 
+
 st.set_page_config(page_title="Skyscanner — Painel", layout="wide", initial_sidebar_state="expanded")
 
 APP_DIR   = Path(__file__).resolve().parent
 DATA_PATH = APP_DIR / "data" / "OFERTAS.parquet"
 
 # ============================== UTILIDADES GERAIS ==============================
+import re
+def _norm_hhmmss(v: object) -> str | None:
+    s = str(v or "").strip()
+    m = re.search(r"(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?", s)
+    if not m:
+        return None
+    hh = max(0, min(23, int(m.group(1))))
+    mm = max(0, min(59, int(m.group(2))))
+    ss = max(0, min(59, int(m.group(3) or 0)))
+    return f"{hh:02d}:{mm:02d}:{ss:02d}"
+
 
 def std_agencia(raw: str) -> str:
     ag = (raw or "").strip().upper()
@@ -473,7 +485,7 @@ def tab1_painel(df_raw: pd.DataFrame):
     render_por_cia(c1, df, "AZUL"); render_por_cia(c2, df, "GOL"); render_por_cia(c3, df, "LATAM")
 
 # ──────────────────────── ABA: Top 3 Agências (START) ────────────────────────
-# ──────────────────────── ABA: Top 3 Agências (CORRIGIDA) ─────────────────────
+
 @register_tab("Top 3 Agências")
 def tab2_top3_agencias(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t2")
