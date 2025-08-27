@@ -201,12 +201,12 @@ def make_line(df: pd.DataFrame, x_col: str, y_col: str, color: str | None = None
 
 # ===================== FORMATAÇÃO & HEATMAP (SEM MATPLOTLIB) ==================
 
-# paletas base (sem depender de colormap do matplotlib)
-BLUE  = "#cfe3ff"  # default / preços top
-ORANGE= "#fdd0a2"  # 123milhas
-GREEN = "#c7e9c0"  # Maxmilhas
-YELLOW= "#fee391"  # Flip
-PINK  = "#f1b6da"  # Capo
+# paletas base
+BLUE  = "#cfe3ff"
+ORANGE= "#fdd0a2"
+GREEN = "#c7e9c0"
+YELLOW= "#fee391"
+PINK  = "#f1b6da"
 
 def _hex_to_rgb(h): return tuple(int(h[i:i+2], 16) for i in (1,3,5))
 def _rgb_to_hex(t): return f"#{t[0]:02x}{t[1]:02x}{t[2]:02x}"
@@ -259,32 +259,26 @@ def fmt_num0_br(x):
     except Exception:
         return "-"
 
-def fmt_pct_dual_br(v):
-    """12,18274111675127 - 12,18%"""
+def fmt_pct2_br(v):
+    """Ex.: 27,91%"""
     try:
         x = float(v)
         if not np.isfinite(x): return "-"
-        raw = f"{x:.14f}".rstrip("0").rstrip(".").replace(".", ",")
-        two = f"{x:.2f}".replace(".", ",")
-        return f"{raw} - {two}%"
+        return f"{x:.2f}%".replace(".", ",")
     except Exception:
         return "-"
 
 def style_smart_colwise(df_show: pd.DataFrame, fmt_map: dict, grad_cols: list[str]):
     sty = df_show.style.set_properties(**{"background-color": "#FFFFFF", "color": "#111111"})
-    # formatação
     if fmt_map:
         sty = sty.format(fmt_map, na_rep="-")
-    # heatmap discreto (sem matplotlib)
     for c in grad_cols:
         if c in df_show.columns:
             sty = style_heatmap_discrete(sty, c, _pick_scale(c))
-    # limpar nulos
     sty = sty.applymap(lambda v: "background-color: #FFFFFF; color: #111111" if _is_null_like(v) else "")
     sty = sty.set_table_styles([{"selector":"tbody td, th","props":[("border","1px solid #EEE")]}])
     return sty
 
-# ---- Helper de exibição com fallback
 def show_table(df: pd.DataFrame, styler: pd.io.formats.style.Styler | None = None, caption: str | None = None):
     if caption:
         st.markdown(f"**{caption}**")
@@ -445,14 +439,13 @@ def tab1_painel(df_raw: pd.DataFrame):
             Wc = winners_by_position(sub)
             Wc_g = Wc.replace({
                 "R1": {"MAXMILHAS": "GRUPO 123", "123MILHAS": "GRUPO 123"},
-                "R2": {"MAXMILHAS": "GRUPO 123", "123MILHAS": "GRUPO 123"},
+                "R2": {"MAXMILHAS": "GRURO 123", "123MILHAS": "GRUPO 123"},
                 "R3": {"MAXMILHAS": "GRUPO 123", "123MILHAS": "GRUPO 123"},
-            })
+            }).replace({"GRURO 123": "GRUPO 123"})
             ags = sorted(set(sub["AGENCIA_NORM"].dropna().astype(str)))
             targets = [a for a in ags if a != "SEM OFERTAS"]
             if "GRUPO 123" not in targets: targets.insert(0, "GRUPO 123")
             def pct_target(tgt: str):
-                base = Wc_g if tgt == "GRURO 123" else Wc  # (qualquer troca vira Wc mesmo)
                 base = Wc_g if tgt == "GRUPO 123" else Wc
                 p1 = float((base["R1"] == tgt).mean())*100
                 p2 = float((base["R2"] == tgt).mean())*100
@@ -526,7 +519,7 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
     t2 = pd.DataFrame(rows2).set_index("#"); t2.index.name = "#"
 
     pct_cols_t2 = ["% Dif Top2 vs Top1","% Dif Top3 vs Top1","123milhas","Maxmilhas","FlipMilhas","Capo Viagens"]
-    fmt_map_t2 = {"Preço Top 1": fmt_num0_br} | {c: fmt_pct_dual_br for c in pct_cols_t2}
+    fmt_map_t2 = {"Preço Top 1": fmt_num0_br} | {c: fmt_pct2_br for c in pct_cols_t2}
     grad_cols_t2 = ["Preço Top 1"] + pct_cols_t2
     sty2 = style_smart_colwise(t2, fmt_map_t2, grad_cols=grad_cols_t2)
     show_table(t2, sty2, caption="% Diferença entre Agências (base: TOP1)")
@@ -593,7 +586,7 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
     t4.index = np.arange(1, len(t4) + 1); t4.index.name = "#"
 
     pct_cols_t4 = [c for c in t4.columns if c.startswith("% Dif ")]
-    fmt_map_t4 = {"Preço Menor Valor": fmt_num0_br} | {c: fmt_pct_dual_br for c in pct_cols_t4}
+    fmt_map_t4 = {"Preço Menor Valor": fmt_num0_br} | {c: fmt_pct2_br for c in pct_cols_t4}
     grad_cols_t4 = ["Preço Menor Valor"] + pct_cols_t4
     sty4 = style_smart_colwise(t4, fmt_map_t4, grad_cols=grad_cols_t4)
     show_table(t4, sty4, caption="%Comparativo Menor Preço Cia × Agências de Milhas")
@@ -603,10 +596,7 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
 @register_tab("Top 3 Preços Mais Baratos")
 def tab3_top3_precos(df_raw: pd.DataFrame):
     """
-    Pódio por Trecho → ADVP (mesma pesquisa):
-    • Para cada (Trecho, ADVP), opcionalmente isola a ÚLTIMA pesquisa.
-    • Renderiza cards Top 1/2/3 com preço, delta e badge "?" com ID.
-    • Filtros: Agência alvo (Todos/123/MAX) e Ranking (Todas/1/2/3).
+    Pódio por Trecho → ADVP (mesma pesquisa).
     """
     import re
 
@@ -639,9 +629,7 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
         except Exception:
             return "—"
 
-    def _canon(s: str) -> str:
-        return re.sub(r"[^A-Z0-9]+", "", str(s).upper())
-
+    def _canon(s: str) -> str: return re.sub(r"[^A-Z0-9]+", "", str(s).upper())
     def _brand_tag(s: str) -> str | None:
         cs = _canon(s)
         if cs.startswith("123MILHAS") or cs == "123": return "123MILHAS"
@@ -761,12 +749,11 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
         tmp["AGENCIA_UP"] = tmp["AGENCIA_UP"].astype(str)
         rank = (tmp.groupby("AGENCIA_UP", as_index=False)["__PRECO__"].min()
                   .sort_values("__PRECO__").reset_index(drop=True))
-        if not rank.empty:
-            rank["_BRAND"] = rank["AGENCIA_UP"].apply(_brand_tag)
         return rank
 
     def presence_flags(df_all_rows: pd.DataFrame, label: str) -> dict:
-        sub = df_all_rows[df_all_rows["AGENCIA_UP"].astype(str).apply(_brand_tag) == _brand_tag(label)]
+        canon = label.upper()
+        sub = df_all_rows[df_all_rows["AGENCIA_UP"].astype(str).str.upper().str.startswith(canon)]
         present_any = not sub.empty
         present_with_price = (present_any and np.isfinite(sub["__PRECO__"]).any())
         return {"present_any": present_any, "present_with_price": present_with_price}
@@ -809,11 +796,10 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
 
             if not base_rank.empty and agencia_foco != "Todos":
                 rk_map = {row["AGENCIA_UP"]: i+1 for i, row in base_rank.head(3).iterrows()}
-                found_target = False
-                for ag_up, rank_val in rk_map.items():
-                    if ag_up.upper().startswith(agencia_foco):
-                        if posicao_foco == "Todas" or rank_val == int(posicao_foco):
-                            found_target = True; break
+                found_target = any(
+                    ag_up.upper().startswith(agencia_foco) and (posicao_foco == "Todas" or rank_val == int(posicao_foco))
+                    for ag_up, rank_val in rk_map.items()
+                )
                 if not found_target: continue
 
             box_content = []
@@ -858,7 +844,7 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
                 if any(a.upper().startswith(target_label) for a in podium_brands):
                     continue
                 pos, preco_val = None, None
-                matching_rows = base_rank[base_rank["_BRAND"] == _brand_tag(target_label)]
+                matching_rows = base_rank[base_rank["AGENCIA_UP"].astype(str).str.upper().str.startswith(target_label)]
                 if not matching_rows.empty:
                     pos = matching_rows.index[0] + 1
                     preco_val = float(matching_rows.iloc[0]["__PRECO__"])
