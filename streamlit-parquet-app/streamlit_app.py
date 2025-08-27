@@ -617,62 +617,179 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
 
 
 # ──────────────────── ABA: Top 3 Preços Mais Baratos (START) ─────────────────
-# ─────────── ABA: Top 3 Preços Mais Baratos (CORRIGIDA) ───────────
 @register_tab("Top 3 Preços Mais Baratos")
 def tab3_top3_precos(df_raw: pd.DataFrame):
     """
-    Pódio por Trecho × ADVP usando SEMPRE a pesquisa mais recente daquele par.
-    O horário exibido vem da coluna C (HORA_BUSCA), normalizado para HH:MM:SS.
+    Pódio por Trecho → ADVP (última pesquisa de cada par).
+    Horário do badge vem de HORA_BUSCA (coluna C) — HH:MM:SS.
     """
+    import re
+
     df = render_filters(df_raw, key_prefix="t3")
     st.subheader("Pódio por Trecho → ADVP (última pesquisa de cada par)")
+
+    top_row = st.container()
+    with top_row:
+        c1, c2, c3 = st.columns([0.28, 0.18, 0.54])
+        agencia_foco = c1.selectbox("Agência alvo", ["Todos", "123MILHAS", "MAXMILHAS"], index=0)
+        posicao_foco = c2.selectbox("Ranking", ["Todas", 1, 2, 3], index=0)
+        por_pesquisa = c3.checkbox("Isolar última pesquisa por Trecho×ADVP", value=True)
+
     if df.empty:
-        st.info("Sem resultados para os filtros selecionados.")
-        return
+        st.info("Sem resultados para os filtros selecionados."); return
+
+    def fmt_moeda_br(x) -> str:
+        try:
+            xv = float(x)
+            if not np.isfinite(xv): return "R$ -"
+            return "R$ " + f"{xv:,.0f}".replace(",", ".")
+        except Exception:
+            return "R$ -"
+
+    def _find_id_col(df_: pd.DataFrame) -> str | None:
+        cands = ["IDPESQUISA","ID_PESQUISA","ID BUSCA","IDBUSCA","ID","NOME_ARQUIVO_STD","NOME_ARQUIVO","NOME DO ARQUIVO","ARQUIVO"]
+        norm = { re.sub(r"[^A-Z0-9]+","", c.upper()): c for c in df_.columns }
+        for nm in cands:
+            key = re.sub(r"[^A-Z0-9]+","", nm.upper())
+            if key in norm: return norm[key]
+        return df_.columns[0] if len(df_.columns) else None
+
+    GRID_STYLE    = "display:grid;grid-auto-flow:column;grid-auto-columns:260px;gap:10px;overflow-x:auto;padding:6px 2px 10px 2px;scrollbar-width:thin;"
+    BOX_STYLE     = "border:1px solid #e5e7eb;border-radius:12px;background:#fff;"
+    HEAD_STYLE    = "padding:8px 10px;border-bottom:1px solid #f1f5f9;font-weight:700;color:#111827;"
+    STACK_STYLE   = "display:grid;gap:8px;padding:8px;"
+    CARD_BASE     = "position:relative;border:1px solid #e5e7eb;border-radius:10px;padding:8px;background:#fff;min-height:78px;"
+    DT_WRAP_STYLE = "position:absolute;right:8px;top:6px;display:flex;align-items:center;gap:6px;"
+    DT_TXT_STYLE  = "font-size:10px;color:#94a3b8;font-weight:800;"
+    RANK_STYLE    = "font-weight:900;font-size:11px;color:#6b7280;letter-spacing:.3px;text-transform:uppercase;"
+    AG_STYLE      = "font-weight:800;font-size:15px;color:#111827;margin-top:2px;"
+    PR_STYLE      = "font-weight:900;font-size:18px;color:#111827;margin-top:2px;"
+    SUB_STYLE     = "font-weight:700;font-size:12px;color:#374151;"
+    NO_STYLE      = "padding:22px 12px;color:#6b7280;font-weight:800;text-align:center;border:1px dashed #e5e7eb;border-radius:10px;background:#fafafa;"
+    TRE_HDR_STYLE = "margin:14px 0 10px 0;padding:10px 12px;border-left:4px solid #0B5FFF;background:#ECF3FF;border-radius:8px;font-weight:800;color:#0A2A6B;"
+
+    BADGE_POP_CSS = """
+    <style>
+    .idp-wrap{position:relative; display:inline-flex; align-items:center;}
+    .idp-badge{
+      display:inline-flex; align-items:center; justify-content:center;
+      width:16px; height:16px; border:1px solid #cbd5e1; border-radius:50%;
+      font-size:11px; font-weight:900; color:#64748b; background:#fff;
+      user-select:none; cursor:default; line-height:1;
+    }
+    .idp-pop{
+      position:absolute; top:18px; right:0;
+      background:#fff; color:#0f172a; border:1px solid #e5e7eb;
+      border-radius:8px; padding:6px 8px; font-size:12px; font-weight:700;
+      box-shadow:0 6px 16px rgba(0,0,0,.08); display:none; z-index:9999; white-space:nowrap;
+    }
+    .idp-wrap:hover .idp-pop{ display:block; }
+    .idp-idbox{
+      border:1px solid #e5e7eb; background:#f8fafc; border-radius:6px;
+      padding:2px 6px; font-weight:800; font-size:12px; min-width:60px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      user-select:text; cursor:text;
+    }
+    </style>
+    """
+    st.markdown(BADGE_POP_CSS, unsafe_allow_html=True)
 
     dfp = df.copy()
-    dfp["TRECHO_STD"] = dfp["TRECHO"].astype(str)
-    dfp["ADVP_STD"]   = dfp["ADVP_CANON"].where(dfp["ADVP_CANON"].notna(), dfp["ADVP"]).astype(str)
-    dfp["__DTKEY__"]  = pd.to_datetime(dfp["DATAHORA_BUSCA"], errors="coerce")
-    dfp["__PRECO__"]  = pd.to_numeric(dfp["PRECO"], errors="coerce")
+    dfp["TRECHO_STD"] = dfp.get("TRECHO", "").astype(str)
+    dfp["AGENCIA_UP"] = dfp.get("AGENCIA_NORM", "").astype(str)
+    dfp["ADVP"]       = (dfp.get("ADVP_CANON").fillna(dfp.get("ADVP"))).astype(str)
+    dfp["__PRECO__"]  = pd.to_numeric(dfp.get("PRECO"), errors="coerce")
+    dfp["__DTKEY__"]  = pd.to_datetime(dfp.get("DATAHORA_BUSCA"), errors="coerce")
+
+    ID_COL = "IDPESQUISA" if "IDPESQUISA" in dfp.columns else _find_id_col(dfp)
     dfp = dfp[dfp["__PRECO__"].notna()].copy()
+    if dfp.empty: st.info("Sem preços válidos no recorte atual."); return
 
-    # última pesquisa por Trecho×ADVP
-    g = (dfp.dropna(subset=["TRECHO_STD","ADVP_STD","__DTKEY__"])
-            .groupby(["TRECHO_STD","ADVP_STD"], as_index=False)["__DTKEY__"].max())
-    last_dt = {(r["TRECHO_STD"], r["ADVP_STD"]): r["__DTKEY__"] for _, r in g.iterrows()}
-    dfp["__USE__"] = dfp.apply(lambda r: pd.notna(r["__DTKEY__"]) and
-                                         r["__DTKEY__"] == last_dt.get((r["TRECHO_STD"], r["ADVP_STD"])), axis=1)
-    df_last = dfp[dfp["__USE__"]].copy()
+    pesq_por_ta = {}
+    tmp = dfp.dropna(subset=["TRECHO_STD","ADVP",ID_COL,"__DTKEY__"]).copy()
+    g = tmp.groupby(["TRECHO_STD","ADVP",ID_COL], as_index=False)["__DTKEY__"].max()
+    if not g.empty:
+        idx = g.groupby(["TRECHO_STD","ADVP"])["__DTKEY__"].idxmax()
+        last_by_ta = g.loc[idx]
+        pesq_por_ta = {(str(r["TRECHO_STD"]), str(r["ADVP"])): str(r[ID_COL]) for _, r in last_by_ta.iterrows()}
 
-    # função para etiqueta "Data/Hora" (pega hora da coluna C)
-    def _badge_dt(sub: pd.DataFrame) -> str:
-        latest = sub.loc[sub["__DTKEY__"].idxmax()]
-        d = pd.to_datetime(latest["DATAHORA_BUSCA"], errors="coerce")
-        hh = _norm_hhmmss(latest.get("HORA_BUSCA"))
-        if not hh:
-            hh = pd.to_datetime(latest["__DTKEY__"], errors="coerce").strftime("%H:%M:%S")
-        return f"{d.strftime('%d/%m/%Y')} {hh}"
+    def _normalize_id(val):
+        if val is None or (isinstance(val, float) and np.isnan(val)): return None
+        s = str(val)
+        try:
+            f = float(s.replace(",", "."))
+            if f.is_integer(): return str(int(f))
+        except Exception:
+            pass
+        return s
 
-    # render: por trecho, listar cada ADVP com top-3
-    for trecho, df_t in df_last.groupby("TRECHO_STD"):
-        st.markdown(f"**Trecho: {trecho}**")
-        for advp, sub in df_t.groupby("ADVP_STD"):
-            rank = (sub.groupby("AGENCIA_NORM", as_index=False)["__PRECO__"]
-                        .min().sort_values("__PRECO__").reset_index(drop=True))
-            if rank.empty:
-                st.write("— Sem ofertas —");  # mantém largura padrão do container
-                continue
-            label = _badge_dt(sub)
-            # tabela simples e larga
-            out = pd.DataFrame({
-                "Data/Hora Busca": [label]*min(3, len(rank)),
-                "Agência": rank.loc[:2, "AGENCIA_NORM"].tolist(),
-                "Preço":  rank.loc[:2, "__PRECO__"].tolist(),
-            })
-            out = out.reset_index(drop=True)
-            sty = style_smart_colwise(out, {"Preço": fmt_num0_br}, grad_cols=["Preço"])
-            show_table(out, sty, caption=f"ADVP {advp} — Top 3")
+    def dt_and_id_for(sub_rows: pd.DataFrame) -> tuple[str, str | None]:
+        if sub_rows.empty: return "", None
+        r = sub_rows.loc[sub_rows["__DTKEY__"].idxmax()]
+        date_part = pd.to_datetime(r["DATAHORA_BUSCA"], errors="coerce")
+        date_txt  = date_part.strftime("%d/%m") if pd.notna(date_part) else ""
+        htxt_raw  = str(r.get("HORA_BUSCA","")).strip()
+        htxt = htxt_raw if htxt_raw else (pd.to_datetime(r["__DTKEY__"], errors="coerce").strftime("%H:%M:%S") if pd.notna(r["__DTKEY__"]) else "")
+        id_val = _normalize_id(r.get("IDPESQUISA"))
+        lbl = f"{date_txt} {htxt}".strip()
+        return lbl, id_val
+
+    trechos_sorted = sorted(dfp["TRECHO_STD"].dropna().astype(str).unique(), key=lambda x: str(x))
+    for trecho in trechos_sorted:
+        df_t = dfp[dfp["TRECHO_STD"] == trecho]
+        advps = sorted(df_t["ADVP"].dropna().astype(str).unique(),
+                       key=lambda v: (0, int("".join([d for d in v if d.isdigit()]) or 9999), str(v)))
+
+        boxes = []
+        for advp in advps:
+            df_ta = df_t[df_t["ADVP"].astype(str) == str(advp)].copy()
+            pesq_id = pesq_por_ta.get((trecho, advp))
+            if pesq_id:
+                all_rows = df_ta[df_ta[ID_COL].astype(str) == pesq_id]
+            else:
+                all_rows = df_ta.iloc[0:0]
+
+            base_rank = (all_rows.groupby("AGENCIA_UP", as_index=False)["__PRECO__"]
+                                   .min().sort_values("__PRECO__").reset_index(drop=True))
+            box_content = []
+            box_content.append(f"<div style='{BOX_STYLE}'>")
+            box_content.append(f"<div style='{HEAD_STYLE}'>ADVP: <b>{advp}</b></div>")
+
+            if base_rank.empty:
+                box_content.append(f"<div style='{NO_STYLE}'>Sem ofertas</div>")
+                box_content.append("</div>"); boxes.append("".join(box_content)); continue
+
+            box_content.append(f"<div style='{STACK_STYLE}'>")
+            for i in range(min(3, len(base_rank))):
+                row_i = base_rank.iloc[i]
+                preco_i = float(row_i["__PRECO__"])
+                sub_rows = all_rows[(all_rows["AGENCIA_UP"] == row_i["AGENCIA_UP"]) & (np.isclose(all_rows["__PRECO__"], preco_i, atol=1))]
+                dt_lbl, id_val = dt_and_id_for(sub_rows)
+                subtxt = "—"
+                if i > 0:
+                    p1 = float(base_rank.iloc[0]["__PRECO__"])
+                    if np.isfinite(p1) and p1 != 0:
+                        subtxt = f"+{int(round((preco_i - p1)/p1*100))}% vs 1º"
+                stripe = "#D4AF37" if i==0 else "#9CA3AF" if i==1 else "#CD7F32"
+                box_content.append(
+                    f"<div style='{CARD_BASE}'>"
+                    f"<div style='position:absolute;left:0;top:0;bottom:0;width:6px;border-radius:10px 0 0 10px;background:{stripe};'></div>"
+                    f"<div style='{DT_WRAP_STYLE}'><span style='{DT_TXT_STYLE}'>{dt_lbl}</span>"
+                    f"<span class='idp-wrap'><span class='idp-badge'>?</span>"
+                    f"<span class='idp-pop'>ID:&nbsp;<input class='idp-idbox' type='text' value='{_normalize_id(id_val)}' readonly></span></span></div>"
+                    f"<div style='{RANK_STYLE}'>{i+1}º</div>"
+                    f"<div style='{AG_STYLE}'>{row_i['AGENCIA_UP']}</div>"
+                    f"<div style='{PR_STYLE}'>{fmt_moeda_br(preco_i)}</div>"
+                    f"<div style='{SUB_STYLE}'>{subtxt}</div>"
+                    f"</div>"
+                )
+            box_content.append("</div>")
+            box_content.append("</div>")
+            boxes.append("".join(box_content))
+
+        if boxes:
+            st.markdown(f"<div style='{TRE_HDR_STYLE}'>Trecho: <b>{trecho}</b></div>", unsafe_allow_html=True)
+            st.markdown("<div style='" + GRID_STYLE + "'>" + "".join(boxes) + "</div>", unsafe_allow_html=True)
 
 # ─────────────────────── ABA: Ranking por Agências (START) ────────────────────
 @register_tab("Ranking por Agências")
