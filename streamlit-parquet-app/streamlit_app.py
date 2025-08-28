@@ -31,6 +31,9 @@ st.markdown("""
 html, body, .main { background: var(--bg) !important; color: var(--text); }
 .block-container{ padding-top:0 !important; }
 
+/* deixar alertas legíveis no seu tema */
+.stAlert, .stAlert p, .stAlert div { color: #111 !important; }
+
 .hero {
   position:relative; overflow:hidden; border-radius:16px; border:1px solid var(--border);
   box-shadow: 0 10px 40px rgba(8, 28, 61, .45);
@@ -135,6 +138,7 @@ def advp_nearest(x) -> int:
     if np.isnan(v): v = 1
     return min([1,5,11,17,30], key=lambda k: abs(v-k))
 
+# ====================== LOAD_DF ROBUSTO (com fallback 0..12) ==================
 @st.cache_data(show_spinner=False)
 def load_df(path: Path) -> pd.DataFrame:
     if not path.exists():
@@ -142,7 +146,32 @@ def load_df(path: Path) -> pd.DataFrame:
 
     df = pd.read_parquet(path)
 
-    # === Apelidos por coluna canônica (ordem importa) ===
+    # ---- FALLBACK: colunas 0..12 -> renomeia pelo colmap antigo ----
+    try:
+        first13 = list(df.columns[:13])
+        if all(isinstance(c, (int, np.integer, float)) for c in first13):
+            colmap = {
+                0: "IDPESQUISA",
+                1: "CIA",
+                2: "HORA_BUSCA",
+                3: "HORA_PARTIDA",
+                4: "HORA_CHEGADA",
+                5: "TIPO_VOO",
+                6: "DATA_EMBARQUE",
+                7: "DATAHORA_BUSCA",
+                8: "AGENCIA_COMP",
+                9: "PRECO",
+                10: "TRECHO",
+                11: "ADVP",
+                12: "RANKING",
+            }
+            rename = {df.columns[i]: colmap[i] for i in range(min(13, df.shape[1]))}
+            df = df.rename(columns=rename)
+    except Exception:
+        pass
+    # ---------------------------------------------------------------
+
+    # Apelidos por coluna canônica
     aliases: dict[str, list[str]] = {
         "IDPESQUISA": ["IDPESQUISA","ID_PESQUISA","ID-BUSCA","IDBUSCA","ID","SEARCH_ID"],
         "CIA": ["CIA","CIA_NORM","CIAEREA","COMPANHIA","CIA_AEREA","AIRLINE"],
@@ -159,7 +188,7 @@ def load_df(path: Path) -> pd.DataFrame:
         "RANKING": ["RANKING","POSICAO","POSIÇÃO","RANK","PLACE"],
     }
 
-    # === Mapeia nomes reais -> canônicos (case-insensitive) ===
+    # Match flexível (case-insensitive)
     col_by_norm = {str(c).strip().lower(): c for c in df.columns}
     selected: dict[str, str] = {}
     missing: list[str] = []
@@ -181,14 +210,22 @@ def load_df(path: Path) -> pd.DataFrame:
     required = ["DATAHORA_BUSCA", "PRECO", "TRECHO"]
     still_missing = [c for c in required if c not in selected]
     if still_missing:
-        st.error(f"Colunas obrigatórias ausentes no arquivo: {', '.join(still_missing)}")
+        st.error(
+            "Colunas obrigatórias ausentes: "
+            + ", ".join(still_missing)
+            + ". Veja abaixo as colunas detectadas e ajuste os aliases."
+        )
+        with st.expander("Colunas detectadas no arquivo"):
+            st.write(list(df.columns))
         st.stop()
 
+    # recorta/renomeia
     df2 = df[list(selected.values())].copy()
     df2.columns = list(selected.keys())
 
+    # cria opcionais ausentes
     for opt in missing:
-        if opt in required:  # já tratado
+        if opt in required:
             continue
         df2[opt] = np.nan
 
@@ -217,12 +254,15 @@ def load_df(path: Path) -> pd.DataFrame:
     df2.loc[df2["HORA_HH"].isin([None,"nan","NaN",""]), "HORA_HH"] = "00"
     df2["HORA_HH"] = pd.to_numeric(df2["HORA_HH"], errors="coerce").fillna(0).astype(int)
 
+    # Se IDPESQUISA não veio, gera um estável por timestamp
     if "IDPESQUISA" not in df2.columns or df2["IDPESQUISA"].isna().all():
         ts = df2["DATAHORA_BUSCA"].astype("int64", errors="ignore")
         df2["IDPESQUISA"] = pd.factorize(ts)[0] + 1
 
+    # limpa
     df2 = df2.dropna(subset=["DATAHORA_BUSCA","PRECO"]).reset_index(drop=True)
 
+    # debug amigável
     with st.expander("Detalhes de mapeamento de colunas", expanded=False):
         ok_map = ", ".join([f"{k} ← {v}" for k,v in selected.items()])
         st.caption(f"Mapeadas: {ok_map}")
@@ -323,7 +363,6 @@ last_label = f"{last_row['DATAHORA_BUSCA'].strftime('%d/%m/%Y')} {last_hh}"
 def pill(delta):
     if delta is None: return "<span class='pill' style='opacity:.65'>—</span>"
     pct, up = delta; cls = "ok" if up else "bad"; arrow = "⬆️" if up else "⬇️"
-    # 2 casas decimais no rótulo
     pct_text = f"{abs(pct):.2f}".replace(".", ",")
     return f"<span class='pill {cls}'>{arrow} {pct_text}%</span>"
 
@@ -411,7 +450,6 @@ for cia, col in zip(["AZUL","GOL","LATAM"], [c1,c2,c3]):
 # =================== % GANHO NO MENOR PREÇO POR CIA (EMPILHADO) ==============
 st.subheader("% de Ganho no Menor Preço por CIA (empilhado)")
 
-# Para cada CIA, % de vezes que cada AGENCIA foi a mais barata
 agencias_all = sorted(df["AGENCIA_COMP"].dropna().astype(str).unique().tolist())
 stack_rows = []
 for cia in ["AZUL","GOL","LATAM"]:
