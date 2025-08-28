@@ -1,20 +1,27 @@
-# ui_dashboard.py
+# ui_dashboard.py (Streamlit) — layout animado + visões completas
 from __future__ import annotations
 import re
 from pathlib import Path
-from datetime import datetime, date, timedelta
+from datetime import datetime, timedelta, date
 import numpy as np
 import pandas as pd
 import streamlit as st
-import plotly.graph_objects as go
-import plotly.express as px
 
+# ---- Gráficos: Plotly se houver; senão Altair (fallback) ----
+try:
+    import plotly.graph_objects as go
+    import plotly.express as px
+    HAS_PLOTLY = True
+except Exception:
+    import altair as alt  # type: ignore
+    HAS_PLOTLY = False
+
+# ============================ CONFIG INICIAL ================================
 st.set_page_config(page_title="Flight Deal Scanner — Painel", layout="wide")
-
 APP_DIR = Path(__file__).resolve().parent
 DATA_PATH = APP_DIR / "data" / "OFERTAS.parquet"
 
-# ======================== ESTILO (CSS + animações) ============================
+# ======================== ESTILO (CSS + animações) =========================
 st.markdown("""
 <style>
 :root{
@@ -91,7 +98,7 @@ html, body, .main { background: var(--bg) !important; color: var(--text); }
 </style>
 """, unsafe_allow_html=True)
 
-# =============================== HELPERS ======================================
+# =============================== HELPERS =====================================
 def fmt_num0_br(x) -> str:
     try:
         return f"{float(x):,.0f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -130,50 +137,104 @@ def advp_nearest(x) -> int:
 
 @st.cache_data(show_spinner=False)
 def load_df(path: Path) -> pd.DataFrame:
+    if not path.exists():
+        st.error(f"Arquivo obrigatório não encontrado: {path.as_posix()}"); st.stop()
+
     df = pd.read_parquet(path)
-    # Normalização de colunas esperadas
-    rename_map = {
-        "IDPESQUISA":"IDPESQUISA","CIA":"CIA","HORA_BUSCA":"HORA_BUSCA","HORA_PARTIDA":"HORA_PARTIDA",
-        "HORA_CHEGADA":"HORA_CHEGADA","TIPO_VOO":"TIPO_VOO","DATA_EMBARQUE":"DATA_EMBARQUE",
-        "DATAHORA_BUSCA":"DATAHORA_BUSCA","AGENCIA_COMP":"AGENCIA_COMP","PRECO":"PRECO",
-        "TRECHO":"TRECHO","ADVP":"ADVP","RANKING":"RANKING"
+
+    # === Apelidos por coluna canônica (ordem importa) ===
+    aliases: dict[str, list[str]] = {
+        "IDPESQUISA": ["IDPESQUISA","ID_PESQUISA","ID-BUSCA","IDBUSCA","ID","SEARCH_ID"],
+        "CIA": ["CIA","CIA_NORM","CIAEREA","COMPANHIA","CIA_AEREA","AIRLINE"],
+        "HORA_BUSCA": ["HORA_BUSCA","HORA DA BUSCA","HORA_COLETA","COLUNA_C","C","HORA"],
+        "HORA_PARTIDA": ["HORA_PARTIDA","HORA DE PARTIDA","PARTIDA_HORA"],
+        "HORA_CHEGADA": ["HORA_CHEGADA","HORA DE CHEGADA","CHEGADA_HORA"],
+        "TIPO_VOO": ["TIPO_VOO","TIPO","CABINE","CLASSE"],
+        "DATA_EMBARQUE": ["DATA_EMBARQUE","DATA DE EMBARQUE","EMBARQUE_DATA","DAT_EMB"],
+        "DATAHORA_BUSCA": ["DATAHORA_BUSCA","DATA_HORA_BUSCA","TIMESTAMP","DT_BUSCA","DATA_BUSCA","COLETA_DH"],
+        "AGENCIA_COMP": ["AGENCIA_COMP","AGENCIA_NORM","AGENCIA","AGENCIA_COMPRA","AGÊNCIA"],
+        "PRECO": ["PRECO","PREÇO","PRICE","VALOR","AMOUNT"],
+        "TRECHO": ["TRECHO","ROTA","ORIGEM-DESTINO","OD","ORIGEM_DESTINO","ROUTE"],
+        "ADVP": ["ADVP","ADVP_CANON","ANTECEDENCIA","ANTECEDENCIA_DIAS","D0_D30"],
+        "RANKING": ["RANKING","POSICAO","POSIÇÃO","RANK","PLACE"],
     }
-    for k in list(rename_map):
-        if k not in df.columns:  # tenta achar variantes comuns
-            if k=="AGENCIA_COMP":
-                for alt in ["AGENCIA","AGENCIA_NORM","AGENCIA_COMPRA"]:
-                    if alt in df.columns: rename_map[k]=alt; break
-            if k=="ADVP":
-                for alt in ["ADVP_CANON","ANTECEDENCIA","ANTECEDENCIA_DIAS"]:
-                    if alt in df.columns: rename_map[k]=alt; break
-            if k=="CIA":
-                for alt in ["CIA_NORM","COMPANHIA","CIAEREA"]:
-                    if alt in df.columns: rename_map[k]=alt; break
-    df = df[list(rename_map.values())].copy()
-    df.columns = list(rename_map.keys())
 
-    # Parse datas/horas
-    for c in ["DATAHORA_BUSCA"]:
-        df[c] = pd.to_datetime(df[c], errors="coerce")
+    # === Mapeia nomes reais -> canônicos (case-insensitive) ===
+    col_by_norm = {str(c).strip().lower(): c for c in df.columns}
+    selected: dict[str, str] = {}
+    missing: list[str] = []
+
+    def pick(cands: list[str]) -> str | None:
+        for c in cands:
+            norm = c.strip().lower()
+            if norm in col_by_norm:
+                return col_by_norm[norm]
+        return None
+
+    for canon, cands in aliases.items():
+        real = pick(cands)
+        if real is not None:
+            selected[canon] = real
+        else:
+            missing.append(canon)
+
+    required = ["DATAHORA_BUSCA", "PRECO", "TRECHO"]
+    still_missing = [c for c in required if c not in selected]
+    if still_missing:
+        st.error(f"Colunas obrigatórias ausentes no arquivo: {', '.join(still_missing)}")
+        st.stop()
+
+    df2 = df[list(selected.values())].copy()
+    df2.columns = list(selected.keys())
+
+    for opt in missing:
+        if opt in required:  # já tratado
+            continue
+        df2[opt] = np.nan
+
+    # datas/horas
+    df2["DATAHORA_BUSCA"] = pd.to_datetime(df2["DATAHORA_BUSCA"], errors="coerce")
     for c in ["HORA_BUSCA","HORA_PARTIDA","HORA_CHEGADA"]:
-        df[c] = df[c].apply(parse_hhmmss)
+        if c in df2.columns:
+            df2[c] = df2[c].apply(parse_hhmmss)
 
-    # PRECO numérico
-    df["PRECO"] = (df["PRECO"].astype(str)
+    # preço
+    df2["PRECO"] = (
+        df2["PRECO"].astype(str)
         .str.replace(r"[^\d,.-]", "", regex=True)
-        .str.replace(",", ".", regex=False))
-    df["PRECO"] = pd.to_numeric(df["PRECO"], errors="coerce")
+        .str.replace(",", ".", regex=False)
+    )
+    df2["PRECO"] = pd.to_numeric(df2["PRECO"], errors="coerce")
 
-    # Derivadas
-    df["CIA_NORM"] = df["CIA"].apply(std_cia)
-    df["ADVP_CANON"] = df["ADVP"].apply(advp_nearest)
-    df["HORA_HH"] = df["HORA_BUSCA"].str.slice(0,2).fillna("00").astype(int)
-    df = df.dropna(subset=["DATAHORA_BUSCA","PRECO"])
-    return df
+    # derivadas
+    df2["CIA_NORM"] = df2.get("CIA", pd.Series([None]*len(df2))).apply(std_cia)
+    if "ADVP" in df2.columns:
+        df2["ADVP_CANON"] = df2["ADVP"].apply(advp_nearest)
+    else:
+        df2["ADVP_CANON"] = 1
 
+    df2["HORA_HH"] = df2.get("HORA_BUSCA").astype(str).str.slice(0,2)
+    df2.loc[df2["HORA_HH"].isin([None,"nan","NaN",""]), "HORA_HH"] = "00"
+    df2["HORA_HH"] = pd.to_numeric(df2["HORA_HH"], errors="coerce").fillna(0).astype(int)
+
+    if "IDPESQUISA" not in df2.columns or df2["IDPESQUISA"].isna().all():
+        ts = df2["DATAHORA_BUSCA"].astype("int64", errors="ignore")
+        df2["IDPESQUISA"] = pd.factorize(ts)[0] + 1
+
+    df2 = df2.dropna(subset=["DATAHORA_BUSCA","PRECO"]).reset_index(drop=True)
+
+    with st.expander("Detalhes de mapeamento de colunas", expanded=False):
+        ok_map = ", ".join([f"{k} ← {v}" for k,v in selected.items()])
+        st.caption(f"Mapeadas: {ok_map}")
+        if missing:
+            st.caption("Ausentes (criadas vazias): " + ", ".join([m for m in missing if m not in required]))
+
+    return df2
+
+# =============================== CARREGA BASE ================================
 df_raw = load_df(DATA_PATH)
 
-# =============================== HERO =========================================
+# =============================== HERO =======================================
 st.markdown("""
 <div class="hero">
   <div class="hero-inner">
@@ -197,11 +258,11 @@ st.markdown("""
 st.markdown("<div id='painel'></div>", unsafe_allow_html=True)
 st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
 
-# =============================== FILTROS ======================================
+# =============================== FILTROS =====================================
 min_dt = df_raw["DATAHORA_BUSCA"].min().date()
 max_dt = df_raw["DATAHORA_BUSCA"].max().date()
 
-c1,c2,c3,c4,c5 = st.columns([1.2,1,1,1,1])
+c1,c2,c3,c4,c5 = st.columns([1.4,1,1,1,1])
 with c1:
     st.caption("Período")
     dt_ini = st.date_input("Data inicial", value=min_dt, min_value=min_dt, max_value=max_dt, format="DD/MM/YYYY")
@@ -221,7 +282,6 @@ with c5:
     cia_opts = ["AZUL","GOL","LATAM"]
     cia_sel = st.multiselect("    ", options=cia_opts, default=[], label_visibility="collapsed")
 
-# aplica filtros
 mask = (df_raw["DATAHORA_BUSCA"].dt.date >= dt_ini) & (df_raw["DATAHORA_BUSCA"].dt.date <= dt_fim)
 if advp_sel: mask &= df_raw["ADVP_CANON"].isin(advp_sel)
 if trecho_sel: mask &= df_raw["TRECHO"].isin(trecho_sel)
@@ -229,49 +289,43 @@ if hh_sel: mask &= df_raw["HORA_HH"].isin(hh_sel)
 if cia_sel: mask &= df_raw["CIA_NORM"].isin(cia_sel)
 df = df_raw[mask].copy()
 
-# =============================== MÉTRICAS =====================================
-def day_key(d: datetime) -> str: return d.strftime("%Y-%m-%d")
-
 if df.empty:
     st.info("Sem dados para o recorte atual.")
     st.stop()
 
-# totais
-total_pesquisas = df["IDPESQUISA"].nunique()
-total_ofertas = len(df)
-menor_preco = df["PRECO"].min()
-
-# variação vs dia anterior (mantendo demais filtros)
-last_dt = df["DATAHORA_BUSCA"].max()
-prev_day = last_dt - timedelta(days=1)
-def slice_day(base: pd.DataFrame, day: datetime) -> pd.DataFrame:
-    return base[base["DATAHORA_BUSCA"].dt.date == day.date()]
-
-cur = slice_day(df, last_dt)
-prv = slice_day(df, prev_day)
-
+# =============================== MÉTRICAS ====================================
 def dd_pct(curr: float, prev: float) -> tuple[float,bool] | None:
     if prev is None or prev==0 or not np.isfinite(prev): return None
     pct = (curr - prev)/prev*100
     return pct, (pct>=0)
+
+def slice_day(base: pd.DataFrame, d: datetime) -> pd.DataFrame:
+    return base[base["DATAHORA_BUSCA"].dt.date == d.date()]
+
+total_pesquisas = df["IDPESQUISA"].nunique()
+total_ofertas   = len(df)
+menor_preco     = df["PRECO"].min()
+
+last_dt = df["DATAHORA_BUSCA"].max()
+prev_day = last_dt - timedelta(days=1)
+cur = slice_day(df, last_dt)
+prv = slice_day(df, prev_day)
 
 pesq_dd = dd_pct(cur["IDPESQUISA"].nunique() or 0, prv["IDPESQUISA"].nunique() or 0)
 of_dd   = dd_pct(len(cur) or 0, len(prv) or 0)
 pre_dd  = dd_pct(cur["PRECO"].min() if not cur.empty else np.nan,
                  prv["PRECO"].min() if not prv.empty else np.nan)
 
-# última atualização (data da última linha + hora da coluna C)
 last_row = df.loc[df["DATAHORA_BUSCA"].idxmax()]
 last_hh = parse_hhmmss(last_row.get("HORA_BUSCA")) or last_row["DATAHORA_BUSCA"].strftime("%H:%M:%S")
 last_label = f"{last_row['DATAHORA_BUSCA'].strftime('%d/%m/%Y')} {last_hh}"
 
-# =============================== KPI CARDS ====================================
 def pill(delta):
     if delta is None: return "<span class='pill' style='opacity:.65'>—</span>"
-    pct, up = delta
-    cls = "ok" if up else "bad"
-    arrow = "⬆️" if up else "⬇️"
-    return f"<span class='pill {cls}'>{arrow} {str(abs(pct)).replace('.', ',')[:5]}%</span>"
+    pct, up = delta; cls = "ok" if up else "bad"; arrow = "⬆️" if up else "⬇️"
+    # 2 casas decimais no rótulo
+    pct_text = f"{abs(pct):.2f}".replace(".", ",")
+    return f"<span class='pill {cls}'>{arrow} {pct_text}%</span>"
 
 k1,k2,k3,k4 = st.columns(4)
 with k1:
@@ -315,27 +369,26 @@ with k4:
 
 st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 
-# ======================= RANKING DE AGÊNCIAS — POR CIA ========================
+# =============== RANKING DE AGÊNCIAS — POR CIA (1º/2º/3º %) ==================
 st.subheader("Ranking de Agências — por CIA")
 
 def ranking_por_cia(df_in: pd.DataFrame) -> dict[str, pd.DataFrame]:
-    # para cada (IDPESQUISA, CIA), ordenar agências por menor preço; contar posições
     base = (df_in.groupby(["IDPESQUISA","CIA_NORM","AGENCIA_COMP"], as_index=False)
                  .agg(PRECO_MIN=("PRECO","min")))
     out = {}
     for cia in ["AZUL","GOL","LATAM"]:
         sub = base[base["CIA_NORM"]==cia].copy()
         if sub.empty:
-            out[cia] = pd.DataFrame(columns=["AGENCIA","1º%","2º%","3º%"])
+            out[cia] = pd.DataFrame(columns=["Agência","1º%","2º%","3º%"])
             continue
         pos_rows = []
         for _, g in sub.groupby(["IDPESQUISA"]):
             g = g.sort_values("PRECO_MIN", ascending=True).reset_index(drop=True)
             for i in range(min(3, len(g))):
-                pos_rows.append({"AGENCIA": g.loc[i,"AGENCIA_COMP"], "pos": i+1})
+                pos_rows.append({"Agência": g.loc[i,"AGENCIA_COMP"], "pos": i+1})
         pos_df = pd.DataFrame(pos_rows)
         total_ids = sub["IDPESQUISA"].nunique() or 1
-        agg = (pos_df.pivot_table(index="AGENCIA", columns="pos", values="pos", aggfunc="count", fill_value=0)
+        agg = (pos_df.pivot_table(index="Agência", columns="pos", values="pos", aggfunc="count", fill_value=0)
                     .reindex(columns=[1,2,3], fill_value=0)
                     .rename(columns={1:"1º%",2:"2º%",3:"3º%"}))
         agg = (agg/total_ids*100).reset_index()
@@ -351,24 +404,59 @@ for cia, col in zip(["AZUL","GOL","LATAM"], [c1,c2,c3]):
         if tbl.empty:
             st.caption("Sem dados neste recorte.")
         else:
-            tbl["1º%"] = tbl["1º%"].map(lambda v: fmt_pct2_br(v).replace("%","") + "%")
-            tbl["2º%"] = tbl["2º%"].map(lambda v: fmt_pct2_br(v).replace("%","") + "%")
-            tbl["3º%"] = tbl["3º%"].map(lambda v: fmt_pct2_br(v).replace("%","") + "%")
-            st.dataframe(tbl.rename(columns={"AGENCIA":"Agência"}), use_container_width=True, hide_index=True)
+            for c in ["1º%","2º%","3º%"]:
+                tbl[c] = tbl[c].map(lambda v: f"{v:.2f}".replace(".", ",") + "%")
+            st.dataframe(tbl, use_container_width=True, hide_index=True)
 
-# ======================== TOP 3 PREÇOS POR TRECHO (ADVP) ======================
+# =================== % GANHO NO MENOR PREÇO POR CIA (EMPILHADO) ==============
+st.subheader("% de Ganho no Menor Preço por CIA (empilhado)")
+
+# Para cada CIA, % de vezes que cada AGENCIA foi a mais barata
+agencias_all = sorted(df["AGENCIA_COMP"].dropna().astype(str).unique().tolist())
+stack_rows = []
+for cia in ["AZUL","GOL","LATAM"]:
+    sub = df[df["CIA_NORM"]==cia]
+    ids = sub["IDPESQUISA"].unique().tolist()
+    wins_by_ag = {}
+    for idp in ids:
+        rows = sub[sub["IDPESQUISA"]==idp]
+        if rows.empty: continue
+        best_row = rows.loc[rows["PRECO"].idxmin()]
+        ag = str(best_row["AGENCIA_COMP"])
+        wins_by_ag[ag] = wins_by_ag.get(ag, 0) + 1
+    total = max(1, sum(wins_by_ag.values()))
+    row = {"CIA": cia}
+    for ag in agencias_all:
+        row[ag] = wins_by_ag.get(ag, 0) / total * 100
+    stack_rows.append(row)
+stack_df = pd.DataFrame(stack_rows)
+
+if HAS_PLOTLY:
+    fig_stack = go.Figure()
+    for ag in agencias_all:
+        fig_stack.add_trace(go.Bar(x=stack_df["CIA"], y=stack_df[ag], name=ag))
+    fig_stack.update_layout(barmode="stack", height=320, template="plotly_white",
+                            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                            yaxis_title="% de vezes mais barata")
+    st.plotly_chart(fig_stack, use_container_width=True)
+else:
+    stack_long = stack_df.melt(id_vars="CIA", var_name="Agência", value_name="Share")
+    chart = (alt.Chart(stack_long)
+             .mark_bar()
+             .encode(x="CIA:N", y="Share:Q", color="Agência:N", tooltip=["CIA","Agência","Share"])
+             .properties(height=320))
+    st.altair_chart(chart, use_container_width=True)
+
+# ============= TOP 3 PREÇOS POR TRECHO — POR ADVP (última pesquisa) ==========
 st.subheader("Top 3 Preços por Trecho (última pesquisa de cada ADVP)")
 
-# última pesquisa por (TRECHO, ADVP)
 dfp = df.copy()
 dfp["PAR"] = dfp["TRECHO"].astype(str) + "||" + dfp["ADVP_CANON"].astype(str)
 last_per_pair = dfp.groupby("PAR")["DATAHORA_BUSCA"].transform("max")==dfp["DATAHORA_BUSCA"]
 df_last = dfp[last_per_pair].copy()
 
-cards = []
 for par, sub in df_last.groupby("PAR"):
     trecho, advp = par.split("||")
-    # ranking por agência (menor preço) MESMA pesquisa (usa IDPESQUISA mais recente dentro do par)
     id_last = sub.loc[sub["DATAHORA_BUSCA"].idxmax(),"IDPESQUISA"]
     sub_id = sub[sub["IDPESQUISA"]==id_last]
     best_by_ag = (sub_id.groupby("AGENCIA_COMP", as_index=False)["PRECO"].min()
@@ -378,7 +466,6 @@ for par, sub in df_last.groupby("PAR"):
          or data_hora.strftime("%H:%M:%S")
     label = f"{data_hora.strftime('%d/%m/%Y')} {hh}"
 
-    # % extras
     top1 = best_by_ag.iloc[0]["PRECO"] if len(best_by_ag)>=1 else np.nan
     top2 = best_by_ag.iloc[1]["PRECO"] if len(best_by_ag)>=2 else np.nan
     top3 = best_by_ag.iloc[2]["PRECO"] if len(best_by_ag)>=3 else np.nan
@@ -386,7 +473,6 @@ for par, sub in df_last.groupby("PAR"):
     pct_top1_vs_2    = ((top1-top2)/top2*100) if np.isfinite(top1) and np.isfinite(top2) else None
     pct_top1_vs_3    = ((top1-top3)/top3*100) if np.isfinite(top1) and np.isfinite(top3) else None
 
-    # render card
     st.markdown(f"""
     <div class="card card-hover" style="padding:12px 14px; margin-bottom:10px;">
       <div class="hstack" style="justify-content:space-between;">
@@ -394,8 +480,7 @@ for par, sub in df_last.groupby("PAR"):
           <div style="font-weight:800;">{trecho} • ADVP {advp}</div>
           <div style="font-size:12px;color:var(--sub)">{label}</div>
         </div>
-        <button class="copy-btn" onclick="navigator.clipboard.writeText('{id_last}')"
-                title="Copiar ID da pesquisa">?</button>
+        <button class="copy-btn" onclick="navigator.clipboard.writeText('{id_last}')" title="Copiar ID da pesquisa">?</button>
       </div>
     """, unsafe_allow_html=True)
 
@@ -423,7 +508,7 @@ for par, sub in df_last.groupby("PAR"):
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-# ======================== TENDÊNCIA POR HORA (4 AGÊNCIAS) =====================
+# =================== TENDÊNCIA POR HORA — 4 PRINCIPAIS AGÊNCIAS ==============
 st.subheader("Tendência de Preços por Hora — 4 principais agências")
 
 ag_principais = ["123MILHAS","MAXMILHAS","FLIPMILHAS","CAPOVIAGENS"]
@@ -435,17 +520,26 @@ for h in range(24):
         m = subset.loc[subset["AGENCIA_COMP"]==ag, "PRECO"]
         row[ag] = float(m.min()) if not m.empty else None
     buckets.append(row)
-fig_line = go.Figure()
-for ag in ag_principais:
-    fig_line.add_trace(go.Scatter(x=[b["Hora"] for b in buckets], y=[b[ag] for b in buckets],
-                                  mode="lines", name=ag))
-fig_line.update_layout(height=340, template="plotly_white",
-                       plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-                       legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-st.plotly_chart(fig_line, use_container_width=True)
 
-# ====================== COMPETITIVIDADE — PARTICIPAÇÃO CIA ====================
-st.subheader("Análise de Competitividade — participação das CIAs nos menores preços")
+if HAS_PLOTLY:
+    fig_line = go.Figure()
+    for ag in ag_principais:
+        fig_line.add_trace(go.Scatter(x=[b["Hora"] for b in buckets], y=[b[ag] for b in buckets],
+                                      mode="lines", name=ag))
+    fig_line.update_layout(height=340, template="plotly_white",
+                           plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                           legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    st.plotly_chart(fig_line, use_container_width=True)
+else:
+    df_hour = pd.DataFrame(buckets).melt(id_vars="Hora", var_name="Agência", value_name="Preço")
+    chart = (alt.Chart(df_hour)
+             .mark_line()
+             .encode(x="Hora:N", y="Preço:Q", color="Agência:N", tooltip=["Hora","Agência","Preço"])
+             .properties(height=340))
+    st.altair_chart(chart, use_container_width=True)
+
+# =========== COMPETITIVIDADE — PARTICIPAÇÃO DAS CIAS NOS MENORES PREÇOS ======
+st.subheader("Análise de Competitividade — participação das CIAs no menor preço")
 
 ids = df["IDPESQUISA"].unique().tolist()
 wins = {"AZUL":0,"GOL":0,"LATAM":0}
@@ -453,15 +547,27 @@ for idp in ids:
     sub = df[df["IDPESQUISA"]==idp]
     if sub.empty: continue
     best_row = sub.loc[sub["PRECO"].idxmin()]
-    cia = best_row["CIA_NORM"]
+    cia = str(best_row["CIA_NORM"])
     if cia in wins: wins[cia]+=1
 total = sum(wins.values()) or 1
+comp_df = pd.DataFrame([
+    {"CIA":"AZUL","Share":wins["AZUL"]/total*100},
+    {"CIA":"GOL","Share":wins["GOL"]/total*100},
+    {"CIA":"LATAM","Share":wins["LATAM"]/total*100},
+])
 
-fig_bar = go.Figure()
-fig_bar.add_trace(go.Bar(name="AZUL", x=["Share"], y=[wins["AZUL"]/total*100], texttemplate="%{y:.1f}%", textposition="inside"))
-fig_bar.add_trace(go.Bar(name="GOL",  x=["Share"], y=[wins["GOL"]/total*100],  texttemplate="%{y:.1f}%", textposition="inside"))
-fig_bar.add_trace(go.Bar(name="LATAM",x=["Share"], y=[wins["LATAM"]/total*100],texttemplate="%{y:.1f}%", textposition="inside"))
-fig_bar.update_layout(barmode="stack", height=320, template="plotly_white",
-                      plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-                      yaxis_title="% de vezes mais barata")
-st.plotly_chart(fig_bar, use_container_width=True)
+if HAS_PLOTLY:
+    fig_bar = go.Figure()
+    fig_bar.add_trace(go.Bar(name="AZUL", x=["Share"], y=[comp_df.loc[0,"Share"]], texttemplate="%{y:.1f}%", textposition="inside"))
+    fig_bar.add_trace(go.Bar(name="GOL",  x=["Share"], y=[comp_df.loc[1,"Share"]], texttemplate="%{y:.1f}%", textposition="inside"))
+    fig_bar.add_trace(go.Bar(name="LATAM",x=["Share"], y=[comp_df.loc[2,"Share"]], texttemplate="%{y:.1f}%", textposition="inside"))
+    fig_bar.update_layout(barmode="stack", height=320, template="plotly_white",
+                          plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                          yaxis_title="% de vezes mais barata")
+    st.plotly_chart(fig_bar, use_container_width=True)
+else:
+    chart = (alt.Chart(comp_df)
+             .mark_bar()
+             .encode(x="CIA:N", y=alt.Y("Share:Q", title="% de vezes mais barata"), tooltip=["CIA","Share"])
+             .properties(height=320))
+    st.altair_chart(chart, use_container_width=True)
