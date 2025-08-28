@@ -489,7 +489,6 @@ def tab1_painel(df_raw: pd.DataFrame):
 @register_tab("Top 3 Agências")
 def tab2_top3_agencias(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t2")
-    st.subheader("Top 3 Agências (por menor preço no trecho)")
     if df.empty:
         st.info("Sem resultados para os filtros selecionados.")
         return
