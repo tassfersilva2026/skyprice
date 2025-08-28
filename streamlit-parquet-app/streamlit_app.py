@@ -616,23 +616,309 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
 
 
 # ──────────────────── ABA: Top 3 Preços Mais Baratos (START) ─────────────────
-# ui_dashboard.py (Streamlit) — layout animado + visões completas
-from __future__ import annotations
-import re
-from pathlib import Path
-from datetime import datetime, timedelta, date
-import numpy as np
-import pandas as pd
-import streamlit as st
+@register_tab("Top 3 Preços Mais Baratos")
+def tab3_top3_precos(df_raw: pd.DataFrame):
+    """
+    Pódio por Trecho → ADVP (última pesquisa de cada par).
+    Horário do badge vem de HORA_BUSCA — HH:MM:SS.
+    Inclui 'chips' extras para 123MILHAS e MAXMILHAS quando não estiverem no Top 3:
+      - mostra posição, preço e % vs 1º
+      - se não existir ocorrência: 'Não apareceu'
+    """
+    import re
 
-# ---- Gráficos: Plotly se houver; senão Altair (fallback) ----
-try:
-    import plotly.graph_objects as go
-    import plotly.express as px
-    HAS_PLOTLY = True
-except Exception:
-    import altair as alt  # type: ignore
-    HAS_PLOTLY = False
+    df = render_filters(df_raw, key_prefix="t3")
+    st.subheader("Pódio por Trecho → ADVP (última pesquisa de cada par)")
+
+    top_row = st.container()
+    with top_row:
+        c1, c2, c3 = st.columns([0.28, 0.18, 0.54])
+        agencia_foco = c1.selectbox("Agência alvo", ["Todos", "123MILHAS", "MAXMILHAS"], index=0)
+        posicao_foco = c2.selectbox("Ranking", ["Todas", 1, 2, 3], index=0)
+        por_pesquisa = c3.checkbox("Isolar última pesquisa por Trecho×ADVP", value=True)
+
+    if df.empty:
+        st.info("Sem resultados para os filtros selecionados."); return
+
+    # ---------- Helpers ----------
+    def fmt_moeda_br(x) -> str:
+        try:
+            xv = float(x)
+            if not np.isfinite(xv): return "R$ -"
+            return "R$ " + f"{xv:,.0f}".replace(",", ".")
+        except Exception:
+            return "R$ -"
+
+    def fmt_pct_plus(x) -> str:
+        try:
+            v = float(x)
+            if not np.isfinite(v): return "—"
+            return f"+{round(v):.0f}%"
+        except Exception:
+            return "—"
+
+    def _canon(s: str) -> str:
+        return re.sub(r"[^A-Z0-9]+", "", str(s).upper())
+
+    def _brand_tag(s: str) -> str | None:
+        cs = _canon(s)
+        if cs.startswith("123MILHAS") or cs == "123": return "123MILHAS"
+        if cs.startswith("MAXMILHAS") or cs == "MAX":  return "MAXMILHAS"
+        return None
+
+    def _find_id_col(df_: pd.DataFrame) -> str | None:
+        cands = ["IDPESQUISA","ID_PESQUISA","ID BUSCA","IDBUSCA","ID","NOME_ARQUIVO_STD","NOME_ARQUIVO","NOME DO ARQUIVO","ARQUIVO"]
+        norm = { re.sub(r"[^A-Z0-9]+","", c.upper()): c for c in df_.columns }
+        for nm in cands:
+            key = re.sub(r"[^A-Z0-9]+","", nm.upper())
+            if key in norm: return norm[key]
+        return df_.columns[0] if len(df_.columns) else None
+
+    def _normalize_id(val):
+        if val is None or (isinstance(val, float) and np.isnan(val)): return None
+        s = str(val)
+        try:
+            f = float(s.replace(",", "."))
+            if f.is_integer(): return str(int(f))
+        except Exception:
+            pass
+        return s
+
+    # ---------- Estilos ----------
+    GRID_STYLE    = "display:grid;grid-auto-flow:column;grid-auto-columns:260px;gap:10px;overflow-x:auto;padding:6px 2px 10px 2px;scrollbar-width:thin;"
+    BOX_STYLE     = "border:1px solid #e5e7eb;border-radius:12px;background:#fff;"
+    HEAD_STYLE    = "padding:8px 10px;border-bottom:1px solid #f1f5f9;font-weight:700;color:#111827;"
+    STACK_STYLE   = "display:grid;gap:8px;padding:8px;"
+    CARD_BASE     = "position:relative;border:1px solid #e5e7eb;border-radius:10px;padding:8px;background:#fff;min-height:78px;"
+    DT_WRAP_STYLE = "position:absolute;right:8px;top:6px;display:flex;align-items:center;gap:6px;"
+    DT_TXT_STYLE  = "font-size:10px;color:#94a3b8;font-weight:800;"
+    RANK_STYLE    = "font-weight:900;font-size:11px;color:#6b7280;letter-spacing:.3px;text-transform:uppercase;"
+    AG_STYLE      = "font-weight:800;font-size:15px;color:#111827;margin-top:2px;"
+    PR_STYLE      = "font-weight:900;font-size:18px;color:#111827;margin-top:2px;"
+    SUB_STYLE     = "font-weight:700;font-size:12px;color:#374151;"
+    NO_STYLE      = "padding:22px 12px;color:#6b7280;font-weight:800;text-align:center;border:1px dashed #e5e7eb;border-radius:10px;background:#fafafa;"
+    TRE_HDR_STYLE = "margin:14px 0 10px 0;padding:10px 12px;border-left:4px solid #0B5FFF;background:#ECF3FF;border-radius:8px;font-weight:800;color:#0A2A6B;"
+
+    # Chips extras para 123/Max
+    EXTRAS_STYLE  = "border-top:1px dashed #e5e7eb;margin:6px 8px 8px 8px;padding-top:6px;display:flex;gap:6px;flex-wrap:wrap;"
+    CHIP_STYLE    = "background:#f3f4f6;border:1px solid #e5e7eb;border-radius:10px;padding:2px 6px;font-weight:700;font-size:11px;color:#111827;white-space:nowrap;line-height:1.1;"
+
+    BADGE_POP_CSS = """
+    <style>
+    .idp-wrap{position:relative; display:inline-flex; align-items:center;}
+    .idp-badge{
+      display:inline-flex; align-items:center; justify-content:center;
+      width:16px; height:16px; border:1px solid #cbd5e1; border-radius:50%;
+      font-size:11px; font-weight:900; color:#64748b; background:#fff;
+      user-select:none; cursor:default; line-height:1;
+    }
+    .idp-pop{
+      position:absolute; top:18px; right:0;
+      background:#fff; color:#0f172a; border:1px solid #e5e7eb;
+      border-radius:8px; padding:6px 8px; font-size:12px; font-weight:700;
+      box-shadow:0 6px 16px rgba(0,0,0,.08); display:none; z-index:9999; white-space:nowrap;
+    }
+    .idp-wrap:hover .idp-pop{ display:block; }
+    .idp-idbox{
+      border:1px solid #e5e7eb; background:#f8fafc; border-radius:6px;
+      padding:2px 6px; font-weight:800; font-size:12px; min-width:60px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      user-select:text; cursor:text;
+    }
+    </style>
+    """
+    st.markdown(BADGE_POP_CSS, unsafe_allow_html=True)
+
+    def _card_html(rank: int, agencia: str, preco: float, subtxt: str, dt: str, id_to_copy: str | None) -> str:
+        stripe = "#D4AF37" if rank == 1 else ("#9CA3AF" if rank == 2 else "#CD7F32")
+        stripe_div = f"<div style='position:absolute;left:0;top:0;bottom:0;width:6px;border-radius:10px 0 0 10px;background:{stripe};'></div>"
+        badge = ""
+        if id_to_copy:
+            sid = str(id_to_copy).replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ")
+            badge = (f"<span class='idp-wrap'><span class='idp-badge' title='Duplo clique no ID para selecionar'>?</span>"
+                     f"<span class='idp-pop'>ID:&nbsp;<input class='idp-idbox' type='text' value='{sid}' readonly></span></span>")
+        return (
+            f"<div style='{CARD_BASE}'>"
+            f"{stripe_div}"
+            f"<div style='{DT_WRAP_STYLE}'><span style='{DT_TXT_STYLE}'>{dt}</span>{badge}</div>"
+            f"<div style='{RANK_STYLE}'>{rank}º</div>"
+            f"<div style='{AG_STYLE}'>{agencia}</div>"
+            f"<div style='{PR_STYLE}'>{fmt_moeda_br(preco)}</div>"
+            f"<div style='{SUB_STYLE}'>{subtxt}</div>"
+            f"</div>"
+        )
+
+    # ---------- Base preparada ----------
+    dfp = df.copy()
+    # Colunas canônicas esperadas já devem existir via seus passos anteriores:
+    # TRECHO_STD, AGENCIA_UP, ADVP, __PRECO__, __DTKEY__, DATAHORA_BUSCA, HORA_BUSCA
+    dfp["__PRECO__"] = pd.to_numeric(dfp.get("__PRECO__", dfp.get("PRECO")), errors="coerce")
+    dfp = dfp[dfp["__PRECO__"].notna()].copy()
+
+    ID_COL = "IDPESQUISA" if "IDPESQUISA" in dfp.columns else _find_id_col(dfp)
+    PESQ_COL = "NOME_ARQUIVO_STD" if "NOME_ARQUIVO_STD" in dfp.columns else None
+    PESQ_OK = PESQ_COL is not None and PESQ_COL in dfp.columns
+
+    if dfp.empty:
+        st.info("Sem preços válidos no recorte atual."); return
+
+    # Última pesquisa por Trecho×ADVP (quando marcado)
+    pesq_por_ta = {}
+    if por_pesquisa and PESQ_OK:
+        tmp = dfp.dropna(subset=["TRECHO_STD","ADVP",PESQ_COL,"__DTKEY__"]).copy()
+        g = tmp.groupby(["TRECHO_STD","ADVP",PESQ_COL], as_index=False)["__DTKEY__"].max()
+        if not g.empty:
+            idx = g.groupby(["TRECHO_STD","ADVP"])["__DTKEY__"].idxmax()
+            idx = idx[idx.notna()].astype(int)
+            if len(idx):
+                last_by_ta = g.loc[idx.values]
+                pesq_por_ta = {(str(r["TRECHO_STD"]), str(r["ADVP"])): str(r[PESQ_COL]) for _, r in last_by_ta.iterrows()}
+
+    def presence_flags(df_all_rows: pd.DataFrame, label: str) -> dict:
+        # Marca presença da marca (123 ou Max), e se tem preço válido
+        sub = df_all_rows[df_all_rows["AGENCIA_UP"].astype(str).apply(_brand_tag) == _brand_tag(label)]
+        present_any = not sub.empty
+        present_with_price = False
+        if present_any:
+            if np.isfinite(sub["__PRECO__"]).any():
+                present_with_price = True
+        return {"present_any": present_any, "present_with_price": present_with_price}
+
+    def dt_and_id_for_rows(sub_rows: pd.DataFrame) -> tuple[str, str | None]:
+        if sub_rows.empty: return "", None
+        r = sub_rows.loc[sub_rows["__DTKEY__"].idxmax()]
+        date_part = pd.to_datetime(r.get("DATAHORA_BUSCA"), errors="coerce")
+        date_txt  = date_part.strftime("%d/%m") if pd.notna(date_part) else ""
+        htxt_raw  = str(r.get("HORA_BUSCA","")).strip()
+        htxt = htxt_raw if htxt_raw else (pd.to_datetime(r["__DTKEY__"], errors="coerce").strftime("%H:%M:%S") if pd.notna(r["__DTKEY__"]) else "")
+        id_val = _normalize_id(r.get(ID_COL))
+        return f"{date_txt} {htxt}".strip(), id_val
+
+    def build_rank(df_subset: pd.DataFrame) -> pd.DataFrame:
+        tmp = df_subset.copy()
+        tmp["AGENCIA_UP"] = tmp["AGENCIA_UP"].astype(str)
+        rank = (
+            tmp.groupby("AGENCIA_UP", as_index=False)["__PRECO__"].min()
+               .sort_values("__PRECO__")
+               .reset_index(drop=True)
+        )
+        if not rank.empty:
+            rank["_CAN"] = rank["AGENCIA_UP"].apply(_canon)
+            rank["_BRAND"] = rank["AGENCIA_UP"].apply(_brand_tag)
+        return rank
+
+    trechos_sorted = sorted(dfp["TRECHO_STD"].dropna().astype(str).unique(), key=lambda x: str(x))
+    for trecho in trechos_sorted:
+        df_t = dfp[dfp["TRECHO_STD"] == trecho]
+        advps = sorted(
+            df_t["ADVP"].dropna().astype(str).unique(),
+            key=lambda v: (0, int(re.search(r"\d+", str(v)).group())) if re.search(r"\d+", str(v)) else (1, str(v)),
+        )
+        boxes = []
+
+        for advp in advps:
+            df_ta = df_t[df_t["ADVP"].astype(str) == str(advp)].copy()
+            if por_pesquisa and PESQ_OK and pesq_por_ta:
+                pesq_id = pesq_por_ta.get((trecho, advp))
+                all_rows = df_ta[df_ta[PESQ_COL].astype(str) == pesq_id] if pesq_id is not None else df_ta.iloc[0:0]
+            else:
+                all_rows = df_ta
+                pesq_id = None
+
+            base_rank = build_rank(all_rows)
+
+            # Filtro "agência alvo" / "ranking"
+            if not base_rank.empty and agencia_foco != "Todos":
+                rk_map = {row["AGENCIA_UP"]: i+1 for i, row in base_rank.head(3).iterrows()}
+                found_target = False
+                for ag_up, rank_val in rk_map.items():
+                    if _canon(ag_up) == _canon(agencia_foco):
+                        if posicao_foco == "Todas" or rank_val == int(posicao_foco):
+                            found_target = True
+                            break
+                if not found_target:
+                    continue
+
+            box_content = []
+            box_content.append(f"<div style='{BOX_STYLE}'>")
+            box_content.append(f"<div style='{HEAD_STYLE}'>ADVP: <b>{advp}</b></div>")
+
+            if base_rank.empty:
+                box_content.append(f"<div style='{NO_STYLE}'>Sem ofertas</div>")
+                extras = []
+                for label in ["123MILHAS", "MAXMILHAS"]:
+                    pres = presence_flags(all_rows, label)
+                    if not pres["present_any"]:
+                        extras.append(f"<span style='{CHIP_STYLE}'>{label}: Não apareceu</span>")
+                    elif not pres["present_with_price"]:
+                        extras.append(f"<span style='{CHIP_STYLE}'>{label}: Sem ofertas</span>")
+                if extras:
+                    box_content.append(f"<div style='{EXTRAS_STYLE}'>" + "".join(extras) + "</div>")
+                box_content.append("</div>")
+                boxes.append("".join(box_content))
+                continue
+
+            podium = base_rank.head(3).copy()
+
+            # --- Cartões Top 3 ---
+            box_content.append(f"<div style='{STACK_STYLE}'>")
+            for i in range(len(podium)):
+                current = podium.iloc[i]
+                preco_i = float(current["__PRECO__"])
+                ag_i    = current["AGENCIA_UP"]
+                sub_rows = all_rows[(all_rows["AGENCIA_UP"].astype(str).apply(_canon) == _canon(ag_i)) &
+                                    (np.isclose(all_rows["__PRECO__"], preco_i, atol=1))]
+                dt_lbl, id_val = dt_and_id_for_rows(sub_rows)
+
+                if i == 0 and len(podium) >= 2:
+                    p2 = float(podium.iloc[1]["__PRECO__"])
+                    subtxt = "—" if not (np.isfinite(p2) and p2 != 0) else f"−{int(round((p2 - preco_i)/p2*100.0))}% vs 2º"
+                else:
+                    p1 = float(podium.iloc[0]["__PRECO__"])
+                    subtxt = "—" if not (np.isfinite(p1) and p1 != 0) else f"{fmt_pct_plus((preco_i - p1)/p1*100.0)} vs 1º"
+
+                box_content.append(_card_html(i+1, ag_i, preco_i, subtxt, dt_lbl, id_val))
+            box_content.append("</div>")  # stack
+
+            # --- Extras: 123MILHAS / MAXMILHAS quando fora do pódio ---
+            extras_chips = []
+            p1 = float(podium.iloc[0]["__PRECO__"])
+            podium_brands = {_brand_tag(x) for x in podium["AGENCIA_UP"]}
+
+            for target_label in ["123MILHAS", "MAXMILHAS"]:
+                if _brand_tag(target_label) in podium_brands:
+                    continue  # já está no Top 3
+
+                match = base_rank[base_rank["_BRAND"] == _brand_tag(target_label)]
+                if match.empty:
+                    pres = presence_flags(all_rows, target_label)
+                    if not pres["present_any"]:
+                        extras_chips.append(f"<span style='{CHIP_STYLE}'>{target_label}: Não apareceu</span>")
+                    else:
+                        extras_chips.append(f"<span style='{CHIP_STYLE}'>{target_label}: Sem ofertas</span>")
+                else:
+                    pos = int(match.index[0]) + 1
+                    preco_val = float(match.iloc[0]["__PRECO__"])
+                    delta = None if not (np.isfinite(preco_val) and np.isfinite(p1) and p1 != 0) else ((preco_val - p1) / p1 * 100.0)
+
+                    # timestamp do registro com este preço
+                    sub_rows = all_rows[(all_rows["AGENCIA_UP"].astype(str).apply(_brand_tag) == _brand_tag(target_label)) &
+                                        (np.isclose(all_rows["__PRECO__"], preco_val, atol=1))]
+                    ts_lbl, _ = dt_and_id_for_rows(sub_rows)
+                    pct_str = f" {fmt_pct_plus(delta)}" if delta is not None else ""
+                    ts_part = f" | {ts_lbl}" if ts_lbl else ""
+                    extras_chips.append(f"<span style='{CHIP_STYLE}'>{pos}º {target_label}: {fmt_moeda_br(preco_val)}{pct_str}{ts_part}</span>")
+
+            if extras_chips:
+                box_content.append(f"<div style='{EXTRAS_STYLE}'>" + "".join(extras_chips) + "</div>")
+
+            box_content.append("</div>")  # box
+            boxes.append("".join(box_content))
+
+        if boxes:
+            st.markdown(f"<div style='{TRE_HDR_STYLE}'>Trecho: <b>{trecho}</b></div>", unsafe_allow_html=True)
+            st.markdown("<div style='" + GRID_STYLE + "'>" + "".join(boxes) + "</div>", unsafe_allow_html=True)
+
 
 # ============================ CONFIG INICIAL ================================
 st.set_page_config(page_title="Flight Deal Scanner — Painel", layout="wide")
