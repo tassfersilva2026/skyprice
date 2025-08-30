@@ -626,14 +626,15 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
     import re
 
     df = render_filters(df_raw, key_prefix="t3")
-    st.subheader("Pódio por Trecho → ADVP (última pesquisa de cada par)")
+    # >>> removido o texto solicitado
+    st.subheader("Top 3 Preços Mais Baratos")
 
+    # >>> removidos controles de isolamento; mantive os demais como estão
     top_row = st.container()
     with top_row:
-        c1, c2, c3 = st.columns([0.28, 0.18, 0.54])
+        c1, c2, _ = st.columns([0.28, 0.18, 0.54])
         agencia_foco = c1.selectbox("Agência alvo", ["Todos", "123MILHAS", "MAXMILHAS"], index=0)
         posicao_foco = c2.selectbox("Ranking", ["Todas", 1, 2, 3], index=0)
-        por_pesquisa = c3.checkbox("Isolar última pesquisa por Trecho×ADVP", value=True)
 
     if df.empty:
         st.info("Sem resultados para os filtros selecionados."); return
@@ -690,6 +691,15 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
       user-select:text; cursor:text;
     }
+    .tag-extra{
+      font-size:12px; color:#4b5563; margin-top:2px;
+    }
+    .extra-wrap{
+      padding:6px 8px 10px 8px; border-top:1px dashed #e5e7eb; margin-top:6px;
+    }
+    .extra-title{
+      font-size:12px; font-weight:700; color:#374151; margin-bottom:2px;
+    }
     </style>
     """
     st.markdown(BADGE_POP_CSS, unsafe_allow_html=True)
@@ -705,6 +715,7 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
     dfp = dfp[dfp["__PRECO__"].notna()].copy()
     if dfp.empty: st.info("Sem preços válidos no recorte atual."); return
 
+    # última pesquisa por Trecho×ADVP
     pesq_por_ta = {}
     tmp = dfp.dropna(subset=["TRECHO_STD","ADVP",ID_COL,"__DTKEY__"]).copy()
     g = tmp.groupby(["TRECHO_STD","ADVP",ID_COL], as_index=False)["__DTKEY__"].max()
@@ -717,19 +728,21 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
         if val is None or (isinstance(val, float) and np.isnan(val)): return None
         s = str(val)
         try:
-            f = float(s.replace(",", "."))
+            f = float(s.replace(",", "."));  # 100.0 -> "100"
             if f.is_integer(): return str(int(f))
         except Exception:
             pass
         return s
 
     def dt_and_id_for(sub_rows: pd.DataFrame) -> tuple[str, str | None]:
+        """Data (DD/MM) + Hora HH:MM:SS, garantindo segundos."""
         if sub_rows.empty: return "", None
         r = sub_rows.loc[sub_rows["__DTKEY__"].idxmax()]
         date_part = pd.to_datetime(r["DATAHORA_BUSCA"], errors="coerce")
         date_txt  = date_part.strftime("%d/%m") if pd.notna(date_part) else ""
         htxt_raw  = str(r.get("HORA_BUSCA","")).strip()
-        htxt = htxt_raw if htxt_raw else (pd.to_datetime(r["__DTKEY__"], errors="coerce").strftime("%H:%M:%S") if pd.notna(r["__DTKEY__"]) else "")
+        # >>> normaliza HH:MM:SS
+        htxt = _norm_hhmmss(htxt_raw) or (pd.to_datetime(r["__DTKEY__"], errors="coerce").strftime("%H:%M:%S") if pd.notna(r["__DTKEY__"]) else "")
         id_val = _normalize_id(r.get("IDPESQUISA"))
         lbl = f"{date_txt} {htxt}".strip()
         return lbl, id_val
@@ -751,6 +764,7 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
 
             base_rank = (all_rows.groupby("AGENCIA_UP", as_index=False)["__PRECO__"]
                                    .min().sort_values("__PRECO__").reset_index(drop=True))
+
             box_content = []
             box_content.append(f"<div style='{BOX_STYLE}'>")
             box_content.append(f"<div style='{HEAD_STYLE}'>ADVP: <b>{advp}</b></div>")
@@ -759,6 +773,7 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
                 box_content.append(f"<div style='{NO_STYLE}'>Sem ofertas</div>")
                 box_content.append("</div>"); boxes.append("".join(box_content)); continue
 
+            # Top3 cards (inalterados)
             box_content.append(f"<div style='{STACK_STYLE}'>")
             for i in range(min(3, len(base_rank))):
                 row_i = base_rank.iloc[i]
@@ -783,13 +798,45 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
                     f"<div style='{SUB_STYLE}'>{subtxt}</div>"
                     f"</div>"
                 )
-            box_content.append("</div>")
-            box_content.append("</div>")
+            box_content.append("</div>")  # fim stack Top3
+
+            # >>> NOVO BLOCO: status de MAXMILHAS / 123MILHAS
+            p1_val = float(base_rank.iloc[0]["__PRECO__"])
+            msgs = []
+            # MAXMILHAS
+            idx_max = base_rank.index[base_rank["AGENCIA_UP"] == "MAXMILHAS"].tolist()
+            if not idx_max:
+                msgs.append("Maxmilhas Não Apareceu")
+            elif idx_max[0] > 2:
+                pos = idx_max[0] + 1
+                preco = float(base_rank.iloc[idx_max[0]]["__PRECO__"])
+                dif  = int(round((preco - p1_val) / p1_val * 100)) if p1_val else 0
+                msgs.append(f"Maxmilhas: {pos}º (+{dif}% vs 1º)")
+            # 123MILHAS
+            idx_123 = base_rank.index[base_rank["AGENCIA_UP"] == "123MILHAS"].tolist()
+            if not idx_123:
+                msgs.append("123milhas Não Apareceu")
+            elif idx_123[0] > 2:
+                pos = idx_123[0] + 1
+                preco = float(base_rank.iloc[idx_123[0]]["__PRECO__"])
+                dif  = int(round((preco - p1_val) / p1_val * 100)) if p1_val else 0
+                msgs.append(f"123milhas: {pos}º (+{dif}% vs 1º)")
+
+            if msgs:
+                box_content.append(
+                    "<div class='extra-wrap'>"
+                    "<div class='extra-title'>Status Grupo 123</div>"
+                    + "".join([f"<div class='tag-extra'>{m}</div>" for m in msgs]) +
+                    "</div>"
+                )
+
+            box_content.append("</div>")  # fim do box ADVP
             boxes.append("".join(box_content))
 
         if boxes:
             st.markdown(f"<div style='{TRE_HDR_STYLE}'>Trecho: <b>{trecho}</b></div>", unsafe_allow_html=True)
             st.markdown("<div style='" + GRID_STYLE + "'>" + "".join(boxes) + "</div>", unsafe_allow_html=True)
+
 
 # ─────────────────────── ABA: Ranking por Agências (START) ────────────────────
 @register_tab("Ranking por Agências")
