@@ -619,17 +619,11 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
 # ──────────────────── ABA: Top 3 Preços Mais Baratos (START) ─────────────────
 @register_tab("Top 3 Preços Mais Baratos")
 def tab3_top3_precos(df_raw: pd.DataFrame):
-    """
-    Pódio por Trecho → ADVP (última pesquisa de cada par).
-    Horário do badge vem de HORA_BUSCA (coluna C) — HH:MM:SS.
-    """
     import re
 
     df = render_filters(df_raw, key_prefix="t3")
-    # >>> removido o texto solicitado
     st.subheader("Top 3 Preços Mais Baratos")
 
-    # >>> removidos controles de isolamento; mantive os demais como estão
     top_row = st.container()
     with top_row:
         c1, c2, _ = st.columns([0.28, 0.18, 0.54])
@@ -672,34 +666,13 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
     BADGE_POP_CSS = """
     <style>
     .idp-wrap{position:relative; display:inline-flex; align-items:center;}
-    .idp-badge{
-      display:inline-flex; align-items:center; justify-content:center;
-      width:16px; height:16px; border:1px solid #cbd5e1; border-radius:50%;
-      font-size:11px; font-weight:900; color:#64748b; background:#fff;
-      user-select:none; cursor:default; line-height:1;
-    }
-    .idp-pop{
-      position:absolute; top:18px; right:0;
-      background:#fff; color:#0f172a; border:1px solid #e5e7eb;
-      border-radius:8px; padding:6px 8px; font-size:12px; font-weight:700;
-      box-shadow:0 6px 16px rgba(0,0,0,.08); display:none; z-index:9999; white-space:nowrap;
-    }
+    .idp-badge{display:inline-flex; align-items:center; justify-content:center;width:16px; height:16px; border:1px solid #cbd5e1; border-radius:50%;font-size:11px; font-weight:900; color:#64748b; background:#fff;user-select:none; cursor:default; line-height:1;}
+    .idp-pop{position:absolute; top:18px; right:0;background:#fff; color:#0f172a; border:1px solid #e5e7eb;border-radius:8px; padding:6px 8px; font-size:12px; font-weight:700;box-shadow:0 6px 16px rgba(0,0,0,.08); display:none; z-index:9999; white-space:nowrap;}
     .idp-wrap:hover .idp-pop{ display:block; }
-    .idp-idbox{
-      border:1px solid #e5e7eb; background:#f8fafc; border-radius:6px;
-      padding:2px 6px; font-weight:800; font-size:12px; min-width:60px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-      user-select:text; cursor:text;
-    }
-    .tag-extra{
-      font-size:12px; color:#4b5563; margin-top:2px;
-    }
-    .extra-wrap{
-      padding:6px 8px 10px 8px; border-top:1px dashed #e5e7eb; margin-top:6px;
-    }
-    .extra-title{
-      font-size:12px; font-weight:700; color:#374151; margin-bottom:2px;
-    }
+    .idp-idbox{border:1px solid #e5e7eb; background:#f8fafc; border-radius:6px;padding:2px 6px; font-weight:800; font-size:12px; min-width:60px;font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;user-select:text; cursor:text;}
+    .tag-extra{font-size:12px; color:#4b5563; margin-top:2px;}
+    .extra-wrap{padding:6px 8px 10px 8px; border-top:1px dashed #e5e7eb; margin-top:6px;}
+    .extra-title{font-size:12px; font-weight:700; color:#374151; margin-bottom:2px;}
     </style>
     """
     st.markdown(BADGE_POP_CSS, unsafe_allow_html=True)
@@ -728,7 +701,7 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
         if val is None or (isinstance(val, float) and np.isnan(val)): return None
         s = str(val)
         try:
-            f = float(s.replace(",", "."));  # 100.0 -> "100"
+            f = float(s.replace(",", "."))
             if f.is_integer(): return str(int(f))
         except Exception:
             pass
@@ -741,7 +714,6 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
         date_part = pd.to_datetime(r["DATAHORA_BUSCA"], errors="coerce")
         date_txt  = date_part.strftime("%d/%m") if pd.notna(date_part) else ""
         htxt_raw  = str(r.get("HORA_BUSCA","")).strip()
-        # >>> normaliza HH:MM:SS
         htxt = _norm_hhmmss(htxt_raw) or (pd.to_datetime(r["__DTKEY__"], errors="coerce").strftime("%H:%M:%S") if pd.notna(r["__DTKEY__"]) else "")
         id_val = _normalize_id(r.get("IDPESQUISA"))
         lbl = f"{date_txt} {htxt}".strip()
@@ -773,18 +745,30 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
                 box_content.append(f"<div style='{NO_STYLE}'>Sem ofertas</div>")
                 box_content.append("</div>"); boxes.append("".join(box_content)); continue
 
-            # Top3 cards (inalterados)
+            # Top3 cards
             box_content.append(f"<div style='{STACK_STYLE}'>")
             for i in range(min(3, len(base_rank))):
                 row_i = base_rank.iloc[i]
                 preco_i = float(row_i["__PRECO__"])
                 sub_rows = all_rows[(all_rows["AGENCIA_UP"] == row_i["AGENCIA_UP"]) & (np.isclose(all_rows["__PRECO__"], preco_i, atol=1))]
                 dt_lbl, id_val = dt_and_id_for(sub_rows)
-                subtxt = "—"
-                if i > 0:
+
+                # >>> NOVO: para 1º lugar, mostrar quanto é mais barato que o 2º
+                if i == 0:
+                    subtxt = "—"
+                    if len(base_rank) >= 2:
+                        p1 = preco_i
+                        p2 = float(base_rank.iloc[1]["__PRECO__"])
+                        if np.isfinite(p2) and p2 != 0:
+                            pct_below = int(round((p2 - p1) / p2 * 100))
+                            subtxt = f"-{pct_below}% vs 2º"
+                else:
+                    # já existia: diferença do i-ésimo vs 1º
                     p1 = float(base_rank.iloc[0]["__PRECO__"])
+                    subtxt = "—"
                     if np.isfinite(p1) and p1 != 0:
                         subtxt = f"+{int(round((preco_i - p1)/p1*100))}% vs 1º"
+
                 stripe = "#D4AF37" if i==0 else "#9CA3AF" if i==1 else "#CD7F32"
                 box_content.append(
                     f"<div style='{CARD_BASE}'>"
@@ -800,7 +784,7 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
                 )
             box_content.append("</div>")  # fim stack Top3
 
-            # >>> NOVO BLOCO: status de MAXMILHAS / 123MILHAS
+            # NOVO BLOCO: status de MAXMILHAS / 123MILHAS (fora do Top3) + preço
             p1_val = float(base_rank.iloc[0]["__PRECO__"])
             msgs = []
             # MAXMILHAS
@@ -811,7 +795,7 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
                 pos = idx_max[0] + 1
                 preco = float(base_rank.iloc[idx_max[0]]["__PRECO__"])
                 dif  = int(round((preco - p1_val) / p1_val * 100)) if p1_val else 0
-                msgs.append(f"Maxmilhas: {pos}º (+{dif}% vs 1º)")
+                msgs.append(f"Maxmilhas: {pos}º - {fmt_moeda_br(preco)} (+{dif}% vs 1º)")
             # 123MILHAS
             idx_123 = base_rank.index[base_rank["AGENCIA_UP"] == "123MILHAS"].tolist()
             if not idx_123:
@@ -820,7 +804,7 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
                 pos = idx_123[0] + 1
                 preco = float(base_rank.iloc[idx_123[0]]["__PRECO__"])
                 dif  = int(round((preco - p1_val) / p1_val * 100)) if p1_val else 0
-                msgs.append(f"123milhas: {pos}º (+{dif}% vs 1º)")
+                msgs.append(f"123milhas: {pos}º - {fmt_moeda_br(preco)} (+{dif}% vs 1º)")
 
             if msgs:
                 box_content.append(
