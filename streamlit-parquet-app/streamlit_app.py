@@ -825,74 +825,152 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
 # ─────────────────────── ABA: Ranking por Agências (START) ────────────────────
 @register_tab("Ranking por Agências")
 def tab4_ranking_agencias(df_raw: pd.DataFrame):
+    # 1) Filtros existentes do app
     df = render_filters(df_raw, key_prefix="t4")
-    st.subheader("Ranking por Agências (1º ao 15º)")
-    if df.empty: st.info("Sem dados para os filtros."); return
+    if df.empty:
+        st.subheader("Ranking por Agências")
+        st.info("Sem dados para os filtros.")
+        return
 
-    wins = (df[df["RANKING"].eq(1)].groupby("AGENCIA_NORM", as_index=False).size().rename(columns={"size":"Top1 Wins"}))
-    wins = wins.sort_values("Top1 Wins", ascending=False)
-    top15 = wins.head(15).reset_index(drop=True)
-    fmt_map = {"Top1 Wins": fmt_num0_br}
-    sty = style_smart_colwise(top15, fmt_map, grad_cols=["Top1 Wins"])
-    show_table(top15, sty, caption="Top 15 — Contagem de 1º lugar por Agência")
-    st.altair_chart(make_bar(top15, "Top1 Wins", "AGENCIA_NORM"), use_container_width=True)
+    # 2) Normalização mínima para coincidir com o anexo
+    work = df.copy()
+    work["AGENCIA_UP"] = work.get("AGENCIA_UP", work.get("AGENCIA_NORM", work.get("AGENCIA_COMP", work.get("AGENCIA", "")))).astype(str)
+    if "RANKING" not in work.columns:
+        st.warning("Coluna 'RANKING' não encontrada."); return
+    work["Ranking"] = pd.to_numeric(work["RANKING"], errors="coerce").astype("Int64")
+    work = work.dropna(subset=["AGENCIA_UP", "Ranking"])
+    work["Ranking"] = work["Ranking"].astype(int)
 
-@register_tab("Qtde de Buscas x Ofertas")
-def tab6_buscas_vs_ofertas(df_raw: pd.DataFrame):
-    df = render_filters(df_raw, key_prefix="t6")
-    st.subheader("Quantidade de Buscas x Ofertas")
-    searches = df["IDPESQUISA"].nunique(); offers = len(df)
-    c1, c2 = st.columns(2)
-    c1.metric("Pesquisas únicas", fmt_int(searches))
-    c2.metric("Ofertas (linhas)", fmt_int(offers))
-    t = pd.DataFrame({"Métrica": ["Pesquisas", "Ofertas"], "Valor": [searches, offers]})
-    st.altair_chart(make_bar(t, "Valor", "Métrica"), use_container_width=True)
+    # 3) Funções de estilo (estilo semelhante ao arquivo anexo)
+    def _fmt_pct(v):
+        try:
+            x = float(v)
+            return "-" if not np.isfinite(x) else f"{x:.2f}%".replace(".", ",")
+        except Exception:
+            return "-"
 
-@register_tab("Comportamento Cias")
-def tab7_comportamento_cias(df_raw: pd.DataFrame):
-    df = render_filters(df_raw, key_prefix="t7")
-    st.subheader("Comportamento Cias (share por Trecho)")
-    base = df.groupby(["TRECHO","AGENCIA_NORM"]).size().rename("Qtde").reset_index()
-    if base.empty: st.info("Sem dados."); return
-    top_trechos = base.groupby("TRECHO")["Qtde"].sum().sort_values(ascending=False).head(10).index.tolist()
-    base = base[base["TRECHO"].isin(top_trechos)]
-    total_trecho = base.groupby("TRECHO")["Qtde"].transform("sum")
-    base["Share"] = (base["Qtde"]/total_trecho*100).round(2)
-    chart = alt.Chart(base).mark_bar().encode(
-        x=alt.X("Share:Q", stack="normalize", axis=alt.Axis(format="%")),
-        y=alt.Y("TRECHO:N", sort="-x"),
-        color=alt.Color("AGENCIA_NORM:N"),
-        tooltip=["TRECHO","AGENCIA_NORM","Share"]
-    ).properties(height=320)
-    st.altair_chart(chart, use_container_width=True)
+    def style_heatmap(df_show: pd.DataFrame, percent_cols=None, int_cols=None,
+                      highlight_total_row=False, highlight_total_col=None,
+                      highlight_rows_map=None, height=440):
+        percent_cols = set(percent_cols or [])
+        int_cols = set(int_cols or [])
+        num_cols = [c for c in df_show.columns if pd.api.types.is_numeric_dtype(df_show[c])]
 
-@register_tab("Competitividade")
-def tab8_competitividade(df_raw: pd.DataFrame):
-    df = render_filters(df_raw, key_prefix="t8")
-    st.subheader("Competitividade (Δ mediano vs melhor preço por pesquisa)")
-    best = df.groupby("IDPESQUISA")["PRECO"].min().rename("BEST").reset_index()
-    t = df.merge(best, on="IDPESQUISA", how="left")
-    t["DELTA"] = t["PRECO"] - t["BEST"]
-    agg = t.groupby("AGENCIA_NORM", as_index=False)["DELTA"].median().rename(columns={"DELTA":"Δ Mediano"})
-    st.altair_chart(make_bar(agg, "Δ Mediano", "AGENCIA_NORM"), use_container_width=True)
+        fmt_map = {c: _fmt_pct for c in percent_cols}
 
-@register_tab("Melhor Preço Diário")
-def tab9_melhor_preco_diario(df_raw: pd.DataFrame):
-    df = render_filters(df_raw, key_prefix="t9")
-    st.subheader("Melhor Preço Diário (col. H - Data da busca)")
-    t = df.groupby(df["DATAHORA_BUSCA"].dt.date, as_index=False)["PRECO"].min().rename(
-        columns={"DATAHORA_BUSCA":"Data","PRECO":"Melhor Preço"}
+        sty = (df_show.style.format(fmt_map, na_rep="-"))
+        if num_cols:
+            try:
+                sty = sty.background_gradient(cmap="Blues", subset=num_cols)
+            except Exception:
+                pass
+
+        if highlight_total_col and highlight_total_col in df_show.columns:
+            def _hl_total_col(col):
+                return ["background-color:#E6F0FF; font-weight:bold; color:#0A2A6B;" for _ in col]
+            sty = sty.apply(_hl_total_col, subset=[highlight_total_col])
+
+        if highlight_rows_map:
+            first_col = df_show.columns[0]
+            def _hl_special_rows(row):
+                key = str(row[first_col]).upper()
+                if key in highlight_rows_map:
+                    color = highlight_rows_map[key]
+                    return [f"background-color:{color}; color:#0A2A6B; font-weight:bold;" for _ in row]
+                return ["" for _ in row]
+            sty = sty.apply(_hl_special_rows, axis=1)
+
+        if highlight_total_row and len(df_show) > 0:
+            def _hl_last_row(row):
+                return ["background-color:#E6F0FF; color:#0A2A6B; font-weight:bold;"
+                        if row.name == df_show.index.max() else "" for _ in row]
+            sty = sty.apply(_hl_last_row, axis=1)
+
+        return sty
+
+    def show_table(df_in: pd.DataFrame, percent_cols=None, int_cols=None,
+                   highlight_total_row=False, highlight_total_col=None,
+                   highlight_rows_map=None, height=440):
+        df_disp = df_in.reset_index(drop=True)
+        df_disp.index = np.arange(1, len(df_disp) + 1)  # índice iniciando em 1 (igual ao anexo)
+        st.dataframe(
+            style_heatmap(df_disp, percent_cols=percent_cols, int_cols=int_cols,
+                          highlight_total_row=highlight_total_row, highlight_total_col=highlight_total_col,
+                          highlight_rows_map=highlight_rows_map, height=height),
+            use_container_width=True, height=height
+        )
+
+    # 4) Pivot principal (Quantidade por Ranking)
+    RANKS = list(range(1, 16))
+    counts = (work.groupby(["AGENCIA_UP", "Ranking"], as_index=False)
+                   .agg(OFERTAS=("AGENCIA_UP", "size")))
+
+    pv = (counts.pivot(index="AGENCIA_UP", columns="Ranking", values="OFERTAS")
+                 .reindex(columns=RANKS, fill_value=0)
+                 .fillna(0).astype(int))
+    pv.index.name = "Agência/Companhia"
+
+    if 1 not in pv.columns:  # por segurança
+        pv[1] = 0
+    pv["Total"] = pv.sum(axis=1)
+    pv = pv.sort_values(by=1, ascending=False)
+
+    total_row = pv.sum(axis=0).to_frame().T
+    total_row.index = ["Total"]
+    total_row.index.name = "Agência/Companhia"
+    pv2 = pd.concat([pv, total_row], axis=0)
+
+    HL_MAP = {"123MILHAS": "#FFD8A8", "MAXMILHAS": "#D3F9D8"}
+
+    # ---------- Tabela 1 — Quantidades ----------
+    t_qtd = pv2.reset_index()
+    if t_qtd.columns[0] != "Agência/Companhia":
+        t_qtd = t_qtd.rename(columns={t_qtd.columns[0]: "Agência/Companhia"})
+
+    st.subheader("Quantidade de Ofertas por Ranking (Ofertas)")
+    show_table(
+        t_qtd[["Agência/Companhia"] + RANKS + ["Total"]],
+        int_cols=set(RANKS + ["Total"]),
+        highlight_total_row=True,
+        highlight_total_col="Total",
+        highlight_rows_map=HL_MAP,
+        height=480
     )
-    if t.empty: st.info("Sem dados."); return
-    t["Data"] = pd.to_datetime(t["Data"], dayfirst=True)
-    st.altair_chart(make_line(t, "Data", "Melhor Preço"), use_container_width=True)
 
-@register_tab("Exportar")
-def tab10_exportar(df_raw: pd.DataFrame):
-    df = render_filters(df_raw, key_prefix="t10")
-    st.subheader("Exportar dados filtrados")
-    csv_bytes = df.to_csv(index=False).encode("utf-8-sig")
-    st.download_button("⬇️ Baixar CSV (filtro aplicado)", data=csv_bytes, file_name="OFERTAS_filtrado.csv", mime="text/csv")
+    # ---------- Tabela 2 — % dentro da Agência (linha) ----------
+    mat = pv[RANKS].copy()
+    row_sum = mat.sum(axis=1).replace(0, np.nan)
+    pct_linha = (mat.div(row_sum, axis=0) * 100).fillna(0)
+    pct_linha = pct_linha.sort_values(by=1, ascending=False)
+
+    t_pct_linha = pct_linha.reset_index()
+    if t_pct_linha.columns[0] != "Agência/Companhia":
+        t_pct_linha = t_pct_linha.rename(columns={t_pct_linha.columns[0]: "Agência/Companhia"})
+
+    st.subheader("Participação Ranking dentro da Agência")
+    show_table(
+        t_pct_linha[["Agência/Companhia"] + RANKS],
+        percent_cols=set(RANKS),
+        highlight_rows_map=HL_MAP,
+        height=440
+    )
+
+    # ---------- Tabela 3 — % dentro do Ranking (coluna) ----------
+    col_sum = mat.sum(axis=0).replace(0, np.nan)
+    pct_coluna = (mat.div(col_sum, axis=1) * 100).fillna(0)
+    pct_coluna = pct_coluna.sort_values(by=1, ascending=False)
+
+    t_pct_coluna = pct_coluna.reset_index()
+    if t_pct_coluna.columns[0] != "Agência/Companhia":
+        t_pct_coluna = t_pct_coluna.rename(columns={t_pct_coluna.columns[0]: "Agência/Companhia"})
+
+    st.subheader("Participação Ranking Geral")
+    show_table(
+        t_pct_coluna[["Agência/Companhia"] + RANKS],
+        percent_cols=set(RANKS),
+        highlight_rows_map=HL_MAP,
+        height=440
+    )
 
 # ================================ MAIN ========================================
 def main():
