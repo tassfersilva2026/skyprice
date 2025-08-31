@@ -72,6 +72,19 @@ def load_base(path: Path) -> pd.DataFrame:
         st.error(f"Arquivo obrigatório não encontrado: {path.as_posix()}"); st.stop()
     df = pd.read_parquet(path)
 
+    # --- NOVO: ler HORA (coluna C) e DATA da busca (coluna D, dd/mm/yyyy) por POSIÇÃO ---
+    hora_raw_col = df.columns[2] if df.shape[1] >= 3 else None   # C
+    data_raw_col = df.columns[3] if df.shape[1] >= 4 else None   # D
+
+    hora_norm = None
+    data_pars = None
+    if hora_raw_col is not None:
+        hora_norm = df[hora_raw_col].astype(str).map(_norm_hhmmss)        # "HH:MM:SS" ou None
+    if data_raw_col is not None:
+        data_pars = pd.to_datetime(df[data_raw_col].astype(str).str.strip(),
+                                   errors="coerce", dayfirst=True)        # dd/mm/yyyy
+
+    # Renomeio padrão pelo mapeamento EXISTENTE (mantido)
     colmap = {0:"IDPESQUISA",1:"CIA",2:"HORA_BUSCA",3:"HORA_PARTIDA",4:"HORA_CHEGADA",
               5:"TIPO_VOO",6:"DATA_EMBARQUE",7:"DATAHORA_BUSCA",8:"AGENCIA_COMP",9:"PRECO",
               10:"TRECHO",11:"ADVP",12:"RANKING"}
@@ -79,16 +92,32 @@ def load_base(path: Path) -> pd.DataFrame:
         rename = {df.columns[i]: colmap[i] for i in range(min(13, df.shape[1]))}
         df = df.rename(columns=rename)
 
-    # Normaliza horas como texto HH:MM:SS (inclusive HORA_BUSCA – coluna C)
+    # --- NOVO: sobrescrever HORA_BUSCA e DATAHORA_BUSCA com base em C + D ---
+    if hora_norm is not None:
+        df["HORA_BUSCA"] = hora_norm
+    if (hora_norm is not None) and (data_pars is not None):
+        # combina data (YYYY-MM-DD) + hora normalizada
+        ts = pd.to_datetime(
+            data_pars.dt.date.astype("string") + " " + hora_norm.fillna("00:00:00"),
+            errors="coerce"
+        )
+        df["DATAHORA_BUSCA"] = ts
+
+    # Normaliza horas como texto HH:MM:SS (mantido — idempotente para HORA_BUSCA)
     for c in ["HORA_BUSCA","HORA_PARTIDA","HORA_CHEGADA"]:
         if c in df.columns:
             df[c] = pd.to_datetime(df[c].astype(str).str.strip(), errors="coerce").dt.strftime("%H:%M:%S")
 
-    df["HORA_HH"] = pd.to_datetime(df["HORA_BUSCA"], errors="coerce").dt.hour
-
+    # Se DATAHORA_BUSCA não existir por algum motivo, tenta parsear novamente (mantido)
     for c in ["DATA_EMBARQUE","DATAHORA_BUSCA"]:
         if c in df.columns:
             df[c] = pd.to_datetime(df[c], errors="coerce", dayfirst=True)
+
+    # HORA_HH baseada na hora da busca
+    if "DATAHORA_BUSCA" in df.columns and df["DATAHORA_BUSCA"].notna().any():
+        df["HORA_HH"] = pd.to_datetime(df["DATAHORA_BUSCA"], errors="coerce").dt.hour
+    else:
+        df["HORA_HH"] = pd.to_datetime(df.get("HORA_BUSCA"), errors="coerce").dt.hour
 
     if "PRECO" in df.columns:
         df["PRECO"] = (
@@ -940,7 +969,7 @@ def tab4_ranking_agencias(df_raw: pd.DataFrame):
     # ---------- Tabela 2 — % dentro da Agência (linha) ----------
     mat = pv[RANKS].copy()
     row_sum = mat.sum(axis=1).replace(0, np.nan)
-    pct_linha = (mat.div(row_sum, axis=0) * 100).fillna(0)
+    pct_linha = (mat.div(row_sum, axis=1) * 100).fillna(0)
     pct_linha = pct_linha.sort_values(by=1, ascending=False)
 
     t_pct_linha = pct_linha.reset_index()
@@ -957,7 +986,7 @@ def tab4_ranking_agencias(df_raw: pd.DataFrame):
 
     # ---------- Tabela 3 — % dentro do Ranking (coluna) ----------
     col_sum = mat.sum(axis=0).replace(0, np.nan)
-    pct_coluna = (mat.div(col_sum, axis=1) * 100).fillna(0)
+    pct_coluna = (mat.div(col_sum, axis=0) * 100).fillna(0)
     pct_coluna = pct_coluna.sort_values(by=1, ascending=False)
 
     t_pct_coluna = pct_coluna.reset_index()
