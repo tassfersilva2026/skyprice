@@ -1016,6 +1016,215 @@ def tab4_ranking_agencias(df_raw: pd.DataFrame):
         highlight_rows_map=HL_MAP,
         height=440
     )
+--------------------------------------------------------------------------------------------
+
+@register_tab("Período do Dia")
+def tab4_periodo_do_dia(df_raw: pd.DataFrame):
+    import plotly.express as px
+    import plotly.graph_objects as go
+    st.subheader("4. Ranking de Melhor Preço por Período do Dia")
+
+    # Reaproveita os mesmos filtros da aplicação (inclusivos por DATA)
+    df = render_filters(df_raw, key_prefix="t4")
+    if df.empty:
+        st.info("Sem resultados para os filtros selecionados.")
+        return
+
+    # --------- COLUNAS DE TRABALHO ----------
+    # Preço já está numérico (load_base normaliza PRECO)
+    PRICE_COL = "PRECO"
+
+    # Agência e Cia padronizadas (do load_base)
+    df = df.copy()
+    df["AGENCIA_UP"] = df.get("AGENCIA_NORM", df.get("AGENCIA_COMP")).astype(str)
+    df["CIA_UP"]     = df.get("CIA_NORM", df.get("CIA")).astype(str)
+
+    # Hora do voo: prioriza HORA_PARTIDA; fallback para colunas comuns; por último HORA_BUSCA
+    cand_hora = [
+        "HORA_PARTIDA", "HORARIO1", "HORÁRIO1", "HORA1",
+        "HORA", "HORAVOO", "HORA_VOO", "HORADOVOO", "HORA_BUSCA"
+    ]
+    hora_col = next((c for c in cand_hora if c in df.columns), None)
+    if not hora_col:
+        st.error("Não encontrei coluna de horário do voo (ex.: HORA_PARTIDA/HORA/HORARIO1).")
+        return
+
+    # Converte hora para inteiro 0–23
+    def to_hour(v):
+        try:
+            if pd.isna(v): return np.nan
+            s = str(v).strip()
+            if ":" in s:
+                return int(s.split(":")[0])
+            return int(float(s))
+        except Exception:
+            return np.nan
+
+    df["HORA"] = df[hora_col].apply(to_hour).astype("Int64")
+    df = df[df["HORA"].between(0, 23, inclusive="both")].copy()
+
+    # Garante preço válido
+    df = df[pd.to_numeric(df[PRICE_COL], errors="coerce").notna()].copy()
+    df[PRICE_COL] = pd.to_numeric(df[PRICE_COL], errors="coerce")
+    if df.empty:
+        st.info("Sem preços válidos no recorte atual.")
+        return
+
+    # --------- SÉRIES POR HORA ----------
+    A_123 = "123MILHAS"
+    A_MAX = "MAXMILHAS"
+
+    g_123 = (df[df["AGENCIA_UP"] == A_123]
+             .groupby("HORA", as_index=False)[PRICE_COL].min()
+             .rename(columns={PRICE_COL: "Preco_123"}))
+
+    g_max = (df[df["AGENCIA_UP"] == A_MAX]
+             .groupby("HORA", as_index=False)[PRICE_COL].min()
+             .rename(columns={PRICE_COL: "Preco_MAX"}))
+
+    # Melhor preço geral por hora (pega a linha do menor preço)
+    idxmin_all = df.groupby("HORA")[PRICE_COL].idxmin()
+    cols = ["HORA", PRICE_COL, "AGENCIA_UP", "CIA_UP"]
+    melhor = df.loc[idxmin_all, cols].copy()
+    melhor.rename(columns={PRICE_COL: "Preco_MELHOR"}, inplace=True)
+    melhor["ConcorrenteNome"] = (melhor["AGENCIA_UP"].astype(str) + " • " + melhor["CIA_UP"].astype(str)).str.strip(" • ")
+
+    base = pd.DataFrame({"HORA": list(range(24))})
+    base = (base.merge(g_123, how="left", on="HORA")
+                .merge(g_max,  how="left", on="HORA")
+                .merge(melhor[["HORA", "Preco_MELHOR", "ConcorrenteNome"]], how="left", on="HORA"))
+
+    long_main = base.melt(
+        id_vars=["HORA","ConcorrenteNome"],
+        value_vars=["Preco_MELHOR","Preco_123","Preco_MAX"],
+        var_name="Serie", value_name="Preco"
+    )
+    legend_map = {"Preco_MELHOR":"Melhor Preço", "Preco_123":"123MILHAS", "Preco_MAX":"MAXMILHAS"}
+    long_main["Agência"] = long_main["Serie"].map(legend_map)
+    long_main = long_main.drop(columns=["Serie"])
+
+    def periodo(h):
+        h = int(h)
+        if 0 <= h <= 5:   return "Madrugada"
+        if 6 <= h <= 11:  return "Manhã"
+        if 12 <= h <= 17: return "Tarde"
+        return "Noite"
+
+    long_main["Período"] = long_main["HORA"].apply(periodo)
+
+    COLORS_MAIN = {
+        "Melhor Preço":"#2962FF",   # azul
+        "123MILHAS":   "#FF8A00",   # laranja
+        "MAXMILHAS":   "#00C853",   # verde
+    }
+
+    secoes = [
+        ("Madrugada", [0, 1, 2, 3, 4, 5]),
+        ("Manhã",     [6, 7, 8, 9, 10, 11]),
+        ("Tarde",     [12, 13, 14, 15, 16, 17]),
+        ("Noite",     [18, 19, 20, 21, 22, 23]),
+    ]
+
+    def desenha_secao_main(titulo: str, horas_fixas: list[int]):
+        dfp = long_main[(long_main["HORA"].isin(horas_fixas)) & (~long_main["Preco"].isna())].copy()
+        if dfp.empty:
+            st.info(f"Sem dados para {titulo}."); return
+
+        fig = px.line(
+            dfp.sort_values(["Agência","HORA"]),
+            x="HORA", y="Preco",
+            color="Agência", markers=True,
+            color_discrete_map=COLORS_MAIN,
+            category_orders={"Agência":["Melhor Preço","123MILHAS","MAXMILHAS"]},
+            labels={"HORA":"Hora do Voo", "Preco":"Preço (R$)"},
+            title=titulo
+        )
+        fig.update_traces(line=dict(width=3))
+
+        # Hover especial para "Melhor Preço" com agência + cia
+        for tr in fig.data:
+            name = tr.name
+            sub = dfp[dfp["Agência"]==name].sort_values("HORA")
+            if name == "Melhor Preço":
+                nomes = sub["ConcorrenteNome"].fillna("").tolist()
+                tr.customdata = np.array(nomes, dtype=object).reshape(-1,1)
+                tr.hovertemplate = "Hora %{x} • %{customdata[0]}<br>Preço R$ %{y:,.0f}<extra></extra>"
+            else:
+                tr.hovertemplate = "Hora %{x}<br>%{fullData.name}<br>Preço R$ %{y:,.0f}<extra></extra>"
+
+        # Eixo X: apenas as horas daquela seção
+        x0, x1 = min(horas_fixas), max(horas_fixas)
+        fig.update_xaxes(
+            tickmode="array",
+            tickvals=horas_fixas, ticktext=[str(h) for h in horas_fixas],
+            range=[x0 - 0.35, x1 + 0.35],
+            showgrid=False, showline=False, zeroline=False, ticks="", ticklen=0
+        )
+        # >>> EIXO Y INVERTIDO (menor preço em cima)
+        fig.update_yaxes(
+            autorange="reversed",
+            tickprefix="R$ ", separatethousands=True,
+            showgrid=True, gridcolor="rgba(0,0,0,0.06)",
+            showline=False, zeroline=False, ticks="", ticklen=0
+        )
+        fig.update_layout(
+            template="simple_white",
+            legend_title_text="Agência",
+            legend=dict(orientation="v", x=1.02, y=1.0, bgcolor="rgba(0,0,0,0)"),
+            margin=dict(l=20, r=28, t=45, b=10),
+            height=420
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
+    # Desenha as 4 seções
+    for titulo, horas in secoes:
+        desenha_secao_main(titulo, horas)
+
+    # --------- TOP 3 POR HORA (Agências Campeãs) ----------
+    st.subheader("Agências Campeãs (TOP3)")
+    st.caption("Quando 123MILHAS e MAXMILHAS empatam (≤ R$0,01), exibimos como Grupo 123.")
+
+    # Menor preço por HORA×AGÊNCIA
+    df_min_ag_h = (
+        df.groupby(["HORA","AGENCIA_UP"], as_index=False)[PRICE_COL]
+          .min()
+          .rename(columns={PRICE_COL:"Preco"})
+    )
+
+    # Agrupa 123/MAX quando diferença <= 0,01
+    piv = df_min_ag_h.pivot(index="HORA", columns="AGENCIA_UP", values="Preco")
+    s123 = piv.get(A_123); smax = piv.get(A_MAX)
+    if s123 is None and smax is None:
+        df_min_ag_h2 = df_min_ag_h.copy()
+    else:
+        s123 = s123 if s123 is not None else pd.Series(index=piv.index, dtype=float)
+        smax = smax if smax is not None else pd.Series(index=piv.index, dtype=float)
+        mask_eq = s123.notna() & smax.notna() & (s123.sub(smax).abs() <= 0.01)
+        eq_hours = piv.index[mask_eq]
+
+        df_group = pd.DataFrame({"HORA": eq_hours, "AGENCIA_UP": "Grupo 123", "Preco": s123.loc[eq_hours].values})
+        mask_remove = (df_min_ag_h["HORA"].isin(eq_hours)) & (df_min_ag_h["AGENCIA_UP"].isin([A_123, A_MAX]))
+        df_min_ag_h2 = pd.concat([df_min_ag_h.loc[~mask_remove], df_group], ignore_index=True)
+
+    # Top 3 por hora (tabela)
+    top3 = (
+        df_min_ag_h2.sort_values(["HORA","Preco"])
+                    .groupby("HORA", as_index=False, group_keys=False)
+                    .apply(lambda g: g.head(3))
+                    .reset_index(drop=True)
+    )
+    top3["Rank"] = top3.groupby("HORA").cumcount() + 1
+    top3["Período"] = top3["HORA"].apply(periodo)
+
+    # Mostra tabela estilizada
+    t_show = top3[["Período","HORA","Rank","AGENCIA_UP","Preco"]].copy()
+    t_show = t_show.rename(columns={"HORA":"Hora", "AGENCIA_UP":"Agência", "Preco":"Preço (R$)"})
+    t_show["Preço (R$)"] = t_show["Preço (R$)"].map(lambda v: f"R$ {fmt_num0_br(v)}")
+    sty = (t_show.style
+            .hide(axis="index")
+            .set_table_styles([{"selector":"tbody td, th","props":[("border","1px solid #EEE")]}]))
+    show_table(t_show, sty, caption="Top 3 por Hora (Menor preço)")
 
 # ================================ MAIN ========================================
 def main():
