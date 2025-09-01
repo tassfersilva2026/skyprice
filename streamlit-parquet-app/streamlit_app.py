@@ -31,7 +31,7 @@ def std_agencia(raw: str) -> str:
     if ag == "BOOKINGCOM":            return "BOOKING.COM"
     if ag == "KIWICOM":               return "KIWI.COM"
     if ag.startswith("123MILHAS") or ag == "123":   return "123MILHAS"
-    if ag.startswith("MAXMILHAS") or ag == "MAX":   return "MAXMILHAS"
+    if ag.startswith("MAXMILHAS") or ag == "MAX":     return "MAXMILHAS"
     if ag.startswith("CAPOVIAGENS"):  return "CAPOVIAGENS"
     if ag.startswith("FLIPMILHAS"):   return "FLIPMILHAS"
     if ag.startswith("VAIDEPROMO"):   return "VAIDEPROMO"
@@ -51,26 +51,33 @@ def std_agencia(raw: str) -> str:
 def std_cia(raw: str) -> str:
     s = (str(raw) or "").strip().upper()
     s_simple = "".join(ch for ch in s if ch.isalnum() or ch.isspace())
-    if s in {"AD", "AZU"} or s.startswith("AZUL") or "AZUL" in s_simple: return "AZUL"
-    if s in {"G3"} or s.startswith("GOL") or "GOL" in s_simple:          return "GOL"
+    if s in {"AD", "AZU"} or s.startswith("AZUL") or "AZUL" in s_simple: 
+        return "AZUL"
+    if s in {"G3"} or s.startswith("GOL") or "GOL" in s_simple:          
+        return "GOL"
     if s in {"LA", "JJ"} or s.startswith("TAM") or s.startswith("LATAM") or "LATAM" in s_simple or "TAM" in s_simple:
         return "LATAM"
-    if s in {"AZUL", "GOL", "LATAM"}: return s
+    if s in {"AZUL", "GOL", "LATAM"}: 
+        return s
     return s
 
 def advp_nearest(x) -> int:
-    try: v = float(str(x).replace(",", "."))
-    except Exception: v = np.nan
-    if np.isnan(v): v = 1
+    try:
+        v = float(str(x).replace(",", "."))
+    except Exception:
+        v = np.nan
+    if np.isnan(v):
+        v = 1
     return min([1, 5, 11, 17, 30], key=lambda k: abs(v - k))
 
 @st.cache_data(show_spinner=True)
 def load_base(path: Path) -> pd.DataFrame:
     if not path.exists():
-        st.error(f"Arquivo obrigatório não encontrado: {path.as_posix()}"); st.stop()
+        st.error(f"Arquivo obrigatório não encontrado: {path.as_posix()}")
+        st.stop()
     df = pd.read_parquet(path)
 
-    # renomeia colunas fixas (0..12)
+    # Renomeia as colunas fixas (0..12)
     colmap = {
         0:"IDPESQUISA",1:"CIA",2:"HORA_BUSCA",3:"HORA_PARTIDA",4:"HORA_CHEGADA",
         5:"TIPO_VOO",6:"DATA_EMBARQUE",7:"DATAHORA_BUSCA",8:"AGENCIA_COMP",9:"PRECO",
@@ -80,21 +87,22 @@ def load_base(path: Path) -> pd.DataFrame:
         rename = {df.columns[i]: colmap[i] for i in range(min(13, df.shape[1]))}
         df = df.rename(columns=rename)
 
-    # mantém o próprio __DTKEY__ vindo do parquet (timestamp de escrita)
-    # apenas garantimos que ele seja datetime:
+    # Usa o campo __DTKEY__ do parquet, se existir, garantindo que seja datetime
     if "__DTKEY__" in df.columns:
         df["__DTKEY__"] = pd.to_datetime(df["__DTKEY__"], errors="coerce")
 
-    # normalize horas para HH:MM:SS (string) e datas
-    for c in ["HORA_BUSCA","HORA_PARTIDA","HORA_CHEGADA"]:
+    # Normaliza as horas (formata a string como HH:MM:SS)
+    for c in ["HORA_BUSCA", "HORA_PARTIDA", "HORA_CHEGADA"]:
         if c in df.columns:
             df[c] = pd.to_datetime(df[c].astype(str).str.strip(), errors="coerce").dt.strftime("%H:%M:%S")
     df["HORA_HH"] = pd.to_datetime(df["HORA_BUSCA"], errors="coerce").dt.hour
 
-    for c in ["DATA_EMBARQUE","DATAHORA_BUSCA"]:
+    # Converte datas
+    for c in ["DATA_EMBARQUE", "DATAHORA_BUSCA"]:
         if c in df.columns:
             df[c] = pd.to_datetime(df[c], errors="coerce", dayfirst=True)
 
+    # Converte e formata o preço
     if "PRECO" in df.columns:
         df["PRECO"] = (
             df["PRECO"].astype(str)
@@ -118,10 +126,10 @@ def winners_by_position(df: pd.DataFrame) -> pd.DataFrame:
              .sort_values(["IDPESQUISA"])
              .drop_duplicates(subset=["IDPESQUISA"]))
         base = base.merge(
-            s[["IDPESQUISA","AGENCIA_NORM"]].rename(columns={"AGENCIA_NORM": f"R{r}"}),
+            s[["IDPESQUISA", "AGENCIA_NORM"]].rename(columns={"AGENCIA_NORM": f"R{r}"}),
             on="IDPESQUISA", how="left"
         )
-    for r in (1,2,3):
+    for r in (1, 2, 3):
         base[f"R{r}"] = base[f"R{r}"].fillna("SEM OFERTAS")
     return base
 
@@ -129,26 +137,26 @@ def fmt_int(n: int) -> str:
     return f"{int(n):,}".replace(",", ".")
 
 def last_update_from_cols(df: pd.DataFrame) -> str:
-    """Trás a data/hora da última pesquisa:
-       - se existir __DTKEY__, usa diretamente (metadado do parquet);
-       - senão, faz fallback em DATAHORA_BUSCA + HORA_BUSCA.
+    """
+    Retorna a data/hora da última pesquisa:
+      - Se existir o __DTKEY__ (do parquet), utiliza-o;
+      - Caso contrário, utiliza DATAEMBARQUE e HORA_BUSCA.
     """
     if df.empty:
         return "—"
 
-    # 1) Preferencial: usar __DTKEY__ se vier do parquet
     if "__DTKEY__" in df.columns:
         max_dt = pd.to_datetime(df["__DTKEY__"], errors="coerce").max()
         if pd.isna(max_dt):
             return "—"
         return max_dt.strftime("%d/%m/%Y - %H:%M:%S")
 
-    # 2) Fallback original
-    max_d = pd.to_datetime(df["DATAHORA_BUSCA"], errors="coerce").max()
+    # Fallback: utiliza DATAEMBARQUE e HORA_BUSCA
+    max_d = pd.to_datetime(df["DATAEMBARQUE"], errors="coerce").max()
     if pd.isna(max_d):
         return "—"
     same_day = df[
-        pd.to_datetime(df["DATAHORA_BUSCA"], errors="coerce").dt.date == max_d.date()
+        pd.to_datetime(df["DATAEMBARQUE"], errors="coerce").dt.date == max_d.date()
     ]
     hh = pd.to_datetime(same_day["HORA_BUSCA"], errors="coerce").dt.time
     max_h = max([h for h in hh if pd.notna(h)], default=None)
@@ -156,7 +164,7 @@ def last_update_from_cols(df: pd.DataFrame) -> str:
         return f"{max_d.strftime('%d/%m/%Y')} - {max_h.strftime('%H:%M:%S')}"
     return f"{max_d.strftime('%d/%m/%Y')}"
 
-# ---- CSS global: largura total
+# ---- CSS Global
 GLOBAL_TABLE_CSS = """
 <style>
 table { width:100% !important; }
@@ -165,24 +173,24 @@ table { width:100% !important; }
 """
 st.markdown(GLOBAL_TABLE_CSS, unsafe_allow_html=True)
 
-# ---- Estilos dos cards (Painel)
+# ---- Estilos dos Cards (Painel)
 CARD_CSS = """
 <style>
   .cards-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
   @media (max-width: 1100px) { .cards-grid { grid-template-columns: repeat(2, minmax(0,1fr)); } }
-  @media (max-width: 700px)  { .cards-grid { grid-template-columns: 1fr; } }
+  @media (max-width: 700px) { .cards-grid { grid-template-columns: 1fr; } }
   .card { border:1px solid #e9e9ee; border-radius:14px; padding:10px 12px;
-          background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+          background:#fff; box-shadow:0 1px 2px rgba(0,0,0,0.04); }
   .card .title { font-weight:650; font-size:15px; margin-bottom:8px; }
   .goldcard  { background:#FFF9E5; border-color:#D4AF37; }
   .silvercard{ background:#F7F7FA; border-color:#C0C0C0; }
   .bronzecard{ background:#FFF1E8; border-color:#CD7F32; }
-  .row    { display:flex; gap:8px; }
-  .item   { flex:1; display:flex; align-items:center;
-             justify-content:space-between; gap:8px; padding:8px 10px;
-             border-radius:10px; border:1px solid #e3e3e8; background:#fafbfc; }
-  .pos    { font-weight:700; font-size:12px; opacity:.85; }
-  .pct    { font-size:16px; font-weight:650; }
+  .row { display:flex; gap:8px; }
+  .item { flex:1; display:flex; align-items:center;
+         justify-content:space-between; gap:8px; padding:8px 10px;
+         border-radius:10px; border:1px solid #e3e3e8; background:#fafbfc; }
+  .pos { font-weight:700; font-size:12px; opacity:0.85; }
+  .pct { font-size:16px; font-weight:650; }
 </style>
 """
 
@@ -212,7 +220,7 @@ def card_html(nome: str, p1: float, p2: float, p3: float, rank_cls: str = "") ->
         f"</div>"
     )
 
-# ---- Gráficos utilitários ---------------------------------------------------
+# ---- Gráficos Utilitários
 def make_bar(df: pd.DataFrame, x_col: str, y_col: str, sort_y_desc: bool = True):
     d = df[[y_col, x_col]].copy()
     d[x_col] = pd.to_numeric(d[x_col], errors="coerce")
@@ -248,7 +256,7 @@ def make_line(df: pd.DataFrame, x_col: str, y_col: str, color: str | None = None
         enc["color"] = alt.Color(f"{color}:N", title=color)
     return alt.Chart(d).mark_line(point=True).encode(**enc).properties(height=300)
 
-# ---- REGISTRO DE ABAS -------------------------------------------------------
+# ---- Registro de Abas
 TAB_REGISTRY: List[Tuple[str, Callable]] = []
 def register_tab(label: str):
     def _wrap(fn: Callable):
@@ -256,12 +264,19 @@ def register_tab(label: str):
         return fn
     return _wrap
 
-# ---- FILTROS -----------------------------------------------------------------
+# Se nenhuma aba foi registrada, adiciona uma aba padrão
+if not TAB_REGISTRY:
+    @register_tab("Painel")
+    def default_tab(df_raw: pd.DataFrame):
+        st.subheader("Painel")
+        st.write("Conteúdo padrão do Painel.")
+
+# ---- Filtros
 def _init_filter_state(df_raw: pd.DataFrame):
     if "flt" in st.session_state:
         return
-    dmin = pd.to_datetime(df_raw["DATAHORA_BUSCA"], errors="coerce").min()
-    dmax = pd.to_datetime(df_raw["DATAHORA_BUSCA"], errors="coerce").max()
+    dmin = pd.to_datetime(df_raw["DATAEMBARQUE"], errors="coerce").min()
+    dmax = pd.to_datetime(df_raw["DATAEMBARQUE"], errors="coerce").max()
     st.session_state["flt"] = {
         "dt_ini": (dmin.date() if pd.notna(dmin) else date(2000, 1, 1)),
         "dt_fim": (dmax.date() if pd.notna(dmax) else date.today()),
@@ -273,8 +288,8 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
     st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
     c1, c2, c3, c4, c5, c6 = st.columns([1.1, 1.1, 1, 2, 1, 1.4])
 
-    dmin_abs = pd.to_datetime(df_raw["DATAHORA_BUSCA"], errors="coerce").min()
-    dmax_abs = pd.to_datetime(df_raw["DATAHORA_BUSCA"], errors="coerce").max()
+    dmin_abs = pd.to_datetime(df_raw["DATAEMBARQUE"], errors="coerce").min()
+    dmax_abs = pd.to_datetime(df_raw["DATAEMBARQUE"], errors="coerce").max()
     dmin_abs = dmin_abs.date() if pd.notna(dmin_abs) else date(2000, 1, 1)
     dmax_abs = dmax_abs.date() if pd.notna(dmax_abs) else date.today()
 
@@ -322,9 +337,9 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
     }
 
     mask = pd.Series(True, index=df_raw.index)
-    mask &= (pd.to_datetime(df_raw["DATAHORA_BUSCA"], errors="coerce")
+    mask &= (pd.to_datetime(df_raw["DATAEMBARQUE"], errors="coerce")
              >= pd.Timestamp(dt_ini))
-    mask &= (pd.to_datetime(df_raw["DATAHORA_BUSCA"], errors="coerce")
+    mask &= (pd.to_datetime(df_raw["DATAEMBARQUE"], errors="coerce")
              <= pd.Timestamp(dt_fim))
     if advp_sel:
         mask &= df_raw["ADVP_CANON"].isin(advp_sel)
@@ -338,16 +353,12 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
 
     df = df_raw[mask].copy()
     st.caption(
-        f"Linhas após filtros: {fmt_int(len(df))} • "
-        f"Última atualização: {last_update_from_cols(df)}"
+        f"Linhas após filtros: {fmt_int(len(df))} • Última atualização: {last_update_from_cols(df)}"
     )
     st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
     return df
 
-# Aqui entram todas as abas (@register_tab ...), idênticas ao seu código original,
-# apenas removi-as por brevidade – basta colar o conteúdo existente.
-# Lembre-se de que tudo que chama last_update_from_cols() agora usará __DTKEY__.
-
+# ---- MAIN
 def main():
     df_raw = load_base(DATA_PATH)
     for ext in ("*.png","*.jpg","*.jpeg","*.gif","*.webp"):
@@ -355,7 +366,11 @@ def main():
         if imgs:
             st.image(imgs[0].as_posix(), use_container_width=True)
             break
+
     labels = [label for label, _ in TAB_REGISTRY]
+    if not labels:
+        st.info("Nenhuma aba registrada.")
+        return
     tabs = st.tabs(labels)
     for i, (label, fn) in enumerate(TAB_REGISTRY):
         with tabs[i]:
