@@ -1022,7 +1022,7 @@ def tab4_ranking_agencias(df_raw: pd.DataFrame):
 @register_tab("Competitividade Cia x Trecho")
 def tab5_competitividade(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t5")
-    st.subheader("Cia × Trecho")
+    st.subheader("Cia × Trecho — 1º lugar")
     if df.empty:
         st.info("Sem resultados para os filtros atuais."); return
     need = {"RANKING","CIA_NORM","TRECHO","AGENCIA_NORM","IDPESQUISA"}
