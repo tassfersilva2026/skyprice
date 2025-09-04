@@ -1029,63 +1029,76 @@ def tab5_competitividade(df_raw: pd.DataFrame):
     if not need.issubset(df.columns):
         st.warning(f"Colunas ausentes: {sorted(list(need - set(df.columns)))}"); return
 
-    # Considera só 1º
+    # 1) Apenas 1º lugar
     df1 = df[df["RANKING"].astype("Int64") == 1].copy()
     if df1.empty:
         st.info("Nenhum 1º lugar no recorte."); return
 
-    # Normalizações
+    # 2) Normalizações
     df1["CIA_UP"]     = df1["CIA_NORM"].astype(str).str.upper()
     df1["TRECHO_STD"] = df1["TRECHO"].astype(str)
     df1["AG_UP"]      = df1["AGENCIA_NORM"].astype(str)
 
-    # Universo de 11 trechos: top 11 por nº de pesquisas no recorte (independente de CIA)
+    # 3) Universo de 11 trechos: top 11 por nº de pesquisas no recorte
     top_trechos = (df1.groupby("TRECHO_STD")["IDPESQUISA"]
                      .nunique().sort_values(ascending=False).head(11).index.tolist())
     if len(top_trechos) < 11:
-        # completa com demais trechos do recorte
         restantes = [t for t in df1["TRECHO_STD"].unique().tolist() if t not in top_trechos]
         top_trechos += restantes[: max(0, 11 - len(top_trechos))]
 
-    # % de 1º lugar por Cia×Trecho×Agência e total de pesquisas por Cia×Trecho
+    # 4) % de 1º por Cia×Trecho×Agência + total por Cia×Trecho
     tot = (df1.groupby(["CIA_UP","TRECHO_STD"])["IDPESQUISA"]
               .nunique().reset_index(name="TotalPesq"))
     win = (df1.groupby(["CIA_UP","TRECHO_STD","AG_UP"])["IDPESQUISA"]
               .nunique().reset_index(name="QtdTop1"))
-    base = win.merge(tot, on=["CIA_UP","TRECHO_STD"], how="right")  # garante linhas para Cia×Trecho
+    base = win.merge(tot, on=["CIA_UP","TRECHO_STD"], how="right")  # garante Cia×Trecho
     base["QtdTop1"] = base["QtdTop1"].fillna(0)
     base["Pct"] = (base["QtdTop1"] / base["TotalPesq"].replace(0, np.nan) * 100).fillna(0.0)
 
-    # Função para montar ranking por CIA, preenchendo trechos ausentes com "SEM OFERTAS"
+    # 5) Helper seguro para pegar TotalPesq (fallback 0)
+    def _tot_for(cia: str, trecho: str) -> int:
+        m = tot.loc[(tot["CIA_UP"] == cia) & (tot["TRECHO_STD"] == trecho), "TotalPesq"]
+        if m.empty: return 0
+        v = m.iloc[0]
+        try:
+            return int(v) if pd.notna(v) else 0
+        except Exception:
+            try:
+                return int(float(v))
+            except Exception:
+                return 0
+
+    # 6) Monta líderes por CIA; preenche trechos ausentes com "SEM OFERTAS"
     def lideres_por_cia(cia: str) -> pd.DataFrame:
         sub_all = base[base["CIA_UP"] == cia].copy()
-        # escolhe agência de maior % por trecho
-        idx = (sub_all.sort_values(["TRECHO_STD","Pct"], ascending=[True, False])
-                      .groupby("TRECHO_STD")["Pct"].idxmax())
-        lideres = sub_all.loc[idx, ["TRECHO_STD","AG_UP","Pct","TotalPesq"]]
-        lideres = lideres.set_index("TRECHO_STD")
-        # garante os 11 trechos
+        if sub_all.empty:
+            rows = [{"TRECHO": t, "AGENCIA": "SEM OFERTAS", "PCT": 0.0, "N": _tot_for(cia, t)} for t in top_trechos]
+            return pd.DataFrame(rows).sort_values("PCT", ascending=False, kind="mergesort").reset_index(drop=True)
+
+        sub_all = sub_all.sort_values(["TRECHO_STD", "Pct"], ascending=[True, False])
+        idx = sub_all.groupby("TRECHO_STD")["Pct"].idxmax()
+        lideres = sub_all.loc[idx, ["TRECHO_STD", "AG_UP", "Pct", "TotalPesq"]].set_index("TRECHO_STD")
+
         rows = []
         for t in top_trechos:
             if t in lideres.index:
                 ag = str(lideres.loc[t, "AG_UP"]) if pd.notna(lideres.loc[t, "AG_UP"]) else "SEM OFERTAS"
                 pct = float(lideres.loc[t, "Pct"]) if pd.notna(lideres.loc[t, "Pct"]) else 0.0
-                n   = int(lideres.loc[t, "TotalPesq"]) if pd.notna(lideres.loc[t, "TotalPesq"]) else 0
+                n = int(lideres.loc[t, "TotalPesq"]) if pd.notna(lideres.loc[t, "TotalPesq"]) else _tot_for(cia, t)
             else:
-                ag, pct, n = "SEM OFERTAS", 0.0, int(tot.loc[(tot["CIA_UP"]==cia) & (tot["TRECHO_STD"]==t), "TotalPesq"].squeeze() or 0)
+                ag, pct, n = "SEM OFERTAS", 0.0, _tot_for(cia, t)
             rows.append({"TRECHO": t, "AGENCIA": ag, "PCT": pct, "N": n})
-        out = pd.DataFrame(rows)
-        # ordenar vertical pelo maior %
-        out = out.sort_values("PCT", ascending=False, kind="mergesort").reset_index(drop=True)
+
+        out = pd.DataFrame(rows).sort_values("PCT", ascending=False, kind="mergesort").reset_index(drop=True)
         return out
 
+    # 7) Estilo e render
     cia_colors = {
         "AZUL":  ("#2D6CDF", "#FFFFFF"),
         "GOL":   ("#E67E22", "#FFFFFF"),
         "LATAM": ("#C0392B", "#FFFFFF"),
     }
 
-    # CSS
     st.markdown("""
     <style>
       .comp-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;}
@@ -1100,7 +1113,7 @@ def tab5_competitividade(df_raw: pd.DataFrame):
       .muted{font-size:10px;color:#94a3b8;font-weight:800;display:block;line-height:1;margin-top:2px;}
       .row0{background:#ffffff;}
       .row1{background:#fcfcfc;}
-      .g123{color:#0B6B2B;font-weight:900;} /* verde escuro + negrito */
+      .g123{color:#0B6B2B;font-weight:900;} /* MAXMILHAS/123MILHAS em verde escuro e negrito */
     </style>
     """, unsafe_allow_html=True)
 
@@ -1135,12 +1148,8 @@ def tab5_competitividade(df_raw: pd.DataFrame):
         rows.append("</tbody></table>")
         return f"<div class='comp-card'>{head}{''.join(rows)}</div>"
 
-    # Renderiza 3 quadros
     items = [quadro_html(cia, lideres_por_cia(cia)) for cia in ["AZUL","GOL","LATAM"]]
     st.markdown("<div class='comp-grid'>" + "".join(items) + "</div>", unsafe_allow_html=True)
-
-
-
 
 # ================================ MAIN ========================================
 def main():
