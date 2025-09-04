@@ -1018,6 +1018,7 @@ def tab4_ranking_agencias(df_raw: pd.DataFrame):
     )
 
 # ─────────────────────── ABA 5: Competitividade Cia × Trecho (3 quadros + ADVP) ───────────────────────
+# ─────────────────────── ABA 5: Competitividade Cia × Trecho (3 quadros + ADVP) ───────────────────────
 @register_tab("Competitividade Cia x Trecho")
 def tab5_competitividade(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t5")
@@ -1099,15 +1100,12 @@ def tab5_competitividade(df_raw: pd.DataFrame):
       .comp-card{border:1px solid #e5e7eb;border-radius:12px;background:#fff;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.06);}
       .comp-head{padding:10px 12px;font-weight:900;letter-spacing:.2px;}
       .tbl,.tblc{width:100%;border-collapse:collapse;}
-      .tbl th,.tbl td,.tblc th,.tblc td{border:1px solid #e5e7eb;padding:6px 8px;font-size:13px;}
-      .tbl th{font-weight:900;background:#f8fafc;text-align:left;}
-      .tbl td:nth-child(3){text-align:center;font-weight:800;} /* % centralizado */
+      .tbl th,.tbl td,.tblc th,.tblc td{border:1px solid #e5e7eb;padding:6px 8px;font-size:13px; text-align:center;} /* centraliza TUDO */
+      .tbl td:nth-child(3){font-weight:800;} /* % em negrito */
       .muted{font-size:10px;color:#94a3b8;font-weight:800;display:block;line-height:1;margin-top:2px;}
       .row0{background:#ffffff;}
       .row1{background:#fcfcfc;}
       .g123{color:#0B6B2B;font-weight:900;} /* MAX/123 verde-escuro+negrito */
-      /* ADVP: centraliza tudo (cabeçalho e dados) */
-      .tblc th,.tblc td{text-align:center;}
     </style>
     """, unsafe_allow_html=True)
 
@@ -1120,7 +1118,7 @@ def tab5_competitividade(df_raw: pd.DataFrame):
         bg, fg = cia_colors.get(cia, ("#0B5FFF","#FFFFFF"))
         head = f"<div class='comp-head' style='background:{bg};color:{fg};'>{cia}</div>"
         if dfq.empty:
-            body = "<div style='padding:14px;color:#64748b;font-weight:700;'>Sem dados</div>"
+            body = "<div style='padding:14px;color:#64748b;font-weight:700;text-align:center;'>Sem dados</div>"
             return f"<div class='comp-card'>{head}{body}</div>"
         rows = []
         rows.append("<table class='tbl'><thead><tr><th>TRECHO</th><th>AGENCIA</th><th>% DE GANHO</th></tr></thead><tbody>")
@@ -1147,8 +1145,9 @@ def tab5_competitividade(df_raw: pd.DataFrame):
     st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
     st.subheader("Resumo por ADVP — 1º lugar por Cia e ADVP")
 
-    # Buckets ADVP fixos
+    # Buckets ADVP fixos na ordem solicitada
     advp_buckets = [1, 5, 11, 17, 30]
+
     # garantir coluna ADVP_BKT
     advp_series = pd.to_numeric(df1.get("ADVP_CANON"), errors="coerce")
     df1_advp = df1[advp_series.notna()].copy()
@@ -1163,10 +1162,6 @@ def tab5_competitividade(df_raw: pd.DataFrame):
     baseA["QtdTop1"] = baseA["QtdTop1"].fillna(0)
     baseA["Pct"] = (baseA["QtdTop1"] / baseA["TotAdvp"].replace(0, np.nan) * 100).fillna(0.0)
 
-    def _tot_for_advp(cia: str, advp: int) -> int:
-        m = totA.loc[(totA["CIA_UP"]==cia) & (totA["ADVP_BKT"]==advp), "TotAdvp"]
-        return int(m.iloc[0]) if not m.empty and pd.notna(m.iloc[0]) else 0
-
     def lideres_por_cia_advp(cia: str) -> pd.DataFrame:
         sub = baseA[baseA["CIA_UP"] == cia].copy()
         rows = []
@@ -1176,14 +1171,15 @@ def tab5_competitividade(df_raw: pd.DataFrame):
             lid = sub.loc[idx, ["ADVP_BKT","AG_UP","Pct"]].set_index("ADVP_BKT")
         else:
             lid = pd.DataFrame(columns=["AG_UP","Pct"])
-        for a in advp_buckets:
+        for a in advp_buckets:  # ordem fixa 1,5,11,17,30
             if a in lid.index:
                 ag  = str(lid.loc[a, "AG_UP"]) if pd.notna(lid.loc[a, "AG_UP"]) else "SEM OFERTAS"
                 pct = float(lid.loc[a, "Pct"])  if pd.notna(lid.loc[a, "Pct"])  else 0.0
             else:
                 ag, pct = "SEM OFERTAS", 0.0
             rows.append({"ADVP": a, "AGENCIA": ag, "PCT": pct})
-        return pd.DataFrame(rows).sort_values("PCT", ascending=False, kind="mergesort").reset_index(drop=True)
+        # NÃO reordenar por % — manter a ordem 1,5,11,17,30
+        return pd.DataFrame(rows)
 
     def quadro_advp_html(cia: str, dfq: pd.DataFrame) -> str:
         bg, fg = cia_colors.get(cia, ("#0B5FFF","#FFFFFF"))
@@ -1210,6 +1206,7 @@ def tab5_competitividade(df_raw: pd.DataFrame):
 
     items_advp = [quadro_advp_html(cia, lideres_por_cia_advp(cia)) for cia in ["AZUL","GOL","LATAM"]]
     st.markdown("<div class='comp-grid'>" + "".join(items_advp) + "</div>", unsafe_allow_html=True)
+
 
 
 # ================================ MAIN ========================================
