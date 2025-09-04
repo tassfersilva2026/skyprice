@@ -1016,7 +1016,47 @@ def tab4_ranking_agencias(df_raw: pd.DataFrame):
         highlight_rows_map=HL_MAP,
         height=440
     )
-    
+
+# ─────────────────────── ABA: Competitividade Cia x Trecho ───────────────────────
+@register_tab("Competitividade Cia x Trecho")
+def tab5_competitividade(df_raw: pd.DataFrame):
+    df = render_filters(df_raw, key_prefix="t5")
+    st.subheader("Competitividade Cia × Trecho — 1º Lugar")
+    if df.empty:
+        st.info("Sem resultados para os filtros atuais.")
+        return
+
+    # Apenas ranking 1
+    df1 = df[df["RANKING"] == 1].copy()
+    if df1.empty:
+        st.info("Nenhum 1º lugar encontrado no recorte.")
+        return
+
+    # Normaliza
+    df1["CIA_UP"] = df1["CIA_NORM"].astype(str)
+    df1["TRECHO_STD"] = df1["TRECHO"].astype(str)
+    df1["AGENCIA_UP"] = df1["AGENCIA_NORM"].astype(str)
+
+    # Calcula % de 1º lugar por Cia×Trecho
+    total_por = df1.groupby(["CIA_UP","TRECHO_STD"])["IDPESQUISA"].nunique().reset_index(name="Total")
+    vencedores = df1.groupby(["CIA_UP","TRECHO_STD","AGENCIA_UP"])["IDPESQUISA"].nunique().reset_index(name="Qtd")
+    merged = vencedores.merge(total_por, on=["CIA_UP","TRECHO_STD"])
+    merged["Pct_1º"] = (merged["Qtd"] / merged["Total"] * 100).round(2)
+
+    # Mostra separado por Cia
+    cias = ["AZUL","GOL","LATAM"]
+    for cia in cias:
+        sub = merged[merged["CIA_UP"] == cia]
+        if sub.empty: 
+            continue
+        st.markdown(f"<div class='stack-title'>Competitividade — {cia}</div>", unsafe_allow_html=True)
+        piv = (sub.pivot_table(index="TRECHO_STD", columns="AGENCIA_UP", values="Pct_1º", aggfunc="max")
+                  .fillna(0).reset_index())
+        fmt_map = {c: fmt_pct2_br for c in piv.columns if c not in ["TRECHO_STD"]}
+        sty = style_smart_colwise(piv, fmt_map, grad_cols=[c for c in piv.columns if c not in ["TRECHO_STD"]])
+        show_table(piv, sty, caption=f"{cia}: % de 1º Lugar por Trecho")
+
+
 # ================================ MAIN ========================================
 def main():
     df_raw = load_base(DATA_PATH)
