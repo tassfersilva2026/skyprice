@@ -1021,7 +1021,7 @@ def tab4_ranking_agencias(df_raw: pd.DataFrame):
 @register_tab("Competitividade Cia x Trecho")
 def tab5_competitividade(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t5")
-    st.subheader("Competitividade Cia × Trecho — 1º lugar por Cia e Trecho")
+    st.subheader("Competitividade Cia × Trecho")
     if df.empty:
         st.info("Sem resultados para os filtros atuais."); return
     need = {"RANKING","CIA_NORM","TRECHO","AGENCIA_NORM","IDPESQUISA"}
@@ -1142,7 +1142,7 @@ def tab5_competitividade(df_raw: pd.DataFrame):
 
     # ===================== RESUMO POR ADVP (abaixo dos quadros) =====================
     st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
-    st.subheader("Resumo por ADVP — 1º lugar por Cia e ADVP")
+    st.subheader("Competitividade Cia x ADVP")
 
     # Buckets ADVP fixos na ordem solicitada
     advp_buckets = [1, 5, 11, 17, 30]
