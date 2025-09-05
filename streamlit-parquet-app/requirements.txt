@@ -1,7 +1,0 @@
-streamlit>=1.36
-pandas
-numpy
-pyarrow
-altair
-plotly>=5.17
-matplotlib
