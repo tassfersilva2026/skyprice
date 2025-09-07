@@ -1,0 +1,28 @@
+name: Restart Streamlit on data change
+
+on:
+  push:
+    branches: [ main ]        # ajuste se sua branch for outra
+    paths:
+      - 'streamlit_app/data/**'
+  workflow_dispatch: {}
+
+jobs:
+  bump-stamp:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Update restart stamp
+        run: |
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > .streamlit_restart
+      - name: Commit and push
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .streamlit_restart
+          git commit -m "[streamlit restart] bump stamp" || exit 0
+          git push
