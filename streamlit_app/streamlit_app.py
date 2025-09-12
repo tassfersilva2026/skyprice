@@ -1207,12 +1207,12 @@ def tab5_competitividade(df_raw: pd.DataFrame):
     st.markdown("<div class='comp-grid'>" + "".join(items_advp) + "</div>", unsafe_allow_html=True)
 
 
-# ─────────────────────── ABA 6: Competitividade (lado a lado, grupos 3) ──────
-@register_tab("Competitividade (tabelas)")
+# ─────────────────────── ABA 6: Competitividade TRECHOS E ADVPS AGRUPADOS) ──────
+@register_tab("Competitividade Trechos e ADVPs Agrupados")
 def tab6_compet_tabelas(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t6")
     if df.empty:
-        st.subheader("Competitividade (tabelas)")
+        st.subheader("Competitividade")
         st.info("Sem resultados para os filtros atuais.")
         return
 
