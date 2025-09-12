@@ -1372,7 +1372,7 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         st.markdown("".join(html), unsafe_allow_html=True)
 
     # ===== Render lado a lado =====
-    st.subheader("Competitividade (lado a lado)")
+    st.subheader("Competitividade Trechos e ADVPs Agrupados")
     c1, c2 = st.columns(2)
     with c1:
         st.caption("Cia × Trecho")
