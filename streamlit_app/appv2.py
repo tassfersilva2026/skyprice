@@ -441,10 +441,10 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
 
 # ───────────────────────────── ABAS DO APLICATIVO ────────────────────────────
 # =============================== ABAS (INÍCIO) ===============================
-@register_tab("Painel (V2)")
+@register_tab("Painel")
 def tab1_painel(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t1")
-    st.subheader("Painel")
+    st.subheader("Painel - V2")
 
     total_pesq = df["IDPESQUISA"].nunique() or 1
     cov = {r: df.loc[df["RANKING"].eq(r), "IDPESQUISA"].nunique() for r in (1, 2, 3)}
