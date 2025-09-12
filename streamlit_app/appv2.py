@@ -441,7 +441,7 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
 
 # ───────────────────────────── ABAS DO APLICATIVO ────────────────────────────
 # =============================== ABAS (INÍCIO) ===============================
-@register_tab("Painel")
+@register_tab("Painel (V2)")
 def tab1_painel(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t1")
     st.subheader("Painel")
