@@ -1207,8 +1207,7 @@ def tab5_competitividade(df_raw: pd.DataFrame):
     st.markdown("<div class='comp-grid'>" + "".join(items_advp) + "</div>", unsafe_allow_html=True)
 
 
-# ─────────────────────── ABA 6: Competitividade (compacta lado a lado) ───────
-# ─────────────────────── ABA 6: Competitividade (compacta lado a lado) ───────
+# ─────────────────────── ABA 6: Competitividade (lado a lado, grupos 3) ──────
 @register_tab("Competitividade (tabelas)")
 def tab6_compet_tabelas(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t6")
@@ -1219,20 +1218,18 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
 
     need = {"RANKING","CIA_NORM","TRECHO","AGENCIA_NORM","IDPESQUISA"}
     if not need.issubset(df.columns):
-        miss = sorted(list(need - set(df.columns)))
-        st.warning(f"Colunas ausentes: {miss}")
+        st.warning(f"Colunas ausentes: {sorted(list(need - set(df.columns)))}")
         return
 
-    # Vencedores
+    # vencedores
     d1 = df[df["RANKING"].astype("Int64") == 1].copy()
     d1["CIA_UP"]     = d1["CIA_NORM"].astype(str).str.upper()
     d1["TRECHO_STD"] = d1["TRECHO"].astype(str)
     d1["AG_UP"]      = d1["AGENCIA_NORM"].astype(str)
 
-    # Universo de trechos visíveis (garante "SEM OFERTAS" quando não houver)
-    trechos_all = sorted(df.get("TRECHO", pd.Series([], dtype=str)).dropna().astype(str).unique().tolist())
+    trechos_all = sorted(df["TRECHO"].dropna().astype(str).unique().tolist())
 
-    # Totais e vitórias por Cia×Trecho
+    # Totais/Top1 por Cia×Trecho
     tot_t = (df.assign(CIA_UP=df["CIA_NORM"].astype(str).str.upper(),
                        TRECHO_STD=df["TRECHO"].astype(str))
                .groupby(["CIA_UP","TRECHO_STD"])["IDPESQUISA"]
@@ -1244,34 +1241,37 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
 
     def pick_leader(cia:str, trecho:str):
         sub = base_t[(base_t["CIA_UP"]==cia) & (base_t["TRECHO_STD"]==trecho)]
-        if sub.empty or (sub["TotPesq"].sum() == 0):
-            return {"CIA": cia, "TRECHO": trecho, "AGENCIA": "SEM OFERTAS", "PCT": 0.0, "N": 0}
+        if sub.empty or (sub["TotPesq"].sum()==0):
+            return {"CIA": cia, "TRECHO": trecho, "AGENCIA":"SEM OFERTAS", "PCT":0.0, "N":0}
         top = sub.sort_values(["Pct","QtdTop1","TotPesq"], ascending=False).iloc[0]
         return {"CIA": cia, "TRECHO": trecho, "AGENCIA": str(top["AG_UP"]),
                 "PCT": float(top["Pct"]), "N": int(top["TotPesq"])}
 
-    # ===== CSS: colunas de TRECHO/AGENCIA ainda mais estreitas + fonte maior =====
+    # ===== CSS: borda marcada a cada 3, % destacada, (N pesq) translúcido =====
     st.markdown("""
     <style>
       .t6 {width:100%; border-collapse:collapse; table-layout:fixed;}
       .t6 th,.t6 td{
-        border:1px solid #e5e7eb; padding:4px 6px;
+        border:1px solid #e5e7eb; padding:5px 6px;
         font-size:15px; line-height:1.25; text-align:center;
       }
       .t6 th{background:#f3f4f6; font-weight:800;}
       .t6 .l{ text-align:left; }
       .t6 .clip{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-
-      /* larguras compactas */
       .t6 th.cia{width:58px;}
       .t6 th.trc{width:64px;}     /* TRECHO menor */
       .t6 th.ag{width:96px;}      /* AGENCIA menor */
-      .t6 th.pct,.t6 td.pct{
-        width:200px; white-space:nowrap;   /* % sem quebra */
+      .t6 th.pct,.t6 td.pct{width:200px; white-space:nowrap;}
+
+      /* separador forte a cada grupo de 3 linhas */
+      .sep td{
+        padding:0 !important; border:0 !important;
+        border-top:4px solid #94a3b8 !important; background:#fff;
       }
 
-      .sep td{padding:2px !important; border:0 !important;
-              border-top:2px solid #dfe3e8 !important; background:#fff;}
+      /* estilo de valor e observação */
+      .pct-val{font-weight:900; font-size:16px; color:#111827;}
+      .pesq{opacity:.55; font-weight:800; margin-left:6px; font-size:13px;}
 
       .chip{display:inline-flex; align-items:center; gap:6px; font-weight:900; font-size:15px;}
       .dot{width:10px; height:10px; border-radius:2px; display:inline-block;}
@@ -1285,11 +1285,13 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         cls = "az" if cia=="AZUL" else "go" if cia=="GOL" else "la"
         return f"<span class='chip'><span class='dot {cls}'></span>{cia}</span>"
 
-    def fmt_pct_pesq(pct, n):
-        try:
-            return f"{float(pct):.2f}%".replace('.', ',') + f" - ({int(n)} pesq)"
-        except:
-            return "0,00% - (0 pesq)"
+    def pct_cell(pct, n) -> str:
+        # sem casas decimais
+        try: p = int(round(float(pct)))
+        except: p = 0
+        try: k = int(n)
+        except: k = 0
+        return f"<span class='pct-val'>{p}%</span><span class='pesq'>( {k} pesq )</span>"
 
     def ag_fmt(ag:str) -> str:
         return f"<span class='g123'>{ag}</span>" if ag in {"123MILHAS","MAXMILHAS"} else ag
@@ -1306,7 +1308,7 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
                     f"<tr{alt}><td>{cia_chip(r['CIA'])}</td>"
                     f"<td class='trc l clip'>{t}</td>"
                     f"<td class='ag l clip'>{ag_fmt(r['AGENCIA'])}</td>"
-                    f"<td class='pct'><b>{fmt_pct_pesq(r['PCT'], r['N'])}</b></td></tr>"
+                    f"<td class='pct'>{pct_cell(r['PCT'], r['N'])}</td></tr>"
                 )
             html.append("<tr class='sep'><td colspan='4'></td></tr>")
         html.append("</tbody></table>")
@@ -1347,7 +1349,7 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
                     f"<tr{alt}><td>{cia_chip(r['CIA'])}</td>"
                     f"<td>{a}</td>"
                     f"<td class='ag l clip'>{ag_fmt(r['AGENCIA'])}</td>"
-                    f"<td class='pct'><b>{fmt_pct_pesq(r['PCT'], r['N'])}</b></td></tr>"
+                    f"<td class='pct'>{pct_cell(r['PCT'], r['N'])}</td></tr>"
                 )
             html.append("<tr class='sep'><td colspan='4'></td></tr>")
         html.append("</tbody></table>")
@@ -1362,9 +1364,6 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
     with c2:
         st.caption("Cia × ADVP")
         render_tbl_advp()
-
-
-
 
 
 # ================================ MAIN ========================================
