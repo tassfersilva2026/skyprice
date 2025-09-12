@@ -1249,37 +1249,53 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
 
     # ===== CSS: borda marcada a cada 3, % destacada, (N pesq) translúcido =====
     st.markdown("""
-    <style>
-      .t6 {width:100%; border-collapse:collapse; table-layout:fixed;}
-      .t6 th,.t6 td{
-        border:1px solid #e5e7eb; padding:5px 6px;
-        font-size:15px; line-height:1.25; text-align:center;
-      }
-      .t6 th{background:#f3f4f6; font-weight:800;}
-      .t6 .l{ text-align:left; }
-      .t6 .clip{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-      .t6 th.cia{width:58px;}
-      .t6 th.trc{width:64px;}     /* TRECHO menor */
-      .t6 th.ag{width:96px;}      /* AGENCIA menor */
-      .t6 th.pct,.t6 td.pct{width:200px; white-space:nowrap;}
+<style>
+  .t6 {
+    width:100%;
+    border-collapse:collapse; 
+    table-layout:fixed;
+    /* borda externa com a mesma cor do separador */
+    border:3px solid #94a3b8;
+  }
 
-      /* separador forte a cada grupo de 3 linhas */
-      .sep td{
-        padding:0 !important; border:0 !important;
-        border-top:4px solid #94a3b8 !important; background:#fff;
-      }
+  /* fonte maior + células compactas */
+  .t6 th,.t6 td{
+    border:1px solid #e5e7eb; 
+    padding:5px 6px;
+    font-size:15px; 
+    line-height:1.25; 
+    text-align:center;
+  }
+  .t6 th{background:#f3f4f6; font-weight:800;}
+  .t6 .l{ text-align:left; }
+  .t6 .clip{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
-      /* estilo de valor e observação */
-      .pct-val{font-weight:900; font-size:16px; color:#111827;}
-      .pesq{opacity:.55; font-weight:800; margin-left:6px; font-size:13px;}
+  /* larguras compactas */
+  .t6 th.cia{width:58px;}
+  .t6 th.trc{width:64px;}     /* TRECHO menor */
+  .t6 th.ag{width:96px;}      /* AGENCIA menor */
+  .t6 th.pct,.t6 td.pct{width:200px; white-space:nowrap;}  /* % sem quebra */
 
-      .chip{display:inline-flex; align-items:center; gap:6px; font-weight:900; font-size:15px;}
-      .dot{width:10px; height:10px; border-radius:2px; display:inline-block;}
-      .az{background:#2D6CDF;} .go{background:#F7C948;} .la{background:#C0392B;}
-      .g123{color:#0B6B2B; font-weight:900;}
-      .alt{background:#fcfcfc;}
-    </style>
-    """, unsafe_allow_html=True)
+  /* separador forte a cada grupo de 3 linhas — levemente mais fino */
+  .sep td{
+    padding:0 !important; 
+    border:0 !important;
+    border-top:3px solid #94a3b8 !important;  /* mesma cor das bordas externas */
+    background:#fff;
+  }
+
+  /* valor em destaque e (N pesq) translúcido */
+  .pct-val{font-weight:900; font-size:16px; color:#111827;}
+  .pesq{opacity:.55; font-weight:800; margin-left:6px; font-size:13px;}
+
+  .chip{display:inline-flex; align-items:center; gap:6px; font-weight:900; font-size:15px;}
+  .dot{width:10px; height:10px; border-radius:2px; display:inline-block;}
+  .az{background:#2D6CDF;} .go{background:#F7C948;} .la{background:#C0392B;}
+  .g123{color:#0B6B2B; font-weight:900;}
+  .alt{background:#fcfcfc;}
+</style>
+""", unsafe_allow_html=True)
+
 
     def cia_chip(cia:str) -> str:
         cls = "az" if cia=="AZUL" else "go" if cia=="GOL" else "la"
