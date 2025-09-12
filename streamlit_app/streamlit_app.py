@@ -1208,81 +1208,58 @@ def tab5_competitividade(df_raw: pd.DataFrame):
 
 
 # ─────────────────────── ABA 6: Competitividade (tabelas únicas) ─────────────
+# ─────────────────────── ABA 6: Competitividade (compacta lado a lado) ───────
 @register_tab("Competitividade (tabelas)")
 def tab6_compet_tabelas(df_raw: pd.DataFrame):
-    import itertools
-
     df = render_filters(df_raw, key_prefix="t6")
-    st.subheader("Competitividade Cia × Trecho")
     if df.empty:
-        st.info("Sem resultados para os filtros atuais."); return
+        st.subheader("Competitividade (tabelas)")
+        st.info("Sem resultados para os filtros atuais."); 
+        return
 
     need = {"RANKING","CIA_NORM","TRECHO","AGENCIA_NORM","IDPESQUISA"}
     if not need.issubset(df.columns):
-        st.warning(f"Colunas ausentes: {sorted(list(need - set(df.columns)))}"); return
+        st.warning(f"Colunas ausentes: {sorted(list(need - set(df.columns)))}"); 
+        return
 
-    # Somente 1º lugar
+    # Considera apenas vencedores (Rank 1)
     d1 = df[df["RANKING"].astype("Int64") == 1].copy()
-    if d1.empty:
-        st.info("Nenhum 1º lugar no recorte."); return
-
     d1["CIA_UP"]     = d1["CIA_NORM"].astype(str).str.upper()
     d1["TRECHO_STD"] = d1["TRECHO"].astype(str)
     d1["AG_UP"]      = d1["AGENCIA_NORM"].astype(str)
 
+    # Universo de trechos: todos os trechos visíveis no filtro (mesmo sem Top1)
+    trechos_all = sorted(df.get("TRECHO", pd.Series([], dtype=str)).dropna().astype(str).unique().tolist())
+
     # Totais e vitórias por Cia×Trecho
-    tot_t = (d1.groupby(["CIA_UP","TRECHO_STD"])["IDPESQUISA"]
+    tot_t = (df.assign(CIA_UP=df["CIA_NORM"].astype(str).str.upper(),
+                       TRECHO_STD=df["TRECHO"].astype(str))
+               .groupby(["CIA_UP","TRECHO_STD"])["IDPESQUISA"]
                .nunique().reset_index(name="TotPesq"))
     win_t = (d1.groupby(["CIA_UP","TRECHO_STD","AG_UP"])["IDPESQUISA"]
                .nunique().reset_index(name="QtdTop1"))
-    base_t = win_t.merge(tot_t, on=["CIA_UP","TRECHO_STD"], how="right")
-    base_t["QtdTop1"] = base_t["QtdTop1"].fillna(0)
+    base_t = win_t.merge(tot_t, on=["CIA_UP","TRECHO_STD"], how="right").fillna({"QtdTop1":0})
     base_t["Pct"] = (base_t["QtdTop1"] / base_t["TotPesq"].replace(0, np.nan) * 100).fillna(0.0)
 
-    def lideres_por_cia_trecho(cia: str, top_n: int = 50) -> pd.DataFrame:
-        sub = base_t[base_t["CIA_UP"] == cia].copy()
-        if sub.empty: 
-            return pd.DataFrame(columns=["CIA","TRECHO","AGENCIA","PCT","N"])
-        idx = sub.sort_values(["TRECHO_STD","Pct"], ascending=[True, False]) \
-                 .groupby("TRECHO_STD")["Pct"].idxmax()
-        lid = sub.loc[idx, ["TRECHO_STD","AG_UP","Pct","TotPesq"]]
-        out = (lid.rename(columns={"TRECHO_STD":"TRECHO","AG_UP":"AGENCIA","Pct":"PCT","TotPesq":"N"})
-                  .sort_values("PCT", ascending=False).head(top_n))
-        out.insert(0, "CIA", cia)
-        return out.reset_index(drop=True)
+    def pick_leader(cia:str, trecho:str):
+        sub = base_t[(base_t["CIA_UP"]==cia) & (base_t["TRECHO_STD"]==trecho)]
+        if sub.empty or (sub["TotPesq"].sum() == 0):
+            return {"CIA": cia, "TRECHO": trecho, "AGENCIA": "SEM OFERTAS", "PCT": 0.0, "N": 0}
+        top = sub.sort_values(["Pct","QtdTop1","TotPesq"], ascending=False).iloc[0]
+        return {"CIA": cia, "TRECHO": trecho, "AGENCIA": str(top["AG_UP"]), 
+                "PCT": float(top["Pct"]), "N": int(top["TotPesq"])}
 
-    AZ, GO, LA = "AZUL","GOL","LATAM"
-    t_az, t_go, t_la = (lideres_por_cia_trecho(AZ), lideres_por_cia_trecho(GO), lideres_por_cia_trecho(LA))
-
-    # Intercala linhas AZUL→GOL→LATAM (visual igual ao anexo)
-    rows = []
-    for a, g, l in itertools.zip_longest(t_az.to_dict("records"),
-                                         t_go.to_dict("records"),
-                                         t_la.to_dict("records")):
-        for r in (a, g, l):
-            if r: rows.append(r)
-    tbl_trecho = pd.DataFrame(rows)[["CIA","TRECHO","AGENCIA","PCT","N"]]
-
-    def fmt_pct_pesq(pct, n):
-        try:
-            x = float(pct)
-            n2 = int(n) if pd.notna(n) else 0
-            return f"{x:.2f}%".replace(".", ",") + f" - ({n2} pesq)"
-        except Exception:
-            return "-"
-
-    # Estilo conforme imagem
+    # ==== CSS compacto para caber lado a lado ====
     st.markdown("""
     <style>
-      .t6 {width:100%; border-collapse:collapse;}
-      .t6 th,.t6 td{border:1px solid #e5e7eb; padding:6px 8px; font-size:13px; text-align:center;}
+      .t6 {width:100%; border-collapse:collapse; table-layout:fixed;}
+      .t6 th,.t6 td{border:1px solid #e5e7eb; padding:4px 6px; font-size:12px; text-align:center;}
       .t6 th{background:#f3f4f6; font-weight:800;}
       .t6 .l{ text-align:left; }
-      .chip{display:inline-flex; align-items:center; gap:6px; font-weight:800;}
-      .dot{width:14px; height:14px; border-radius:3px; display:inline-block;}
-      .az{background:#2D6CDF;}
-      .go{background:#F7C948;}
-      .la{background:#C0392B;}
+      .sep td{padding:2px !important; border:0 !important; border-top:2px solid #dfe3e8 !important; background:#fff;}
+      .chip{display:inline-flex; align-items:center; gap:5px; font-weight:800;}
+      .dot{width:10px; height:10px; border-radius:2px; display:inline-block;}
+      .az{background:#2D6CDF;} .go{background:#F7C948;} .la{background:#C0392B;}
       .g123{color:#0B6B2B; font-weight:900;}
       .alt{background:#fcfcfc;}
     </style>
@@ -1292,72 +1269,86 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         cls = "az" if cia=="AZUL" else "go" if cia=="GOL" else "la"
         return f"<span class='chip'><span class='dot {cls}'></span>{cia}</span>"
 
+    def fmt_pct_pesq(pct, n):
+        try:
+            return f"{float(pct):.2f}%".replace(".", ",") + f" - ({int(n)} pesq)"
+        except:
+            return "0,00% - (0 pesq)"
+
     def ag_fmt(ag:str) -> str:
         return f"<span class='g123'>{ag}</span>" if ag in {"123MILHAS","MAXMILHAS"} else ag
 
-    # Render tabela Cia × Trecho
-    html = ["<table class='t6'>",
-            "<thead><tr><th>CIA</th><th class='l'>TRECHO</th><th class='l'>AGENCIA</th><th>% DE GANHO</th></tr></thead><tbody>"]
-    for i, r in tbl_trecho.iterrows():
-        cia = cia_chip(r["CIA"])
-        tr  = str(r["TRECHO"])
-        ag  = ag_fmt(str(r["AGENCIA"]))
-        pct = fmt_pct_pesq(r["PCT"], r["N"])
-        alt = " class='alt'" if i % 2 else ""
-        html.append(f"<tr{alt}><td>{cia}</td><td class='l'>{tr}</td><td class='l'>{ag}</td><td><b>{pct}</b></td></tr>")
-    html.append("</tbody></table>")
-    st.markdown("".join(html), unsafe_allow_html=True)
+    # ======= Tabela 1: Cia × Trecho (3 linhas por trecho + separador) =======
+    def render_tbl_trecho():
+        html = ["<table class='t6'>",
+                "<thead><tr><th style='width:70px'>CIA</th><th class='l'>TRECHO</th><th class='l'>AGENCIA</th><th style='width:110px'>% DE GANHO</th></tr></thead><tbody>"]
+        for t in trechos_all:
+            rows = [pick_leader(cia, t) for cia in ["AZUL","GOL","LATAM"]]
+            for i, r in enumerate(rows):
+                alt = " class='alt'" if i % 2 else ""
+                html.append(
+                    f"<tr{alt}><td>{cia_chip(r['CIA'])}</td>"
+                    f"<td class='l'>{t}</td>"
+                    f"<td class='l'>{ag_fmt(r['AGENCIA'])}</td>"
+                    f"<td><b>{fmt_pct_pesq(r['PCT'], r['N'])}</b></td></tr>"
+                )
+            html.append("<tr class='sep'><td colspan='4'></td></tr>")
+        html.append("</tbody></table>")
+        st.markdown("".join(html), unsafe_allow_html=True)
 
-    # ===================== Cia × ADVP (tabela única) =====================
-    st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
-    st.subheader("Competitividade Cia × ADVP")
-
+    # ======= Tabela 2: Cia × ADVP (3 linhas por ADVP + separador) ===========
+    # buckets fixos
     buckets = [1,5,11,17,30]
-    advp_series = pd.to_numeric(d1.get("ADVP_CANON"), errors="coerce")
-    d1a = d1[advp_series.notna()].copy()
-    d1a["ADVP_BKT"] = advp_series.loc[d1a.index].astype(int)
+    advp_series = pd.to_numeric(df.get("ADVP_CANON"), errors="coerce")
+    df_advp = df[advp_series.notna()].copy()
+    df_advp["ADVP_BKT"] = advp_series.loc[df_advp.index].astype(int)
 
-    tot_a = (d1a.groupby(["CIA_UP","ADVP_BKT"])["IDPESQUISA"]
-               .nunique().reset_index(name="TotAdvp"))
-    win_a = (d1a.groupby(["CIA_UP","ADVP_BKT","AG_UP"])["IDPESQUISA"]
-               .nunique().reset_index(name="QtdTop1"))
-    base_a = win_a.merge(tot_a, on=["CIA_UP","ADVP_BKT"], how="right")
-    base_a["QtdTop1"] = base_a["QtdTop1"].fillna(0)
+    # Totais por Cia×ADVP e vitórias (Rank 1) por Cia×ADVP×Agência
+    tot_a = (df_advp.assign(CIA_UP=df_advp["CIA_NORM"].astype(str).str.upper())
+                    .groupby(["CIA_UP","ADVP_BKT"])["IDPESQUISA"]
+                    .nunique().reset_index(name="TotAdvp"))
+    win_a = (d1.assign(ADVP_BKT=pd.to_numeric(df.get("ADVP_CANON"), errors="coerce"))
+                .dropna(subset=["ADVP_BKT"])
+                .groupby(["CIA_UP","ADVP_BKT","AG_UP"])["IDPESQUISA"]
+                .nunique().reset_index(name="QtdTop1"))
+    base_a = win_a.merge(tot_a, on=["CIA_UP","ADVP_BKT"], how="right").fillna({"QtdTop1":0})
     base_a["Pct"] = (base_a["QtdTop1"] / base_a["TotAdvp"].replace(0, np.nan) * 100).fillna(0.0)
 
-    def lider_advp(cia: str) -> pd.DataFrame:
-        sub = base_a[base_a["CIA_UP"] == cia].copy()
-        rows = []
+    def pick_leader_advp(cia:str, advp:int):
+        sub = base_a[(base_a["CIA_UP"]==cia) & (base_a["ADVP_BKT"]==advp)]
+        if sub.empty or (sub["TotAdvp"].sum()==0):
+            return {"CIA": cia, "ADVP": advp, "AGENCIA":"SEM OFERTAS", "PCT":0.0, "N":0}
+        top = sub.sort_values(["Pct","QtdTop1","TotAdvp"], ascending=False).iloc[0]
+        return {"CIA": cia, "ADVP": advp, "AGENCIA": str(top["AG_UP"]), 
+                "PCT": float(top["Pct"]), "N": int(top["TotAdvp"])}
+
+    def render_tbl_advp():
+        html = ["<table class='t6'>",
+                "<thead><tr><th style='width:70px'>CIA</th><th style='width:56px'>ADVP</th><th class='l'>AGENCIA</th><th style='width:110px'>% DE GANHO</th></tr></thead><tbody>"]
         for a in buckets:
-            s = sub[sub["ADVP_BKT"] == a].sort_values("Pct", ascending=False)
-            if s.empty:
-                rows.append({"CIA": cia, "ADVP": a, "AGENCIA":"SEM OFERTAS", "PCT":0.0})
-            else:
-                top = s.iloc[0]
-                rows.append({"CIA": cia, "ADVP": a, "AGENCIA": str(top["AG_UP"]), "PCT": float(top["Pct"])})
-        return pd.DataFrame(rows)
+            rows = [pick_leader_advp(cia, a) for cia in ["AZUL","GOL","LATAM"]]
+            for i, r in enumerate(rows):
+                alt = " class='alt'" if i % 2 else ""
+                html.append(
+                    f"<tr{alt}><td>{cia_chip(r['CIA'])}</td>"
+                    f"<td>{a}</td>"
+                    f"<td class='l'>{ag_fmt(r['AGENCIA'])}</td>"
+                    f"<td><b>{fmt_pct_pesq(r['PCT'], r['N'])}</b></td></tr>"
+                )
+            html.append("<tr class='sep'><td colspan='4'></td></tr>")
+        html.append("</tbody></table>")
+        st.markdown("".join(html), unsafe_allow_html=True)
 
-    a_az, a_go, a_la = (lider_advp(AZ), lider_advp(GO), lider_advp(LA))
+    # ===== Render lado a lado (compacto) =====
+    st.subheader("Competitividade (lado a lado)")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.caption("Cia × Trecho")
+        render_tbl_trecho()
+    with c2:
+        st.caption("Cia × ADVP")
+        render_tbl_advp()
 
-    # Linhas por ADVP em ordem 1,5,11,17,30 e CIA intercalada AZUL→GOL→LATAM
-    rows_a = []
-    for advp in buckets:
-        for cia_df in (a_az, a_go, a_la):
-            r = cia_df[cia_df["ADVP"] == advp]
-            if not r.empty:
-                rows_a.append(r.iloc[0].to_dict())
-    tbl_advp = pd.DataFrame(rows_a)[["CIA","ADVP","AGENCIA","PCT"]]
-
-    html2 = ["<table class='t6'>",
-             "<thead><tr><th>CIA</th><th>ADVP</th><th class='l'>AGENCIA</th><th>% DE GANHO</th></tr></thead><tbody>"]
-    for i, r in tbl_advp.iterrows():
-        cia = cia_chip(r["CIA"])
-        ag  = ag_fmt(str(r["AGENCIA"]))
-        pct = f"{float(r['PCT']):.2f}%".replace(".", ",")
-        alt = " class='alt'" if i % 2 else ""
-        html2.append(f"<tr{alt}><td>{cia}</td><td>{int(r['ADVP'])}</td><td class='l'>{ag}</td><td><b>{pct}</b></td></tr>")
-    html2.append("</tbody></table>")
-    st.markdown("".join(html2), unsafe_allow_html=True)
 
 
 
