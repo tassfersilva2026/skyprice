@@ -1260,7 +1260,6 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
       .dot{width:10px; height:10px; border-radius:2px; display:inline-block;}
       .az{background:#2D6CDF;} .go{background:#F7C948;} .la{background:#C0392B;} .g123{color:#0B6B2B; font-weight:900;}
       .alt{background:#fcfcfc;}
-
       /* cards */
       .cards-mini{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin:8px 0 0 0;}
       @media (max-width:1100px){.cards-mini{grid-template-columns:repeat(2,minmax(0,1fr));}}
@@ -1270,7 +1269,8 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
       .mini-name{font-weight:900; font-size:18px; color:#111827; margin:0;}
       .mini-pct{font-weight:1000; font-size:24px; color:#111827; line-height:1; margin-top:4px;}
       .mini-note{opacity:.6; font-weight:800; font-size:13px; margin-top:2px;}
-      .group-title{margin:8px 0 4px 0; font-weight:900; font-size:12px; color:#0A2A6B; letter-spacing:.3px;}
+      .mini-line{display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin-top:4px;}
+      .group-title{margin:10px 0 4px 0; font-weight:900; font-size:12px; color:#0A2A6B; letter-spacing:.3px;}
     </style>
     """, unsafe_allow_html=True)
 
@@ -1311,16 +1311,69 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
             <div class='mini-note'>( {fmt_int(cia_qtd)} pesq )</div>
           </div>
           <div class='mini'>
-            <div class='mini-title'>AGÊNCIA VENCEDORA</div>
+            <div class='mini-title'>Agência Vencedora</div>
             <div class='mini-name'>{ag_nome}</div>
             <div class='mini-pct'>{ag_pct}%</div>
             <div class='mini-note'>( {fmt_int(ag_qtd)} pesq )</div>
           </div>
           <div class='mini'>
-            <div class='mini-title'>TOTAL DE PESQUISAS QUE A AGÊNCIA VENCEDORA APARECEU</div>
+            <div class='mini-title'>Nº de Pesquisas</div>
             <div class='mini-name'>{fmt_int(ag_qtd)} pesquisas</div>
             <div class='mini-pct'>{ag_pct}%</div>
             <div class='mini-note'>Base: {fmt_int(total_base)} pesquisas</div>
+          </div>
+        </div>
+        """
+
+    # ===== bloco especial: Competitividade - Grupo123 (apenas ADVP) =====
+    def cards_block_grupo123(d1_advp: pd.DataFrame, base_advp_n: int):
+        gset = {"123MILHAS","MAXMILHAS"}
+        sub  = d1_advp[d1_advp["AG_UP"].isin(gset)].copy()
+
+        # Card 1: CIA + BARATA onde Grupo123 venceu
+        total_gwins = sub["IDPESQUISA"].nunique() or 0
+        if total_gwins:
+            cia_cnt = sub.groupby("CIA_UP")["IDPESQUISA"].nunique().sort_values(ascending=False)
+            cia_gnome = str(cia_cnt.index[0]); cia_gqtd = int(cia_cnt.iloc[0])
+            cia_gpct  = int(round(cia_gqtd / total_gwins * 100))
+        else:
+            cia_gnome, cia_gqtd, cia_gpct = "SEM OFERTAS", 0, 0
+
+        # Card 2: Participação das Empresas (% de ganho sobre a base ADVP)
+        c123 = int(sub[sub["AG_UP"]=="123MILHAS"]["IDPESQUISA"].nunique())
+        cmax = int(sub[sub["AG_UP"]=="MAXMILHAS"]["IDPESQUISA"].nunique())
+        cgrp = c123 + cmax
+        p123 = int(round((c123 / base_advp_n * 100))) if base_advp_n else 0
+        pmax = int(round((cmax / base_advp_n * 100))) if base_advp_n else 0
+        pgrp = int(round((cgrp / base_advp_n * 100))) if base_advp_n else 0
+
+        # Card 3: Nº de Pesquisas (com % e volume)
+        return f"""
+        <div class='group-title'>Competitividade - Grupo123</div>
+        <div class='cards-mini'>
+          <div class='mini'>
+            <div class='mini-title'>CIA + BARATA</div>
+            <div class='mini-name'>{cia_gnome}</div>
+            <div class='mini-pct'>{cia_gpct}%</div>
+            <div class='mini-note'>( {fmt_int(cia_gqtd)} pesq )</div>
+          </div>
+
+          <div class='mini'>
+            <div class='mini-title'>Participação das Empresas</div>
+            <div class='mini-line'><strong>123Milhas</strong><span class='mini-pct'>{p123}%</span></div>
+            <div class='mini-line'><strong>Maxmilhas</strong><span class='mini-pct'>{pmax}%</span></div>
+            <div class='mini-line'><strong>Grupo123</strong><span class='mini-pct'>{pgrp}%</span></div>
+            <div class='mini-note'>Base: {fmt_int(base_advp_n)} pesquisas</div>
+          </div>
+
+          <div class='mini'>
+            <div class='mini-title'>Nº de Pesquisas</div>
+            <div class='mini-line'><strong>123Milhas</strong><span class='mini-pct'>{p123}%</span></div>
+            <div class='mini-note'>( {fmt_int(c123)} pesq )</div>
+            <div class='mini-line'><strong>Maxmilhas</strong><span class='mini-pct'>{pmax}%</span></div>
+            <div class='mini-note'>( {fmt_int(cmax)} pesq )</div>
+            <div class='mini-line'><strong>Grupo123</strong><span class='mini-pct'>{pgrp}%</span></div>
+            <div class='mini-note'>( {fmt_int(cgrp)} pesq )</div>
           </div>
         </div>
         """
@@ -1386,17 +1439,14 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         html.append("</tbody></table>")
         st.markdown("".join(html), unsafe_allow_html=True)
 
-        # 6 cards abaixo (3 de Trechos + 3 de ADVP)
+        # 3 cards padrão (Trechos) + 3 cards Grupo123 (todos abaixo do ADVP)
         total_base_trechos = int(df["IDPESQUISA"].nunique() or 0)
-        total_base_advp    = int(df_advp["IDPESQUISA"].nunique() or 0)
-
-        c_nome, c_qtd, c_pct, a_nome, a_qtd, a_pct, base = compute_summary(d1,  total_base_trechos)
+        c_nome, c_qtd, c_pct, a_nome, a_qtd, a_pct, base = compute_summary(d1, total_base_trechos)
         st.markdown(cards_block("Resumo — Cia × Trechos", c_nome, c_qtd, c_pct, a_nome, a_qtd, a_pct, base),
                     unsafe_allow_html=True)
 
-        c_nome2, c_qtd2, c_pct2, a_nome2, a_qtd2, a_pct2, base2 = compute_summary(d1a, total_base_advp)
-        st.markdown(cards_block("Resumo — Cia × ADVP", c_nome2, c_qtd2, c_pct2, a_nome2, a_qtd2, a_pct2, base2),
-                    unsafe_allow_html=True)
+        base_advp_n = int(df_advp["IDPESQUISA"].nunique() or 0)
+        st.markdown(cards_block_grupo123(d1a, base_advp_n), unsafe_allow_html=True)
 
     # ===== Render: lado a lado, cards só no ADVP =====
     st.subheader("Competitividade (lado a lado)")
@@ -1407,7 +1457,6 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
     with c2:
         st.caption("Cia × ADVP")
         render_tbl_advp_and_cards()   # tabela + 6 cards
-
 
 
 
