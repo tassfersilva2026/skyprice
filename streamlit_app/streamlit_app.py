@@ -1208,11 +1208,12 @@ def tab5_competitividade(df_raw: pd.DataFrame):
 
 
 # ─────────────────────── ABA 6: Competitividade TRECHOS E ADVPS AGRUPADOS) ──────
-@register_tab("Competitividade Trechos e ADVPs Agrupados")
+# ─────────────────────── ABA 6: Competitividade (lado a lado, grupos 3) ──────
+@register_tab("Competitividade (tabelas)")
 def tab6_compet_tabelas(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t6")
     if df.empty:
-        st.subheader("Competitividade")
+        st.subheader("Competitividade (tabelas)")
         st.info("Sem resultados para os filtros atuais.")
         return
 
@@ -1247,62 +1248,61 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         return {"CIA": cia, "TRECHO": trecho, "AGENCIA": str(top["AG_UP"]),
                 "PCT": float(top["Pct"]), "N": int(top["TotPesq"])}
 
-    # ===== CSS: borda marcada a cada 3, % destacada, (N pesq) translúcido =====
+    # ===== CSS (borda externa mesma cor do separador; separador a cada 3) =====
     st.markdown("""
-<style>
-  .t6 {
-    width:100%;
-    border-collapse:collapse; 
-    table-layout:fixed;
-    /* borda externa com a mesma cor do separador */
-    border:3px solid #94a3b8;
-  }
+    <style>
+      .t6 {
+        width:100%; border-collapse:collapse; table-layout:fixed;
+        border:3px solid #94a3b8; /* mesma cor do separador */
+      }
+      .t6 th,.t6 td{
+        border:1px solid #e5e7eb; padding:5px 6px;
+        font-size:15px; line-height:1.25; text-align:center;
+      }
+      .t6 th{background:#f3f4f6; font-weight:800;}
+      .t6 .l{ text-align:left; }
+      .t6 .clip{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .t6 th.cia{width:58px;}
+      .t6 th.trc{width:64px;}     /* TRECHO menor */
+      .t6 th.ag{width:96px;}      /* AGENCIA menor */
+      .t6 th.pct,.t6 td.pct{width:200px; white-space:nowrap;}  /* % sem quebra */
 
-  /* fonte maior + células compactas */
-  .t6 th,.t6 td{
-    border:1px solid #e5e7eb; 
-    padding:5px 6px;
-    font-size:15px; 
-    line-height:1.25; 
-    text-align:center;
-  }
-  .t6 th{background:#f3f4f6; font-weight:800;}
-  .t6 .l{ text-align:left; }
-  .t6 .clip{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      /* separador forte a cada 3 linhas */
+      .sep td{
+        padding:0 !important; border:0 !important;
+        border-top:3px solid #94a3b8 !important; background:#fff;
+      }
 
-  /* larguras compactas */
-  .t6 th.cia{width:58px;}
-  .t6 th.trc{width:64px;}     /* TRECHO menor */
-  .t6 th.ag{width:96px;}      /* AGENCIA menor */
-  .t6 th.pct,.t6 td.pct{width:200px; white-space:nowrap;}  /* % sem quebra */
+      /* valor em destaque e (N pesq) translúcido */
+      .pct-val{font-weight:900; font-size:16px; color:#111827;}
+      .pesq{opacity:.55; font-weight:800; margin-left:6px; font-size:13px;}
 
-  /* separador forte a cada grupo de 3 linhas — levemente mais fino */
-  .sep td{
-    padding:0 !important; 
-    border:0 !important;
-    border-top:3px solid #94a3b8 !important;  /* mesma cor das bordas externas */
-    background:#fff;
-  }
+      .chip{display:inline-flex; align-items:center; gap:6px; font-weight:900; font-size:15px;}
+      .dot{width:10px; height:10px; border-radius:2px; display:inline-block;}
+      .az{background:#2D6CDF;} .go{background:#F7C948;} .la{background:#C0392B;}
+      .g123{color:#0B6B2B; font-weight:900;}
+      .alt{background:#fcfcfc;}
 
-  /* valor em destaque e (N pesq) translúcido */
-  .pct-val{font-weight:900; font-size:16px; color:#111827;}
-  .pesq{opacity:.55; font-weight:800; margin-left:6px; font-size:13px;}
-
-  .chip{display:inline-flex; align-items:center; gap:6px; font-weight:900; font-size:15px;}
-  .dot{width:10px; height:10px; border-radius:2px; display:inline-block;}
-  .az{background:#2D6CDF;} .go{background:#F7C948;} .la{background:#C0392B;}
-  .g123{color:#0B6B2B; font-weight:900;}
-  .alt{background:#fcfcfc;}
-</style>
-""", unsafe_allow_html=True)
-
+      /* ===== Cards de resumo abaixo ===== */
+      .cards-mini{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin-top:14px;}
+      @media (max-width:1100px){.cards-mini{grid-template-columns:repeat(2,minmax(0,1fr));}}
+      @media (max-width:700px){.cards-mini{grid-template-columns:1fr;}}
+      .mini{
+        border:2px solid #94a3b8; border-radius:12px; background:#fff;
+        padding:10px 12px; box-shadow:0 1px 2px rgba(0,0,0,.06);
+      }
+      .mini-title{font-weight:900; font-size:13px; letter-spacing:.2px; color:#0A2A6B; margin-bottom:6px;}
+      .mini-name{font-weight:900; font-size:18px; color:#111827;}
+      .mini-pct{font-weight:1000; font-size:24px; color:#111827; line-height:1; margin-top:6px;}
+      .mini-note{opacity:.6; font-weight:800; font-size:13px; margin-top:2px;}
+    </style>
+    """, unsafe_allow_html=True)
 
     def cia_chip(cia:str) -> str:
         cls = "az" if cia=="AZUL" else "go" if cia=="GOL" else "la"
         return f"<span class='chip'><span class='dot {cls}'></span>{cia}</span>"
 
     def pct_cell(pct, n) -> str:
-        # sem casas decimais
         try: p = int(round(float(pct)))
         except: p = 0
         try: k = int(n)
@@ -1372,7 +1372,7 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         st.markdown("".join(html), unsafe_allow_html=True)
 
     # ===== Render lado a lado =====
-    st.subheader("Competitividade Trechos e ADVPs Agrupados")
+    st.subheader("Competitividade (lado a lado)")
     c1, c2 = st.columns(2)
     with c1:
         st.caption("Cia × Trecho")
@@ -1380,6 +1380,46 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
     with c2:
         st.caption("Cia × ADVP")
         render_tbl_advp()
+
+    # ========================= QUADROS DE RESUMO (abaixo) =========================
+    total_pesq = int(df["IDPESQUISA"].nunique() or 0)
+
+    # CIA + BARATA
+    cia_win = (d1.groupby("CIA_UP")["IDPESQUISA"].nunique().sort_values(ascending=False))
+    cia_nome = str(cia_win.idxmax()) if not cia_win.empty else "SEM OFERTAS"
+    cia_qtd  = int(cia_win.max()) if not cia_win.empty else 0
+    cia_pct  = int(round((cia_qtd/total_pesq*100))) if total_pesq else 0
+
+    # AGÊNCIA VENCEDORA
+    ag_win = (d1.groupby("AG_UP")["IDPESQUISA"].nunique().sort_values(ascending=False))
+    ag_nome = str(ag_win.idxmax()) if not ag_win.empty else "SEM OFERTAS"
+    ag_qtd  = int(ag_win.max()) if not ag_win.empty else 0
+    ag_pct  = int(round((ag_qtd/total_pesq*100))) if total_pesq else 0
+
+    # Cards HTML
+    cards = f"""
+    <div class='cards-mini'>
+      <div class='mini'>
+        <div class='mini-title'>CIA + BARATA</div>
+        <div class='mini-name'>{cia_nome}</div>
+        <div class='mini-pct'>{cia_pct}%</div>
+        <div class='mini-note'>( {fmt_int(cia_qtd)} pesq )</div>
+      </div>
+      <div class='mini'>
+        <div class='mini-title'>AGÊNCIA VENCEDORA</div>
+        <div class='mini-name'>{ag_nome}</div>
+        <div class='mini-pct'>{ag_pct}%</div>
+        <div class='mini-note'>( {fmt_int(ag_qtd)} pesq )</div>
+      </div>
+      <div class='mini'>
+        <div class='mini-title'>TOTAL DE PESQUISAS QUE A AGÊNCIA VENCEDORA APARECEU</div>
+        <div class='mini-name'>{fmt_int(ag_qtd)} pesquisas</div>
+        <div class='mini-pct'>{ag_pct}%</div>
+        <div class='mini-note'>Base: {fmt_int(total_pesq)} pesquisas</div>
+      </div>
+    </div>
+    """
+    st.markdown(cards, unsafe_allow_html=True)
 
 
 # ================================ MAIN ========================================
