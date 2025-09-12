@@ -1208,26 +1208,31 @@ def tab5_competitividade(df_raw: pd.DataFrame):
 
 
 # ─────────────────────── ABA 6: Competitividade (compacta lado a lado) ───────
+# ─────────────────────── ABA 6: Competitividade (compacta lado a lado) ───────
 @register_tab("Competitividade (tabelas)")
 def tab6_compet_tabelas(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t6")
     if df.empty:
         st.subheader("Competitividade (tabelas)")
-        st.info("Sem resultados para os filtros atuais."); 
+        st.info("Sem resultados para os filtros atuais.")
         return
 
     need = {"RANKING","CIA_NORM","TRECHO","AGENCIA_NORM","IDPESQUISA"}
     if not need.issubset(df.columns):
-        st.warning(f"Colunas ausentes: {sorted(list(need - set(df.columns)))}"); 
+        miss = sorted(list(need - set(df.columns)))
+        st.warning(f"Colunas ausentes: {miss}")
         return
 
+    # Vencedores
     d1 = df[df["RANKING"].astype("Int64") == 1].copy()
     d1["CIA_UP"]     = d1["CIA_NORM"].astype(str).str.upper()
     d1["TRECHO_STD"] = d1["TRECHO"].astype(str)
     d1["AG_UP"]      = d1["AGENCIA_NORM"].astype(str)
 
+    # Universo de trechos visíveis (garante "SEM OFERTAS" quando não houver)
     trechos_all = sorted(df.get("TRECHO", pd.Series([], dtype=str)).dropna().astype(str).unique().tolist())
 
+    # Totais e vitórias por Cia×Trecho
     tot_t = (df.assign(CIA_UP=df["CIA_NORM"].astype(str).str.upper(),
                        TRECHO_STD=df["TRECHO"].astype(str))
                .groupby(["CIA_UP","TRECHO_STD"])["IDPESQUISA"]
@@ -1242,23 +1247,33 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         if sub.empty or (sub["TotPesq"].sum() == 0):
             return {"CIA": cia, "TRECHO": trecho, "AGENCIA": "SEM OFERTAS", "PCT": 0.0, "N": 0}
         top = sub.sort_values(["Pct","QtdTop1","TotPesq"], ascending=False).iloc[0]
-        return {"CIA": cia, "TRECHO": trecho, "AGENCIA": str(top["AG_UP"]), 
+        return {"CIA": cia, "TRECHO": trecho, "AGENCIA": str(top["AG_UP"]),
                 "PCT": float(top["Pct"]), "N": int(top["TotPesq"])}
 
-    # ==== CSS com larguras menores e % sem quebra ====
+    # ===== CSS: colunas de TRECHO/AGENCIA ainda mais estreitas + fonte maior =====
     st.markdown("""
     <style>
       .t6 {width:100%; border-collapse:collapse; table-layout:fixed;}
-      .t6 th,.t6 td{border:1px solid #e5e7eb; padding:4px 6px; font-size:12px; text-align:center;}
+      .t6 th,.t6 td{
+        border:1px solid #e5e7eb; padding:4px 6px;
+        font-size:15px; line-height:1.25; text-align:center;
+      }
       .t6 th{background:#f3f4f6; font-weight:800;}
       .t6 .l{ text-align:left; }
       .t6 .clip{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-      .t6 th.cia{width:64px}
-      .t6 th.trc{width:88px}
-      .t6 th.ag{width:140px}
-      .t6 th.pct,.t6 td.pct{width:160px; white-space:nowrap;}   /* não quebra */
-      .sep td{padding:2px !important; border:0 !important; border-top:2px solid #dfe3e8 !important; background:#fff;}
-      .chip{display:inline-flex; align-items:center; gap:5px; font-weight:800;}
+
+      /* larguras compactas */
+      .t6 th.cia{width:58px;}
+      .t6 th.trc{width:64px;}     /* TRECHO menor */
+      .t6 th.ag{width:96px;}      /* AGENCIA menor */
+      .t6 th.pct,.t6 td.pct{
+        width:200px; white-space:nowrap;   /* % sem quebra */
+      }
+
+      .sep td{padding:2px !important; border:0 !important;
+              border-top:2px solid #dfe3e8 !important; background:#fff;}
+
+      .chip{display:inline-flex; align-items:center; gap:6px; font-weight:900; font-size:15px;}
       .dot{width:10px; height:10px; border-radius:2px; display:inline-block;}
       .az{background:#2D6CDF;} .go{background:#F7C948;} .la{background:#C0392B;}
       .g123{color:#0B6B2B; font-weight:900;}
@@ -1318,7 +1333,7 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         if sub.empty or (sub["TotAdvp"].sum()==0):
             return {"CIA": cia, "ADVP": advp, "AGENCIA":"SEM OFERTAS", "PCT":0.0, "N":0}
         top = sub.sort_values(["Pct","QtdTop1","TotAdvp"], ascending=False).iloc[0]
-        return {"CIA": cia, "ADVP": advp, "AGENCIA": str(top["AG_UP"]), 
+        return {"CIA": cia, "ADVP": advp, "AGENCIA": str(top["AG_UP"]),
                 "PCT": float(top["Pct"]), "N": int(top["TotAdvp"])}
 
     def render_tbl_advp():
