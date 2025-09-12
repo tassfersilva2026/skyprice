@@ -14,7 +14,7 @@ import re
 st.set_page_config(page_title="Skyscanner — Painel", layout="wide", initial_sidebar_state="expanded")
 
 APP_DIR   = Path(__file__).resolve().parent
-DATA_PATH = APP_DIR / "data" / "OFERTASMATRIZ_OFERTAS.parquet"   # ajuste se necessário
+DATA_PATH = APP_DIR / "data" / "OFERTASV2.parquet"   # ajuste se necessário
 
 # ─────────────────────────── HELPERS BÁSICOS ─────────────────────────────────
 def _norm_hhmmss(v: object) -> str | None:
