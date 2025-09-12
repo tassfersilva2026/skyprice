@@ -1207,7 +1207,6 @@ def tab5_competitividade(df_raw: pd.DataFrame):
     st.markdown("<div class='comp-grid'>" + "".join(items_advp) + "</div>", unsafe_allow_html=True)
 
 
-# ─────────────────────── ABA 6: Competitividade (tabelas únicas) ─────────────
 # ─────────────────────── ABA 6: Competitividade (compacta lado a lado) ───────
 @register_tab("Competitividade (tabelas)")
 def tab6_compet_tabelas(df_raw: pd.DataFrame):
@@ -1222,16 +1221,13 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         st.warning(f"Colunas ausentes: {sorted(list(need - set(df.columns)))}"); 
         return
 
-    # Considera apenas vencedores (Rank 1)
     d1 = df[df["RANKING"].astype("Int64") == 1].copy()
     d1["CIA_UP"]     = d1["CIA_NORM"].astype(str).str.upper()
     d1["TRECHO_STD"] = d1["TRECHO"].astype(str)
     d1["AG_UP"]      = d1["AGENCIA_NORM"].astype(str)
 
-    # Universo de trechos: todos os trechos visíveis no filtro (mesmo sem Top1)
     trechos_all = sorted(df.get("TRECHO", pd.Series([], dtype=str)).dropna().astype(str).unique().tolist())
 
-    # Totais e vitórias por Cia×Trecho
     tot_t = (df.assign(CIA_UP=df["CIA_NORM"].astype(str).str.upper(),
                        TRECHO_STD=df["TRECHO"].astype(str))
                .groupby(["CIA_UP","TRECHO_STD"])["IDPESQUISA"]
@@ -1249,13 +1245,18 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         return {"CIA": cia, "TRECHO": trecho, "AGENCIA": str(top["AG_UP"]), 
                 "PCT": float(top["Pct"]), "N": int(top["TotPesq"])}
 
-    # ==== CSS compacto para caber lado a lado ====
+    # ==== CSS com larguras menores e % sem quebra ====
     st.markdown("""
     <style>
       .t6 {width:100%; border-collapse:collapse; table-layout:fixed;}
       .t6 th,.t6 td{border:1px solid #e5e7eb; padding:4px 6px; font-size:12px; text-align:center;}
       .t6 th{background:#f3f4f6; font-weight:800;}
       .t6 .l{ text-align:left; }
+      .t6 .clip{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .t6 th.cia{width:64px}
+      .t6 th.trc{width:88px}
+      .t6 th.ag{width:140px}
+      .t6 th.pct,.t6 td.pct{width:160px; white-space:nowrap;}   /* não quebra */
       .sep td{padding:2px !important; border:0 !important; border-top:2px solid #dfe3e8 !important; background:#fff;}
       .chip{display:inline-flex; align-items:center; gap:5px; font-weight:800;}
       .dot{width:10px; height:10px; border-radius:2px; display:inline-block;}
@@ -1271,7 +1272,7 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
 
     def fmt_pct_pesq(pct, n):
         try:
-            return f"{float(pct):.2f}%".replace(".", ",") + f" - ({int(n)} pesq)"
+            return f"{float(pct):.2f}%".replace('.', ',') + f" - ({int(n)} pesq)"
         except:
             return "0,00% - (0 pesq)"
 
@@ -1281,29 +1282,27 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
     # ======= Tabela 1: Cia × Trecho (3 linhas por trecho + separador) =======
     def render_tbl_trecho():
         html = ["<table class='t6'>",
-                "<thead><tr><th style='width:70px'>CIA</th><th class='l'>TRECHO</th><th class='l'>AGENCIA</th><th style='width:110px'>% DE GANHO</th></tr></thead><tbody>"]
+                "<thead><tr><th class='cia'>CIA</th><th class='trc l'>TRECHO</th><th class='ag l'>AGENCIA</th><th class='pct'>% DE GANHO</th></tr></thead><tbody>"]
         for t in trechos_all:
             rows = [pick_leader(cia, t) for cia in ["AZUL","GOL","LATAM"]]
             for i, r in enumerate(rows):
                 alt = " class='alt'" if i % 2 else ""
                 html.append(
                     f"<tr{alt}><td>{cia_chip(r['CIA'])}</td>"
-                    f"<td class='l'>{t}</td>"
-                    f"<td class='l'>{ag_fmt(r['AGENCIA'])}</td>"
-                    f"<td><b>{fmt_pct_pesq(r['PCT'], r['N'])}</b></td></tr>"
+                    f"<td class='trc l clip'>{t}</td>"
+                    f"<td class='ag l clip'>{ag_fmt(r['AGENCIA'])}</td>"
+                    f"<td class='pct'><b>{fmt_pct_pesq(r['PCT'], r['N'])}</b></td></tr>"
                 )
             html.append("<tr class='sep'><td colspan='4'></td></tr>")
         html.append("</tbody></table>")
         st.markdown("".join(html), unsafe_allow_html=True)
 
     # ======= Tabela 2: Cia × ADVP (3 linhas por ADVP + separador) ===========
-    # buckets fixos
     buckets = [1,5,11,17,30]
     advp_series = pd.to_numeric(df.get("ADVP_CANON"), errors="coerce")
     df_advp = df[advp_series.notna()].copy()
     df_advp["ADVP_BKT"] = advp_series.loc[df_advp.index].astype(int)
 
-    # Totais por Cia×ADVP e vitórias (Rank 1) por Cia×ADVP×Agência
     tot_a = (df_advp.assign(CIA_UP=df_advp["CIA_NORM"].astype(str).str.upper())
                     .groupby(["CIA_UP","ADVP_BKT"])["IDPESQUISA"]
                     .nunique().reset_index(name="TotAdvp"))
@@ -1324,7 +1323,7 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
 
     def render_tbl_advp():
         html = ["<table class='t6'>",
-                "<thead><tr><th style='width:70px'>CIA</th><th style='width:56px'>ADVP</th><th class='l'>AGENCIA</th><th style='width:110px'>% DE GANHO</th></tr></thead><tbody>"]
+                "<thead><tr><th class='cia'>CIA</th><th style='width:56px'>ADVP</th><th class='ag l'>AGENCIA</th><th class='pct'>% DE GANHO</th></tr></thead><tbody>"]
         for a in buckets:
             rows = [pick_leader_advp(cia, a) for cia in ["AZUL","GOL","LATAM"]]
             for i, r in enumerate(rows):
@@ -1332,14 +1331,14 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
                 html.append(
                     f"<tr{alt}><td>{cia_chip(r['CIA'])}</td>"
                     f"<td>{a}</td>"
-                    f"<td class='l'>{ag_fmt(r['AGENCIA'])}</td>"
-                    f"<td><b>{fmt_pct_pesq(r['PCT'], r['N'])}</b></td></tr>"
+                    f"<td class='ag l clip'>{ag_fmt(r['AGENCIA'])}</td>"
+                    f"<td class='pct'><b>{fmt_pct_pesq(r['PCT'], r['N'])}</b></td></tr>"
                 )
             html.append("<tr class='sep'><td colspan='4'></td></tr>")
         html.append("</tbody></table>")
         st.markdown("".join(html), unsafe_allow_html=True)
 
-    # ===== Render lado a lado (compacto) =====
+    # ===== Render lado a lado =====
     st.subheader("Competitividade (lado a lado)")
     c1, c2 = st.columns(2)
     with c1:
@@ -1348,6 +1347,7 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
     with c2:
         st.caption("Cia × ADVP")
         render_tbl_advp()
+
 
 
 
