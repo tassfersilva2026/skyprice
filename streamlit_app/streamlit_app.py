@@ -1207,7 +1207,6 @@ def tab5_competitividade(df_raw: pd.DataFrame):
     st.markdown("<div class='comp-grid'>" + "".join(items_advp) + "</div>", unsafe_allow_html=True)
 
 
-# ─────────────────────── ABA 6: Competitividade (lado a lado, com cards) ─────
 # ─────────────────────── ABA 6: Competitividade (tabelas + 6 cards) ──────────
 @register_tab("Competitividade (tabelas)")
 def tab6_compet_tabelas(df_raw: pd.DataFrame):
@@ -1276,7 +1275,139 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
     """, unsafe_allow_html=True)
 
     def cia_chip(cia:str) -> str:
-        cls = "az" if cia==
+        cls = "az" if cia=="AZUL" else "go" if cia=="GOL" else "la"
+        return f"<span class='chip'><span class='dot {cls}'></span>{cia}</span>"
+
+    def pct_cell(pct, n) -> str:
+        try: p = int(round(float(pct)))
+        except: p = 0
+        try: k = int(n)
+        except: k = 0
+        return f"<span class='pct-val'>{p}%</span><span class='pesq'>( {k} pesq )</span>"
+
+    def ag_fmt(ag:str) -> str:
+        return f"<span class='g123'>{ag}</span>" if ag in {"123MILHAS","MAXMILHAS"} else ag
+
+    # ===== helpers de resumo =====
+    def compute_summary(win_df: pd.DataFrame, total_base: int):
+        if win_df.empty or total_base == 0:
+            return ("SEM OFERTAS", 0, 0, "SEM OFERTAS", 0, 0, 0)
+        cia_s = win_df.groupby("CIA_UP")["IDPESQUISA"].nunique().sort_values(ascending=False)
+        ag_s  = win_df.groupby("AG_UP")["IDPESQUISA"].nunique().sort_values(ascending=False)
+        cia_nome, cia_qtd = (str(cia_s.index[0]), int(cia_s.iloc[0])) if not cia_s.empty else ("SEM OFERTAS", 0)
+        ag_nome, ag_qtd   = (str(ag_s.index[0]),  int(ag_s.iloc[0]))  if not ag_s.empty  else ("SEM OFERTAS", 0)
+        cia_pct = int(round(cia_qtd/total_base*100)) if total_base else 0
+        ag_pct  = int(round(ag_qtd/total_base*100))  if total_base else 0
+        return (cia_nome, cia_qtd, cia_pct, ag_nome, ag_qtd, ag_pct, total_base)
+
+    def cards_block(title: str, cia_nome, cia_qtd, cia_pct, ag_nome, ag_qtd, ag_pct, total_base):
+        return f"""
+        <div class='group-title'>{title}</div>
+        <div class='cards-mini'>
+          <div class='mini'>
+            <div class='mini-title'>CIA + BARATA</div>
+            <div class='mini-name'>{cia_nome}</div>
+            <div class='mini-pct'>{cia_pct}%</div>
+            <div class='mini-note'>( {fmt_int(cia_qtd)} pesq )</div>
+          </div>
+          <div class='mini'>
+            <div class='mini-title'>AGÊNCIA VENCEDORA</div>
+            <div class='mini-name'>{ag_nome}</div>
+            <div class='mini-pct'>{ag_pct}%</div>
+            <div class='mini-note'>( {fmt_int(ag_qtd)} pesq )</div>
+          </div>
+          <div class='mini'>
+            <div class='mini-title'>TOTAL DE PESQUISAS QUE A AGÊNCIA VENCEDORA APARECEU</div>
+            <div class='mini-name'>{fmt_int(ag_qtd)} pesquisas</div>
+            <div class='mini-pct'>{ag_pct}%</div>
+            <div class='mini-note'>Base: {fmt_int(total_base)} pesquisas</div>
+          </div>
+        </div>
+        """
+
+    # ======= Tabela 1: Cia × Trecho (SEM cards abaixo) =======
+    def render_tbl_trecho():
+        html = ["<table class='t6'>",
+                "<thead><tr><th class='cia'>CIA</th><th class='trc l'>TRECHO</th><th class='ag l'>AGENCIA</th><th class='pct'>% DE GANHO</th></tr></thead><tbody>"]
+        for t in trechos_all:
+            rows = [pick_leader(cia, t) for cia in ["AZUL","GOL","LATAM"]]
+            for i, r in enumerate(rows):
+                alt = " class='alt'" if i % 2 else ""
+                html.append(
+                    f"<tr{alt}><td>{cia_chip(r['CIA'])}</td>"
+                    f"<td class='trc l clip'>{t}</td>"
+                    f"<td class='ag l clip'>{ag_fmt(r['AGENCIA'])}</td>"
+                    f"<td class='pct'>{pct_cell(r['PCT'], r['N'])}</td></tr>"
+                )
+            html.append("<tr class='sep'><td colspan='4'></td></tr>")
+        html.append("</tbody></table>")
+        st.markdown("".join(html), unsafe_allow_html=True)
+
+    # ======= Tabela 2: Cia × ADVP (com 6 cards abaixo) =======
+    buckets = [1,5,11,17,30]
+    advp_series = pd.to_numeric(df.get("ADVP_CANON"), errors="coerce")
+    df_advp = df[advp_series.notna()].copy()
+    df_advp["ADVP_BKT"] = advp_series.loc[df_advp.index].astype(int)
+
+    d1a = d1.copy()
+    d1a["ADVP_BKT"] = pd.to_numeric(df.get("ADVP_CANON"), errors="coerce")
+    d1a = d1a.dropna(subset=["ADVP_BKT"])
+
+    tot_a = (df_advp.assign(CIA_UP=df_advp["CIA_NORM"].astype(str).str.upper())
+                    .groupby(["CIA_UP","ADVP_BKT"])["IDPESQUISA"]
+                    .nunique().reset_index(name="TotAdvp"))
+    win_a = (d1a.groupby(["CIA_UP","ADVP_BKT","AG_UP"])["IDPESQUISA"]
+                .nunique().reset_index(name="QtdTop1"))
+    base_a = win_a.merge(tot_a, on=["CIA_UP","ADVP_BKT"], how="right").fillna({"QtdTop1":0})
+    base_a["Pct"] = (base_a["QtdTop1"] / base_a["TotAdvp"].replace(0, np.nan) * 100).fillna(0.0)
+
+    def pick_leader_advp(cia:str, advp:int):
+        sub = base_a[(base_a["CIA_UP"]==cia) & (base_a["ADVP_BKT"]==advp)]
+        if sub.empty or (sub["TotAdvp"].sum()==0):
+            return {"CIA": cia, "ADVP": advp, "AGENCIA":"SEM OFERTAS", "PCT":0.0, "N":0}
+        top = sub.sort_values(["Pct","QtdTop1","TotAdvp"], ascending=False).iloc[0]
+        return {"CIA": cia, "ADVP": advp, "AGENCIA": str(top["AG_UP"]), "PCT": float(top["Pct"]), "N": int(top["TotAdvp"])}
+
+    def render_tbl_advp_and_cards():
+        # tabela
+        html = ["<table class='t6'>",
+                "<thead><tr><th class='cia'>CIA</th><th style='width:56px'>ADVP</th><th class='ag l'>AGENCIA</th><th class='pct'>% DE GANHO</th></tr></thead><tbody>"]
+        for a in buckets:
+            rows = [pick_leader_advp(cia, a) for cia in ["AZUL","GOL","LATAM"]]
+            for i, r in enumerate(rows):
+                alt = " class='alt'" if i % 2 else ""
+                html.append(
+                    f"<tr{alt}><td>{cia_chip(r['CIA'])}</td>"
+                    f"<td>{a}</td>"
+                    f"<td class='ag l clip'>{ag_fmt(r['AGENCIA'])}</td>"
+                    f"<td class='pct'>{pct_cell(r['PCT'], r['N'])}</td></tr>"
+                )
+            html.append("<tr class='sep'><td colspan='4'></td></tr>")
+        html.append("</tbody></table>")
+        st.markdown("".join(html), unsafe_allow_html=True)
+
+        # 6 cards abaixo (3 de Trechos + 3 de ADVP)
+        total_base_trechos = int(df["IDPESQUISA"].nunique() or 0)
+        total_base_advp    = int(df_advp["IDPESQUISA"].nunique() or 0)
+
+        c_nome, c_qtd, c_pct, a_nome, a_qtd, a_pct, base = compute_summary(d1,  total_base_trechos)
+        st.markdown(cards_block("Resumo — Cia × Trechos", c_nome, c_qtd, c_pct, a_nome, a_qtd, a_pct, base),
+                    unsafe_allow_html=True)
+
+        c_nome2, c_qtd2, c_pct2, a_nome2, a_qtd2, a_pct2, base2 = compute_summary(d1a, total_base_advp)
+        st.markdown(cards_block("Resumo — Cia × ADVP", c_nome2, c_qtd2, c_pct2, a_nome2, a_qtd2, a_pct2, base2),
+                    unsafe_allow_html=True)
+
+    # ===== Render: lado a lado, cards só no ADVP =====
+    st.subheader("Competitividade (lado a lado)")
+    c1, c2 = st.columns(2, gap="small")
+    with c1:
+        st.caption("Cia × Trecho")
+        render_tbl_trecho()           # sem cards
+    with c2:
+        st.caption("Cia × ADVP")
+        render_tbl_advp_and_cards()   # tabela + 6 cards
+
 
 
 
