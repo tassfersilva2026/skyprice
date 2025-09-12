@@ -1208,16 +1208,20 @@ def tab5_competitividade(df_raw: pd.DataFrame):
 
 
 # ─────────────────────── ABA 6: Competitividade (tabelas + 6 cards) ──────────
-@register_tab("Competitividade (tabelas)")
+# ───────── ABA 6: Competitividade Cia x Trecho x ADVPs Agrupados (tabelas + 6 cards) ─────────
+@register_tab("Competitividade Cia x Trecho x ADVPs Agrupados")
 def tab6_compet_tabelas(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t6")
     if df.empty:
-        st.subheader("Competitividade (tabelas)")
-        st.info("Sem resultados para os filtros atuais."); return
+        st.subheader("Competividade  Cia x Trecho x ADVPs Agrupados")
+        st.info("Sem resultados para os filtros atuais."); 
+        return
 
     need = {"RANKING","CIA_NORM","TRECHO","AGENCIA_NORM","IDPESQUISA"}
     if not need.issubset(df.columns):
-        st.warning(f"Colunas ausentes: {sorted(list(need - set(df.columns)))}"); return
+        st.subheader("Competividade  Cia x Trecho x ADVPs Agrupados")
+        st.warning(f"Colunas ausentes: {sorted(list(need - set(df.columns)))}"); 
+        return
 
     # winners
     d1 = df[df["RANKING"].astype("Int64") == 1].copy()
@@ -1252,7 +1256,7 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
       .t6 th{background:#f3f4f6; font-weight:800;}
       .t6 .l{text-align:left;} .t6 .clip{white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
       .t6 th.cia{width:58px;} .t6 th.trc{width:64px;} .t6 th.ag{width:96px;}
-      .t6 th.pct,.t6 td.pct{width:200px; white-space:nowrap;}  /* % sem quebra */
+      .t6 th.pct,.t6 td.pct{width:200px; white-space:nowrap;}
       .sep td{padding:0!important; border:0!important; border-top:3px solid #94a3b8!important; background:#fff;}
       .pct-val{font-weight:900; font-size:16px; color:#111827;}
       .pesq{opacity:.55; font-weight:800; margin-left:6px; font-size:13px;}
@@ -1260,7 +1264,6 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
       .dot{width:10px; height:10px; border-radius:2px; display:inline-block;}
       .az{background:#2D6CDF;} .go{background:#F7C948;} .la{background:#C0392B;} .g123{color:#0B6B2B; font-weight:900;}
       .alt{background:#fcfcfc;}
-      /* cards */
       .cards-mini{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin:8px 0 0 0;}
       @media (max-width:1100px){.cards-mini{grid-template-columns:repeat(2,minmax(0,1fr));}}
       @media (max-width:700px){.cards-mini{grid-template-columns:1fr;}}
@@ -1330,7 +1333,7 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         gset = {"123MILHAS","MAXMILHAS"}
         sub  = d1_advp[d1_advp["AG_UP"].isin(gset)].copy()
 
-        # Card 1: CIA + BARATA onde Grupo123 venceu
+        # CIA + BARATA onde Grupo123 venceu
         total_gwins = sub["IDPESQUISA"].nunique() or 0
         if total_gwins:
             cia_cnt = sub.groupby("CIA_UP")["IDPESQUISA"].nunique().sort_values(ascending=False)
@@ -1339,7 +1342,7 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         else:
             cia_gnome, cia_gqtd, cia_gpct = "SEM OFERTAS", 0, 0
 
-        # Card 2: Participação das Empresas (% de ganho sobre a base ADVP)
+        # Participação das Empresas sobre a base ADVP
         c123 = int(sub[sub["AG_UP"]=="123MILHAS"]["IDPESQUISA"].nunique())
         cmax = int(sub[sub["AG_UP"]=="MAXMILHAS"]["IDPESQUISA"].nunique())
         cgrp = c123 + cmax
@@ -1347,7 +1350,6 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         pmax = int(round((cmax / base_advp_n * 100))) if base_advp_n else 0
         pgrp = int(round((cgrp / base_advp_n * 100))) if base_advp_n else 0
 
-        # Card 3: Nº de Pesquisas (com % e volume)
         return f"""
         <div class='group-title'>Competitividade - Grupo123</div>
         <div class='cards-mini'>
@@ -1378,7 +1380,7 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         </div>
         """
 
-    # ======= Tabela 1: Cia × Trecho (SEM cards abaixo) =======
+    # ======= Tabela 1: Cia × Trecho (SEM cards) =======
     def render_tbl_trecho():
         html = ["<table class='t6'>",
                 "<thead><tr><th class='cia'>CIA</th><th class='trc l'>TRECHO</th><th class='ag l'>AGENCIA</th><th class='pct'>% DE GANHO</th></tr></thead><tbody>"]
@@ -1439,17 +1441,17 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         html.append("</tbody></table>")
         st.markdown("".join(html), unsafe_allow_html=True)
 
-        # 3 cards padrão (Trechos) + 3 cards Grupo123 (todos abaixo do ADVP)
+        # 3 cards padrão (Resumo do Vencedor) + 3 cards Grupo123
         total_base_trechos = int(df["IDPESQUISA"].nunique() or 0)
         c_nome, c_qtd, c_pct, a_nome, a_qtd, a_pct, base = compute_summary(d1, total_base_trechos)
-        st.markdown(cards_block("Resumo — Cia × Trechos", c_nome, c_qtd, c_pct, a_nome, a_qtd, a_pct, base),
+        st.markdown(cards_block("Resumo do Vencedor", c_nome, c_qtd, c_pct, a_nome, a_qtd, a_pct, base),
                     unsafe_allow_html=True)
 
         base_advp_n = int(df_advp["IDPESQUISA"].nunique() or 0)
         st.markdown(cards_block_grupo123(d1a, base_advp_n), unsafe_allow_html=True)
 
-    # ===== Render: lado a lado, cards só no ADVP =====
-    st.subheader("Competitividade (lado a lado)")
+    # ===== Render =====
+    st.subheader("Competividade  Cia x Trecho x ADVPs Agrupados")
     c1, c2 = st.columns(2, gap="small")
     with c1:
         st.caption("Cia × Trecho")
@@ -1457,7 +1459,6 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
     with c2:
         st.caption("Cia × ADVP")
         render_tbl_advp_and_cards()   # tabela + 6 cards
-
 
 
 # ================================ MAIN ========================================
