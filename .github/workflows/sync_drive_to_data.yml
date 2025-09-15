@@ -14,8 +14,11 @@ jobs:
       TZ: America/Sao_Paulo
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
@@ -24,35 +27,34 @@ jobs:
           python -m pip install --upgrade pip
           pip install google-api-python-client google-auth google-auth-httplib2
 
-      - name: Restaurar credenciais do Service Account
+      - name: Salvar credenciais do SA (JSON puro)
         env:
-          GDRIVE_SA_B64: ${{ secrets.GDRIVE_SA_B64 }}
           GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
         run: |
           set -e
-          if [ -n "$GDRIVE_SA_B64" ]; then
-            printf "%s" "$GDRIVE_SA_B64" | base64 -d > sa.json
-          elif [ -n "$GDRIVE_SERVICE_ACCOUNT_JSON" ]; then
-            cat > sa.json <<'EOF'
-${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
-EOF
-          else
-            echo "::error::Defina GDRIVE_SA_B64 ou GDRIVE_SERVICE_ACCOUNT_JSON"
+          if [ -z "$GDRIVE_SERVICE_ACCOUNT_JSON" ]; then
+            echo "::error::Defina o secret GDRIVE_SERVICE_ACCOUNT_JSON"
             exit 1
           fi
+          echo "$GDRIVE_SERVICE_ACCOUNT_JSON" > sa.json
           python -c "import json; print('Credenciais OK:', json.load(open('sa.json'))['client_email'])"
 
-      - name: Baixar arquivo do Drive
+      - name: Baixar do Drive
         env:
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
-          test -n "$GDRIVE_FOLDER_ID" || { echo "::error::Defina GDRIVE_FOLDER_ID"; exit 1; }
+          set -e
+          if [ -z "$GDRIVE_FOLDER_ID" ]; then
+            echo "::error::Defina o secret GDRIVE_FOLDER_ID"
+            exit 1
+          fi
           python streamlit_app/download_from_drive_folder.py \
             --folder-id "$GDRIVE_FOLDER_ID" \
             --target-name "OFERTASMATRIZ_OFERTAS.parquet" \
             --creds sa.json \
             --out-dir "streamlit_app/data" \
             --rename "OFERTASMATRIZ_OFERTAS.parquet"
+          date
 
       - name: Commit & push se houver mudanças
         uses: stefanzweifel/git-auto-commit-action@v5
