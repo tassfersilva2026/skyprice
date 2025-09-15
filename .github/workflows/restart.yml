@@ -3,7 +3,7 @@ name: Sync Drive -> streamlit_app/data
 
 on:
   schedule:
-    - cron: "*/20 * * * *"  # a cada 20 min (agendamento é UTC)
+    - cron: "*/20 * * * *"   # a cada 20 min (agenda é UTC)
   workflow_dispatch:
 
 jobs:
@@ -12,7 +12,7 @@ jobs:
     permissions:
       contents: write
     env:
-      TZ: America/Sao_Paulo  # fuso para logs e timestamps
+      TZ: America/Sao_Paulo
 
     steps:
       - uses: actions/checkout@v4
@@ -26,12 +26,24 @@ jobs:
           python -m pip install --upgrade pip
           pip install google-api-python-client google-auth google-auth-httplib2
 
-      - name: Restaurar credenciais do SA (base64)
+      # Aceita GDRIVE_SA_B64 (recomendado) ou GDRIVE_SERVICE_ACCOUNT_JSON (puro)
+      - name: Restaurar credenciais do Service Account
         env:
           GDRIVE_SA_B64: ${{ secrets.GDRIVE_SA_B64 }}
+          GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
         run: |
-          printf "%s" "$GDRIVE_SA_B64" | base64 -d > sa.json
-          python -c "import json; json.load(open('sa.json')); print('Credenciais OK')"
+          set -e
+          if [ -n "$GDRIVE_SA_B64" ]; then
+            printf "%s" "$GDRIVE_SA_B64" | base64 -d > sa.json
+          elif [ -n "$GDRIVE_SERVICE_ACCOUNT_JSON" ]; then
+            cat > sa.json <<'EOF'
+${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
+EOF
+          else
+            echo "::error::Defina o secret GDRIVE_SA_B64 (base64) ou GDRIVE_SERVICE_ACCOUNT_JSON (JSON)."
+            exit 1
+          fi
+          python -c "import json; print('Credenciais OK:', json.load(open('sa.json'))['client_email'])"
 
       - name: Baixar arquivo do Drive
         env:
