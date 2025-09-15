@@ -1145,7 +1145,7 @@ def tab5_competitividade(df_raw: pd.DataFrame):
     st.subheader("Competitividade Cia x ADVP")
 
     # Buckets ADVP fixos na ordem solicitada
-    advp_buckets = [1, 5, 11, 17, 30]
+    advp_buckets = [30, 60, 90, 120, 120, 10, 210, 240, 270, 300, 330, 365]
 
     # garantir coluna ADVP_BKT
     advp_series = pd.to_numeric(df1.get("ADVP_CANON"), errors="coerce")
@@ -1208,7 +1208,6 @@ def tab5_competitividade(df_raw: pd.DataFrame):
 
 
 # ─────────────────────── ABA 6: Competitividade (tabelas + 6 cards) ──────────
-# ───────── ABA 6: Competitividade Cia x Trecho x ADVPs Agrupados (tabelas + 6 cards) ─────────
 @register_tab("Competitividade Cia x Trecho x ADVPs Agrupados")
 def tab6_compet_tabelas(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t6")
