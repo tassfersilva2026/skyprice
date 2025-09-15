@@ -1,4 +1,3 @@
-# .github/workflows/sync_drive_to_data.yml
 name: Sync Drive -> streamlit_app/data
 
 on:
@@ -26,14 +25,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install google-api-python-client google-auth google-auth-httplib2
 
-      - name: Salvar credenciais do Service Account
+      - name: Restaurar credenciais do Service Account (base64)
         run: |
-          echo "${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}" > sa.json
+          echo "${{ secrets.GDRIVE_SA_B64 }}" | base64 -d > sa.json
+          python - <<'PY'
+import json; print("Credenciais OK:", json.load(open("sa.json"))["client_email"])
+PY
 
       - name: Baixar arquivo do Drive para streamlit_app/data
+        env:
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
           python streamlit_app/download_from_drive_folder.py \
-            --folder-id "${{ secrets.GDRIVE_FOLDER_ID }}" \
+            --folder-id "${GDRIVE_FOLDER_ID}" \
             --target-name "OFERTASMATRIZ_OFERTAS.parquet" \
             --creds sa.json \
             --out-dir "streamlit_app/data" \
