@@ -1,8 +1,9 @@
+# .github/workflows/sync_drive_to_data.yml
 name: Sync Drive -> streamlit_app/data
 
 on:
   schedule:
-    - cron: "*/20 * * * *"   # a cada 20 min (UTC)
+    - cron: "*/20 * * * *"  # a cada 20 min (agendamento é UTC)
   workflow_dispatch:
 
 jobs:
@@ -10,13 +11,13 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      TZ: America/Sao_Paulo  # fuso para logs e timestamps
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
@@ -25,19 +26,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install google-api-python-client google-auth google-auth-httplib2
 
-      - name: Restaurar credenciais do Service Account (base64)
+      - name: Restaurar credenciais do SA (base64)
+        env:
+          GDRIVE_SA_B64: ${{ secrets.GDRIVE_SA_B64 }}
         run: |
-          echo "${{ secrets.GDRIVE_SA_B64 }}" | base64 -d > sa.json
-          python - <<'PY'
-import json; print("Credenciais OK:", json.load(open("sa.json"))["client_email"])
-PY
+          printf "%s" "$GDRIVE_SA_B64" | base64 -d > sa.json
+          python -c "import json; json.load(open('sa.json')); print('Credenciais OK')"
 
-      - name: Baixar arquivo do Drive para streamlit_app/data
+      - name: Baixar arquivo do Drive
         env:
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
           python streamlit_app/download_from_drive_folder.py \
-            --folder-id "${GDRIVE_FOLDER_ID}" \
+            --folder-id "$GDRIVE_FOLDER_ID" \
             --target-name "OFERTASMATRIZ_OFERTAS.parquet" \
             --creds sa.json \
             --out-dir "streamlit_app/data" \
