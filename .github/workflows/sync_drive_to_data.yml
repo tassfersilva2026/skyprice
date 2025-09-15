@@ -1,3 +1,4 @@
+# .github/workflows/sync_drive_to_data.yml
 name: Sync Drive -> streamlit_app/data
 
 on:
@@ -29,9 +30,9 @@ jobs:
         run: |
           echo "${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}" > sa.json
 
-      - name: Baixar arquivo do Drive e salvar em streamlit_app/data
+      - name: Baixar arquivo do Drive para streamlit_app/data
         run: |
-          python scripts/download_from_drive_folder.py \
+          python streamlit_app/download_from_drive_folder.py \
             --folder-id "${{ secrets.GDRIVE_FOLDER_ID }}" \
             --target-name "OFERTASMATRIZ_OFERTAS.parquet" \
             --creds sa.json \
