@@ -3,7 +3,7 @@ name: Sync Drive -> streamlit_app/data
 
 on:
   schedule:
-    - cron: "*/20 * * * *"   # a cada 20 min (agenda é UTC)
+    - cron: "*/20 * * * *"  # GitHub agenda em UTC
   workflow_dispatch:
 
 jobs:
@@ -26,35 +26,29 @@ jobs:
           python -m pip install --upgrade pip
           pip install google-api-python-client google-auth google-auth-httplib2
 
-      # Aceita GDRIVE_SA_B64 (recomendado) ou GDRIVE_SERVICE_ACCOUNT_JSON (puro)
-      - name: Restaurar credenciais do Service Account
+      - name: Restaurar credenciais do SA (base64)
         env:
           GDRIVE_SA_B64: ${{ secrets.GDRIVE_SA_B64 }}
-          GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
         run: |
-          set -e
-          if [ -n "$GDRIVE_SA_B64" ]; then
-            printf "%s" "$GDRIVE_SA_B64" | base64 -d > sa.json
-          elif [ -n "$GDRIVE_SERVICE_ACCOUNT_JSON" ]; then
-            cat > sa.json <<'EOF'
-${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
-EOF
-          else
-            echo "::error::Defina o secret GDRIVE_SA_B64 (base64) ou GDRIVE_SERVICE_ACCOUNT_JSON (JSON)."
-            exit 1
-          fi
-          python -c "import json; print('Credenciais OK:', json.load(open('sa.json'))['client_email'])"
+          set -euo pipefail
+          test -n "$GDRIVE_SA_B64" || { echo "::error::Secret GDRIVE_SA_B64 vazio"; exit 1; }
+          printf "%s" "$GDRIVE_SA_B64" | base64 -d > sa.json
+          python - <<'PY'
+import json; j=json.load(open("sa.json")); print("Credenciais OK:", j["client_email"])
+PY
 
       - name: Baixar arquivo do Drive
         env:
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
+          test -n "$GDRIVE_FOLDER_ID" || { echo "::error::Defina GDRIVE_FOLDER_ID"; exit 1; }
           python streamlit_app/download_from_drive_folder.py \
             --folder-id "$GDRIVE_FOLDER_ID" \
             --target-name "OFERTASMATRIZ_OFERTAS.parquet" \
             --creds sa.json \
             --out-dir "streamlit_app/data" \
             --rename "OFERTASMATRIZ_OFERTAS.parquet"
+          date  # confirma TZ nos logs
 
       - name: Commit & push se houver mudanças
         uses: stefanzweifel/git-auto-commit-action@v5
