@@ -50,14 +50,14 @@ jobs:
           fi
           python streamlit_app/download_from_drive_folder.py \
             --folder-id "$GDRIVE_FOLDER_ID" \
-            --target-name "OFERTASMATRIZ_OFERTAS.parquet" \
+            --target-name "OFERTASCONSOLIDADO_OFERTAS.parquet" \
             --creds sa.json \
             --out-dir "streamlit_app/data" \
-            --rename "OFERTASMATRIZ_OFERTAS.parquet"
+            --rename "OFERTASCONSOLIDADO_OFERTAS.parquet"
           date
 
       - name: Commit & push se houver mudanças
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "sync: update OFERTASMATRIZ_OFERTAS.parquet from Drive"
-          file_pattern: "streamlit_app/data/OFERTASMATRIZ_OFERTAS.parquet"
+          commit_message: "sync: update OFERTASCONSOLIDADO_OFERTAS.parquet from Drive"
+          file_pattern: "streamlit_app/data/OFERTASCONSOLIDADO_OFERTAS.parquet"
