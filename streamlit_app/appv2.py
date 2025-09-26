@@ -1006,14 +1006,18 @@ def tab4_ranking_agencias(df_raw: pd.DataFrame):
 # ─────────────────────── ABA 5: Competitividade Cia × Trecho ─────────────────
 @register_tab("Competitividade Cia x Trecho")
 def tab5_competitividade(df_raw: pd.DataFrame):
+    # 1) Filtros + botão ↻ (vem de render_filters)
     df = render_filters(df_raw, key_prefix="t5")
     st.subheader("Competitividade Cia × Trecho")
     if df.empty:
         st.info("Sem resultados para os filtros atuais."); return
+
+    # 2) Colunas necessárias
     need = {"RANKING","CIA_NORM","TRECHO","AGENCIA_NORM","IDPESQUISA"}
     if not need.issubset(df.columns):
         st.warning(f"Colunas ausentes: {sorted(list(need - set(df.columns)))}"); return
 
+    # 3) Considera somente vencedores (Ranking==1)
     df1 = df[df["RANKING"].astype("Int64") == 1].copy()
     if df1.empty:
         st.info("Nenhum 1º lugar no recorte."); return
@@ -1022,12 +1026,14 @@ def tab5_competitividade(df_raw: pd.DataFrame):
     df1["TRECHO_STD"] = df1["TRECHO"].astype(str)
     df1["AG_UP"]      = df1["AGENCIA_NORM"].astype(str)
 
+    # 4) Universo de 11 trechos mais pesquisados no recorte
     top_trechos = (df1.groupby("TRECHO_STD")["IDPESQUISA"]
                      .nunique().sort_values(ascending=False).head(11).index.tolist())
     if len(top_trechos) < 11:
         restantes = [t for t in df1["TRECHO_STD"].unique().tolist() if t not in top_trechos]
         top_trechos += restantes[: max(0, 11 - len(top_trechos))]
 
+    # 5) Totais e vencedores por Cia×Trecho
     tot = (df1.groupby(["CIA_UP","TRECHO_STD"])["IDPESQUISA"]
               .nunique().reset_index(name="TotalPesq"))
     win = (df1.groupby(["CIA_UP","TRECHO_STD","AG_UP"])["IDPESQUISA"]
@@ -1040,80 +1046,14 @@ def tab5_competitividade(df_raw: pd.DataFrame):
         m = tot.loc[(tot["CIA_UP"] == cia) & (tot["TRECHO_STD"] == trecho), "TotalPesq"]
         if m.empty: return 0
         v = m.iloc[0]
-        try:
-            return int(v) if pd.notna(v) else 0
-        except Exception:
+        try: return int(v) if pd.notna(v) else 0
+        except: 
             try: return int(float(v))
-            except Exception: return 0
+            except: return 0
 
-    def lideres_por_cia(cia: str) -> pd.DataFrame:
-        sub_all = base[base["CIA_UP"] == cia].copy()
-        if sub_all.empty:
-            rows = [{"TRECHO": t, "AGENCIA": "SEM OFERTAS", "PCT": 0.0, "N": _tot_for(cia, t)} for t in top_trechos]
-            return pd.DataFrame(rows).sort_values("PCT", ascending=False, kind="mergesort").reset_index(drop=True)
-        sub_all = sub_all.sort_values(["TRECHO_STD", "Pct"], ascending=[True, False])
-        idx = sub_all.groupby("TRECHO_STD")["Pct"].idxmax()
-        lideres = sub_all.loc[idx, ["TRECHO_STD", "AG_UP", "Pct", "TotalPesq"]].set_index("TRECHO_STD")
-        rows = []
-        for t in top_trechos:
-            if t in lideres.index:
-                ag  = str(lideres.loc[t, "AG_UP"]) if pd.notna(lideres.loc[t, "AG_UP"]) else "SEM OFERTAS"
-                pct = float(lideres.loc[t, "Pct"])  if pd.notna(lideres.loc[t, "Pct"])  else 0.0
-                n   = int(lideres.loc[t, "TotalPesq"]) if pd.notna(lideres.loc[t, "TotalPesq"]) else _tot_for(cia, t)
-            else:
-                ag, pct, n = "SEM OFERTAS", 0.0, _tot_for(cia, t)
-            rows.append({"TRECHO": t, "AGENCIA": ag, "PCT": pct, "N": n})
-        return pd.DataFrame(rows).sort_values("PCT", ascending=False, kind="mergesort").reset_index(drop=True)
+    # 6) Tabela por CIA (Trecho)
+    def lideres_por_cia(cia
 
-    cia_colors = {"AZUL":("#2D6CDF","#FFFFFF"), "GOL":("#E67E22","#FFFFFF"), "LATAM":("#C0392B","#FFFFFF")}
-
-    st.markdown("""
-    <style>
-      .comp-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;}
-      @media (max-width:1100px){.comp-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
-      @media (max-width:700px){.comp-grid{grid-template-columns:1fr;}}
-      .comp-card{border:1px solid #e5e7eb;border-radius:12px;background:#fff;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.06);}
-      .comp-head{padding:10px 12px;font-weight:900;letter-spacing:.2px;}
-      .tbl,.tblc{width:100%;border-collapse:collapse;}
-      .tbl th,.tbl td,.tblc th,.tblc td{border:1px solid #e5e7eb;padding:6px 8px;font-size:13px; text-align:center;}
-      .tbl td:nth-child(3){font-weight:800;}
-      .muted{font-size:10px;color:#94a3b8;font-weight:800;display:block;line-height:1;margin-top:2px;}
-      .row0{background:#ffffff;}
-      .row1{background:#fcfcfc;}
-      .g123{color:#0B6B2B;font-weight:900;}
-    </style>
-    """, unsafe_allow_html=True)
-
-    def fmt_pct(v: float) -> str:
-        try: return f"{float(v):.2f}%".replace(".", ",")
-        except: return "0,00%"
-
-    def quadro_html(cia: str, dfq: pd.DataFrame) -> str:
-        bg, fg = cia_colors.get(cia, ("#0B5FFF","#FFFFFF"))
-        head = f"<div class='comp-head' style='background:{bg};color:{fg};'>{cia}</div>"
-        if dfq.empty:
-            body = "<div style='padding:14px;color:#64748b;font-weight:700;text-align:center;'>Sem dados</div>"
-            return f"<div class='comp-card'>{head}{body}</div>"
-        rows = []
-        rows.append("<table class='tbl'><thead><tr><th>TRECHO</th><th>AGENCIA</th><th>% DE GANHO</th></tr></thead><tbody>")
-        for i, r in dfq.iterrows():
-            alt = "row1" if i % 2 else "row0"
-            ag  = str(r["AGENCIA"])
-            ag_cls = "g123" if ag in {"MAXMILHAS","123MILHAS"} else ""
-            pct_txt = fmt_pct(r["PCT"])
-            n_txt = f"<span class='muted'>{int(r['N'])} pesq.</span>"
-            rows.append(
-                f"<tr class='{alt}'>"
-                f"<td>{r['TRECHO']}</td>"
-                f"<td><span class='{ag_cls}'>{ag}</span></td>"
-                f"<td><div>{pct_txt}{n_txt}</div></td>"
-                f"</tr>"
-            )
-        rows.append("</tbody></table>")
-        return f"<div class='comp-card'>{head}{''.join(rows)}</div>"
-
-    items = [quadro_html(cia, lideres_por_cia(cia)) for cia in ["AZUL","GOL","LATAM"]]
-    st.markdown("<div class='comp-grid'>" + "".join(items) + "</div>", unsafe_allow_html=True)
 
 # ───────── ABA 6: Competitividade Cia x Trecho x ADVPs Agrupados ─────────
 @register_tab("Competitividade Cia x Trecho x ADVPs Agrupados")
