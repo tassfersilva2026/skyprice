@@ -1221,7 +1221,8 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
     d1 = df[df["RANKING"].astype("Int64") == 1].copy()
     d1["CIA_UP"]     = d1["CIA_NORM"].astype(str).str.upper()
     d1["TRECHO_STD"] = d1["TRECHO"].astype(str)
-    d1["AG_UP"]      = d1["AGENCIA_NORM"].astype str if False else d1["AGENCIA_NORM"].astype(str)  # mantém
+   d1["AG_UP"] = d1["AGENCIA_NORM"].astype(str)
+
 
     trechos_all = sorted(df["TRECHO"].dropna().astype(str).unique().tolist())
 
