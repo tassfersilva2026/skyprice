@@ -1,103 +1,33 @@
-# streamlit_app.py — App completo com envio de HTML ao Slack por aba
+# streamlit_app.py
 from __future__ import annotations
 from pathlib import Path
-from datetime import date, datetime
-from typing import Callable, List, Tuple
+from datetime import date
+from typing import Callable, List, Tuple, Optional, Dict
 
+import os
+import io
+import re
+import json
+import time
 import numpy as np
 import pandas as pd
 import streamlit as st
 import altair as alt
-import re
+import requests
 
-# ========================= CONFIG DA PÁGINA =========================
+# ─────────────────────────── CONFIG DA PÁGINA ────────────────────────────────
 st.set_page_config(page_title="Skyscanner — Painel", layout="wide", initial_sidebar_state="expanded")
 
 APP_DIR   = Path(__file__).resolve().parent
 DATA_PATH = APP_DIR / "data" / "OFERTASCONSOLIDADO_OFERTAS.parquet"   # ajuste se necessário
 
-# ========================= SLACK (envio HTML) =======================
-try:
-    from slack_sdk import WebClient
-except ImportError:
-    WebClient = None  # aviso amigável mais abaixo
+# ============= SECRETS (Slack) =============
+SLACK_BOT_TOKEN  = st.secrets.get("slack", {}).get("bot_token")
+SLACK_CHANNEL_ID = st.secrets.get("slack", {}).get("channel_id")
+SLACK_WEBHOOK    = st.secrets.get("slack", {}).get("webhook_url")  # opcional
 
-def _slack_client() -> WebClient | None:
-    if WebClient is None:
-        st.warning("Pacote 'slack_sdk' não instalado. Adicione 'slack_sdk' ao requirements.txt.")
-        return None
-    token = st.secrets.get("SLACK_BOT_TOKEN")
-    if not token:
-        st.error("Faltou SLACK_BOT_TOKEN em st.secrets.")
-        return None
-    return WebClient(token=token)
-
-def _wrap_html_document(body_html: str, title: str = "Relatório") -> str:
-    base_css = """
-    <style>
-      body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell,
-             'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji','Segoe UI Emoji','Segoe UI Symbol';
-             background:#ffffff; color:#111; margin:16px; }
-      h1,h2,h3 { margin: 8px 0 12px; }
-      table { width:100%; border-collapse:collapse; table-layout: fixed; }
-      th, td { border:1px solid #e5e7eb; padding:6px 8px; font-size:13px; }
-      th { background:#f3f4f6; font-weight:800; }
-      .caption { font-weight:800; margin: 4px 0 8px; color:#0A2A6B; }
-    </style>
-    """
-    return f"""<!doctype html>
-<html lang="pt-br">
-<head>
-<meta charset="utf-8">
-<title>{title}</title>
-{base_css}
-</head>
-<body>
-{body_html}
-</body>
-</html>"""
-
-def html_from_styler_or_df(obj, caption: str | None = None) -> str:
-    import pandas as pd
-    block = []
-    if caption:
-        block.append(f"<div class='caption'>{caption}</div>")
-    if hasattr(obj, "to_html"):          # Styler
-        block.append(obj.to_html())
-    elif isinstance(obj, pd.DataFrame):  # DataFrame
-        block.append(obj.to_html(index=False))
-    else:
-        block.append("<div>Objeto não é Styler nem DataFrame.</div>")
-    return "\n".join(block)
-
-def enviar_html_slack(body_html: str, filename: str = "relatorio.html",
-                      titulo: str = "Relatório HTML", comentario: str = "Relatório gerado via Streamlit"):
-    client = _slack_client()
-    if client is None:
-        return
-    canal = st.secrets.get("SLACK_CHANNEL_ID")
-    if not canal:
-        st.error("Faltou SLACK_CHANNEL_ID em st.secrets.")
-        return
-    full_html = _wrap_html_document(body_html, title=titulo)
-    try:
-        resp = client.files_upload(
-            channels=canal,
-            content=full_html,
-            filename=filename,
-            title=titulo,
-            initial_comment=comentario,
-            filetype="html",
-        )
-        if not resp.get("ok"):
-            st.error(f"Falha no upload ao Slack: {resp}")
-        else:
-            st.success("HTML enviado ao Slack com sucesso! 🎯")
-    except Exception as e:
-        st.error(f"Erro enviando para Slack: {e}")
-
-# ========================= HELPERS BÁSICOS ==========================
-def _norm_hhmmss(v: object) -> str | None:
+# ─────────────────────────── HELPERS BÁSICOS ─────────────────────────────────
+def _norm_hhmmss(v: object) -> Optional[str]:
     s = str(v or "").strip()
     m = re.search(r"(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?", s)
     if not m:
@@ -170,14 +100,19 @@ def fmt_pct2_br(v):
     except Exception:
         return "-"
 
-# ========================= CARREGAMENTO DA BASE =====================
+# ─────────────────────── CARREGAMENTO/REFRESH DA BASE ────────────────────────
+# Flag manual de refresh: basta incrementar para invalidar o cache.
+if "refresh_key" not in st.session_state:
+    st.session_state["refresh_key"] = 0
+
 @st.cache_data(show_spinner=True)
-def load_base(path: Path) -> pd.DataFrame:
+def load_base(path: Path, _k: int) -> pd.DataFrame:
     if not path.exists():
         st.error(f"Arquivo obrigatório não encontrado: {path.as_posix()}"); st.stop()
 
     df = pd.read_parquet(path)
 
+    # Padroniza primeiras 13 colunas se necessário (compatibilidade)
     colmap = {0:"IDPESQUISA",1:"CIA",2:"HORA_BUSCA",3:"HORA_PARTIDA",4:"HORA_CHEGADA",
               5:"TIPO_VOO",6:"DATA_EMBARQUE",7:"DATAHORA_BUSCA",8:"AGENCIA_COMP",9:"PRECO",
               10:"TRECHO",11:"ADVP",12:"RANKING"}
@@ -185,6 +120,7 @@ def load_base(path: Path) -> pd.DataFrame:
         rename = {df.columns[i]: colmap[i] for i in range(min(13, df.shape[1]))}
         df = df.rename(columns=rename)
 
+    # Normalizações
     for c in ["HORA_BUSCA","HORA_PARTIDA","HORA_CHEGADA"]:
         if c in df.columns:
             df[c] = pd.to_datetime(df[c].astype(str).str.strip(), errors="coerce").dt.strftime("%H:%M:%S")
@@ -210,12 +146,15 @@ def load_base(path: Path) -> pd.DataFrame:
     df["ADVP_CANON"]   = df.get("ADVP", pd.Series([], dtype=str)).apply(lambda x: advp_nearest(x) if pd.notna(x) else np.nan)
     df["CIA_NORM"]     = df.get("CIA", pd.Series([None]*len(df))).apply(std_cia)
 
+    # __DTKEY__ robusto (data + hora a partir de DATAHORA_BUSCA e HORA_BUSCA)
     dt_base = pd.to_datetime(df.get("DATAHORA_BUSCA"), errors="coerce", dayfirst=True)
+
     def _hh_to_sec(hs: object) -> float:
         s = _norm_hhmmss(hs)
         if not s: return np.nan
         hh, mm, ss = [int(x) for x in s.split(":")]
         return hh*3600 + mm*60 + ss
+
     hora_sec = pd.to_numeric(df.get("HORA_BUSCA", pd.Series([np.nan]*len(df))).map(_hh_to_sec), errors="coerce")
     dt_norm = pd.to_datetime(dt_base.dt.date, errors="coerce")
     dtkey = dt_norm + pd.to_timedelta(hora_sec.fillna(0), unit="s")
@@ -224,9 +163,14 @@ def load_base(path: Path) -> pd.DataFrame:
     dtkey = dtkey.where(~mask_dt_ok, dt_base.dt.normalize() + pd.to_timedelta(hora_sec.fillna(0), unit="s"))
     dtkey = dtkey.where(mask_dt_ok | mask_h_ok, pd.NaT)
     df["__DTKEY__"] = dtkey
+
     return df
 
-# ========================= ESTILOS & GRÁFICOS =======================
+def force_refresh():
+    st.session_state["refresh_key"] += 1
+    st.cache_data.clear()
+
+# ─────────────────────── ESTILOS, GRÁFICOS E TABELAS ─────────────────────────
 GLOBAL_TABLE_CSS = """
 <style>
 table { width:100% !important; }
@@ -351,7 +295,7 @@ def style_heatmap_discrete(styler: pd.io.formats.style.Styler, col: str, scale_c
     bins = bins.fillna(-1).astype(int)
     def _fmt(val, idx):
         if pd.isna(val) or bins.iloc[idx] == -1: return "background-color:#ffffff;color:#111111"
-        color = scale_colors[int(bins.iloc[idx])];
+        color = scale_colors[int(bins.iloc[idx])]
         return f"background-color:{color};color:#111111"
     styler = styler.apply(lambda col_vals: [_fmt(v, i) for i, v in enumerate(col_vals)], subset=[col])
     return styler
@@ -362,8 +306,8 @@ def style_smart_colwise(df_show: pd.DataFrame, fmt_map: dict, grad_cols: list[st
            .set_table_attributes('style="width:100%; table-layout:fixed"'))
     if fmt_map:
         sty = sty.format(fmt_map, na_rep="-")
-    for c in df_show.columns:
-        if c in grad_cols:
+    for c in grad_cols:
+        if c in df_show.columns:
             sty = style_heatmap_discrete(sty, c, _pick_scale(c))
     try:
         sty = sty.hide(axis="index")
@@ -376,53 +320,99 @@ def style_smart_colwise(df_show: pd.DataFrame, fmt_map: dict, grad_cols: list[st
     sty = sty.set_table_styles([{"selector":"tbody td, th","props":[("border","1px solid #EEE")]}])
     return sty
 
-# ---- COLETOR AUTOMÁTICO DE HTML PARA SLACK (por aba) ----
-def _ensure_html_bucket():
-    if "_SLACK_HTML_BLOCKS" not in st.session_state:
-        st.session_state["_SLACK_HTML_BLOCKS"] = []
-
+# ============ Coletor de HTML (para envio Slack) ============
 def _reset_html_bucket():
-    st.session_state["_SLACK_HTML_BLOCKS"] = []
+    st.session_state["__html_bucket__"] = []
 
-def _collect_html_block_from_table(df: pd.DataFrame, styler: pd.io.formats.style.Styler | None, caption: str | None):
-    _ensure_html_bucket()
-    try:
-        if styler is not None:
-            st.session_state["_SLACK_HTML_BLOCKS"].append(html_from_styler_or_df(styler, caption))
-        else:
-            st.session_state["_SLACK_HTML_BLOCKS"].append(html_from_styler_or_df(df, caption))
-    except Exception as _:
-        pass
-
-def _send_bucket_as_html(filename_prefix: str, titulo: str):
-    blocks = st.session_state.get("_SLACK_HTML_BLOCKS", [])
-    if not blocks:
-        st.info("Nada para enviar desta aba ainda. Gere alguma tabela primeiro.")
-        return
-    html_final = "<hr>".join(blocks)
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    enviar_html_slack(
-        html_final,
-        filename=f"{filename_prefix}_{stamp}.html",
-        titulo=titulo,
-        comentario=f"{titulo} — gerado via Streamlit."
-    )
+def _append_html(html_snippet: str):
+    st.session_state.setdefault("__html_bucket__", [])
+    st.session_state["__html_bucket__"].append(str(html_snippet or ""))
 
 def show_table(df: pd.DataFrame, styler: pd.io.formats.style.Styler | None = None, caption: str | None = None):
     if caption:
         st.markdown(f"**{caption}**")
+        _append_html(f"<h3 style='margin:8px 0 6px 0;font-family:system-ui, -apple-system, Segoe UI, Roboto;'>"
+                     f"{caption}</h3>")
     try:
         if styler is not None:
-            st.markdown(styler.to_html(), unsafe_allow_html=True)
+            html = styler.to_html()
+            st.markdown(html, unsafe_allow_html=True)
+            _append_html(html)
         else:
             st.dataframe(df, use_container_width=True)
+            _append_html(df.to_html(index=False))
     except Exception as e:
         st.warning(f"Falha ao aplicar estilo ({e}). Exibindo tabela simples.")
         st.dataframe(df, use_container_width=True)
-    # coleta HTML para Slack
-    _collect_html_block_from_table(df, styler, caption)
+        _append_html(df.to_html(index=False))
 
-# ========================= REGISTRO DE ABAS ========================
+# ============ Slack helpers ============
+def _slack_send_via_webhook(html: str, title: str = "Relatório"):
+    if not SLACK_WEBHOOK:
+        raise RuntimeError("Webhook não configurado em secrets (slack.webhook_url).")
+    payload = {
+        "text": f"*{title}*",
+        "blocks": [
+            {"type": "section", "text": {"type": "mrkdwn", "text": f"*{title}*"}},
+            {"type": "section", "text": {"type": "mrkdwn", "text": "Arquivo HTML enviado como anexo (ver acima/abaixo)."}}
+        ]
+    }
+    r = requests.post(SLACK_WEBHOOK, data=json.dumps(payload), headers={"Content-Type": "application/json"}, timeout=20)
+    if r.status_code >= 300:
+        raise RuntimeError(f"Webhook falhou: {r.status_code} {r.text}")
+
+def _slack_upload_file(content: bytes, filename: str, title: str = "Relatório HTML"):
+    if not SLACK_BOT_TOKEN or not SLACK_CHANNEL_ID:
+        raise RuntimeError("Bot token ou channel_id ausentes em secrets (slack.bot_token / slack.channel_id).")
+    files = {"file": (filename, content, "text/html")}
+    data = {"channels": SLACK_CHANNEL_ID, "title": title, "filename": filename}
+    headers = {"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
+    r = requests.post("https://slack.com/api/files.upload", headers=headers, data=data, files=files, timeout=30)
+    try:
+        resp = r.json()
+    except Exception:
+        resp = {"ok": False, "raw": r.text}
+    if not resp.get("ok"):
+        raise RuntimeError(f"files.upload falhou: {resp}")
+
+def _wrap_html_doc(title: str, body_html: str) -> str:
+    return f"""<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<title>{title}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+body {{ font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; padding: 18px; background:#ffffff; color:#111; }}
+h1,h2,h3 {{ margin: 8px 0; }}
+table {{ border-collapse: collapse; width: 100%; }}
+th, td {{ border: 1px solid #e5e7eb; padding: 6px 8px; font-size: 13px; }}
+th {{ background:#f8fafc; font-weight:800; }}
+caption {{ text-align:left; font-weight:800; margin:6px 0; }}
+hr {{ border:0; border-top:1px dashed #e5e7eb; margin:12px 0; }}
+</style>
+</head>
+<body>
+<h2>{title}</h2>
+{body_html}
+</body>
+</html>"""
+
+def _send_bucket_as_html(filename_prefix: str = "relatorio", titulo: str = "Relatório"):
+    bucket = st.session_state.get("__html_bucket__", [])
+    if not bucket:
+        st.warning("Nada para enviar: gere ao menos uma tabela nesta aba antes de clicar no botão.")
+        return
+    body = "\n<hr/>\n".join(bucket)
+    html_doc = _wrap_html_doc(titulo, body)
+    # Upload via API (arquivo .html)
+    try:
+        _slack_upload_file(html_doc.encode("utf-8"), f"{filename_prefix}.html", title=titulo)
+        st.success("Relatório enviado ao Slack (arquivo HTML).")
+    except Exception as e:
+        st.error(f"Falha ao enviar ao Slack: {e}")
+
+# ─────────────────────────── REGISTRO DE ABAS ────────────────────────────────
 TAB_REGISTRY: List[Tuple[str, Callable]] = []
 def register_tab(label: str):
     def _wrap(fn: Callable):
@@ -430,7 +420,7 @@ def register_tab(label: str):
         return fn
     return _wrap
 
-# ========================= LÓGICA GERAL ============================
+# ─────────────────────── FUNÇÕES DE LÓGICA DO APP ────────────────────────────
 def winners_by_position(df: pd.DataFrame) -> pd.DataFrame:
     base = pd.DataFrame({"IDPESQUISA": df["IDPESQUISA"].unique()})
     for r in (1, 2, 3):
@@ -462,24 +452,23 @@ def _init_filter_state(df_raw: pd.DataFrame):
         "advp": [], "trechos": [], "hh": [], "cia": [],
     }
 
+# ============ FILTROS + BOTÃO ENVIAR HTML ============
 def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt", aba_label: str = ""):
     """
-    Renderiza filtros + botão redondo 'Enviar HTML' alinhado ao final da linha.
+    Filtros + botão 'Enviar HTML' alinhado ao final da linha.
     Reinicia o coletor de HTML por aba quando chamada.
     """
     _reset_html_bucket()
     st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
-    # 6 colunas de filtro + 1 estreita para o botão
-    c1, c2, c3, c4, c5, c6, c7 = st.columns([1.1, 1.1, 1, 2, 1, 1.4, 0.35])
+
+    # 6 colunas de filtro + 1 para o botão
+    c1, c2, c3, c4, c5, c6, c7 = st.columns([1.1, 1.1, 1.0, 2.0, 1.0, 1.4, 0.9])
 
     base_dt = pd.to_datetime(df_raw.get("__DTKEY__"), errors="coerce")
     if base_dt.isna().all():
         base_dt = pd.to_datetime(df_raw.get("DATAHORA_BUSCA"), errors="coerce", dayfirst=True)
-
-    dmin_abs = base_dt.min()
-    dmax_abs = base_dt.max()
-    dmin_abs = dmin_abs.date() if pd.notna(dmin_abs) else date(2000, 1, 1)
-    dmax_abs = dmax_abs.date() if pd.notna(dmax_abs) else date.today()
+    dmin_abs = (base_dt.min().date() if pd.notna(base_dt.min()) else date(2000, 1, 1))
+    dmax_abs = (base_dt.max().date() if pd.notna(base_dt.max()) else date.today())
 
     _init_filter_state(df_raw)
 
@@ -496,7 +485,7 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt", aba_label: str
         advp_sel = st.multiselect("ADVP", options=advp_all,
                                   default=st.session_state["flt"]["advp"], key=f"{key_prefix}_advp")
     with c4:
-        trechos_all = sorted([t for t in df_raw.get("TRECHO", pd.Series([], dtype=str)).dropna().unique().tolist() if str(t).strip() != ""])
+        trechos_all = sorted([t for t in df_raw.get("TRECHO", pd.Series([], dtype=str)).dropna().unique().tolist() if str(t).strip()])
         tr_sel = st.multiselect("Trechos", options=trechos_all,
                                 default=st.session_state["flt"]["trechos"], key=f"{key_prefix}_trechos")
     with c5:
@@ -509,17 +498,20 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt", aba_label: str
         cia_default = [c for c in st.session_state["flt"]["cia"] if c in cia_opts]
         cia_sel = st.multiselect("Cia (Azul/Gol/Latam)", options=cia_opts,
                                  default=cia_default, key=f"{key_prefix}_cia")
+
     with c7:
-        # Botão discreto, redondo, ao fim da linha de filtros
-        st.markdown("""
-        <style>
-          .roundbtn>button { border-radius: 999px !important; padding: 6px 10px !important; 
-                             border: 1px solid #e5e7eb !important; background:#fff !important; }
-        </style>""", unsafe_allow_html=True)
-        enviar_click = st.button("🧾", key=f"{key_prefix}_sendhtml", help="Enviar HTML desta aba para o Slack", type="secondary")
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        enviar_click = st.button(
+            "🧾 Enviar HTML",
+            key=f"{key_prefix}_sendhtml",
+            help="Enviar HTML desta aba para o Slack",
+            use_container_width=True
+        )
         if enviar_click:
-            _send_bucket_as_html(filename_prefix=f"relatorio_{aba_label or key_prefix}",
-                                 titulo=f"Relatório — {aba_label or key_prefix}")
+            _send_bucket_as_html(
+                filename_prefix=f"relatorio_{aba_label or key_prefix}",
+                titulo=f"Relatório — {aba_label or key_prefix}"
+            )
 
     st.session_state["flt"] = {
         "dt_ini": dt_ini, "dt_fim": dt_fim, "advp": advp_sel or [],
@@ -532,7 +524,6 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt", aba_label: str
 
     mask = pd.Series(True, index=df_raw.index)
     mask &= (base_date_series >= dt_ini) & (base_date_series <= dt_fim)
-
     if advp_sel:
         mask &= df_raw.get("ADVP_CANON").isin(advp_sel)
     if tr_sel:
@@ -550,15 +541,11 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt", aba_label: str
     st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
     return df
 
-# ========================= ABAS =========================
-
-# ---------- ABA 1: Painel ----------
+# ───────────────────────────── ABAS DO APLICATIVO ────────────────────────────
 @register_tab("Painel")
 def tab1_painel(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t1", aba_label="Painel")
     st.subheader("Painel")
-    if df.empty:
-        st.info("Sem dados nos filtros."); return
 
     total_pesq = df["IDPESQUISA"].nunique() or 1
     cov = {r: df.loc[df["RANKING"].eq(r), "IDPESQUISA"].nunique() for r in (1, 2, 3)}
@@ -570,6 +557,9 @@ def tab1_painel(df_raw: pd.DataFrame):
         f"3º: {cov[3]/total_pesq*100:.1f}%</div>",
         unsafe_allow_html=True
     )
+
+    st.markdown(CARD_CSS, unsafe_allow_html=True)
+    st.markdown("<hr style='margin:6px 0'>", unsafe_allow_html=True)
 
     W = winners_by_position(df)
     Wg = W.replace({
@@ -606,12 +596,41 @@ def tab1_painel(df_raw: pd.DataFrame):
         cards.append(card_html(tgt, p1, p2, p3, rank_cls))
     st.markdown(f"<div class='cards-grid'>{''.join(cards)}</div>", unsafe_allow_html=True)
 
-    # Exemplo de tabela demonstrativa (coleta pro Slack)
-    df_demo = pd.DataFrame({"Agência": targets_sorted[:5], "Top1%": [pcts_for_target(Wg if t=="GRUPO 123" else W, t, t=="GRUPO 123")[0] for t in targets_sorted[:5]]})
-    sty_demo = style_smart_colwise(df_demo, {"Top1%": fmt_pct2_br}, grad_cols=["Top1%"])
-    show_table(df_demo, sty_demo, caption="Resumo Top1% (demo)")
+    st.markdown("<hr style='margin:14px 0 8px 0'>", unsafe_allow_html=True)
+    st.subheader("Painel por Cia")
+    st.caption("Cada coluna mostra o ranking das agências para a CIA correspondente (cards um abaixo do outro).")
+    st.markdown(CARDS_STACK_CSS, unsafe_allow_html=True)
 
-# ---------- ABA 2: Top 3 Agências ----------
+    if "CIA_NORM" not in df.columns:
+        st.info("Coluna 'CIA_NORM' não encontrada nos dados filtrados."); return
+
+    c1, c2, c3 = st.columns(3)
+    def render_por_cia(container, df_in: pd.DataFrame, cia_name: str):
+        with container:
+            st.markdown(f"<div class='stack-title'>Ranking {cia_name.title()}</div>", unsafe_allow_html=True)
+            sub = df_in[df_in["CIA_NORM"].astype(str).str.upper() == cia_name]
+            if sub.empty: st.info("Sem dados para os filtros atuais."); return
+            Wc = winners_by_position(sub)
+            Wc_g = Wc.replace({
+                "R1": {"MAXMILHAS": "GRUPO 123", "123MILHAS": "GRUPO 123"},
+                "R2": {"MAXMILHAS": "GRUPO 123", "123MILHAS": "GRUPO 123"},
+                "R3": {"MAXMILHAS": "GRUPO 123", "123MILHAS": "GRUPO 123"},
+            })
+            ags = sorted(set(sub["AGENCIA_NORM"].dropna().astype(str)))
+            targets = [a for a in ags if a != "SEM OFERTAS"]
+            if "GRUPO 123" not in targets: targets.insert(0, "GRUPO 123")
+            def pct_target(tgt: str):
+                base = Wc_g if tgt == "GRUPO 123" else Wc
+                p1 = float((base["R1"] == tgt).mean())*100
+                p2 = float((base["R2"] == tgt).mean())*100
+                p3 = float((base["R3"] == tgt).mean())*100
+                return p1, p2, p3
+            targets_sorted_local = sorted(targets, key=lambda t: pct_target(t)[0], reverse=True)
+            cards_local = [card_html(t, *pct_target(t)) for t in targets_sorted_local]
+            st.markdown(f"<div class='cards-stack'>{''.join(cards_local)}</div>", unsafe_allow_html=True)
+    render_por_cia(c1, df, "AZUL"); render_por_cia(c2, df, "GOL"); render_por_cia(c3, df, "LATAM")
+
+# ──────────────────────── ABA: Top 3 Agências ────────────────────────────────
 @register_tab("Top 3 Agências")
 def tab2_top3_agencias(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t2", aba_label="Top 3 Agências")
@@ -685,7 +704,7 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
             "Agencia Top 2": r["Agencia Top 2"], "% Dif Top2 vs Top1": pct_diff(base, r["Preço Top 2"]),
             "Agencia Top 3": r["Agencia Top 3"], "% Dif Top3 vs Top1": pct_diff(base, r["Preço Top 3"]),
         })
-    t2 = pd.DataFrame(rows2)
+    t2 = pd.DataFrame(rows2).reset_index(drop=True)
     sty2 = style_smart_colwise(
         t2,
         {"Preço Top 1": fmt_num0_br, "% Dif Top2 vs Top1": fmt_pct2_br, "% Dif Top3 vs Top1": fmt_pct2_br},
@@ -717,7 +736,7 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
             "FlipMilhas": _best_price(sub, A_FLIP),
             "Capo Viagens": _best_price(sub, A_CAPO),
         })
-    t3 = pd.DataFrame(rows3)
+    t3 = pd.DataFrame(rows3).reset_index(drop=True)
     fmt3 = {c: fmt_num0_br for c in ["Preço Menor Valor","123milhas","Maxmilhas","FlipMilhas","Capo Viagens"]}
     sty3 = style_smart_colwise(t3, fmt3, grad_cols=list(fmt3.keys()))
     show_table(t3, sty3, caption="Comparativo Menor Preço Cia × Agências de Milhas")
@@ -730,12 +749,13 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
     for label in ["123milhas","Maxmilhas","FlipMilhas","Capo Viagens"]:
         t4[f"% Dif {label}"] = [pct_vs_base(b, x) for b, x in zip(t3["Preço Menor Valor"], t3[label])]
     fmt4 = {"Preço Menor Valor": fmt_num0_br} | {c: fmt_pct2_br for c in t4.columns if c.startswith("% Dif ")}
-    sty4 = style_smart_colwise(t4, fmt4, grad_cols=list(fmt4.keys()))
+    sty4 = style_smart_colwise(t4.reset_index(drop=True), fmt4, grad_cols=list(fmt4.keys()))
     show_table(t4, sty4, caption="%Comparativo Menor Preço Cia × Agências de Milhas")
 
-# ---------- ABA 3: Top 3 Preços Mais Baratos ----------
+# ──────────────────── ABA: Top 3 Preços Mais Baratos ─────────────────────────
 @register_tab("Top 3 Preços Mais Baratos")
 def tab3_top3_precos(df_raw: pd.DataFrame):
+    import re
     df = render_filters(df_raw, key_prefix="t3", aba_label="Top 3 Preços Mais Baratos")
     st.subheader("Top 3 Preços Mais Baratos")
 
@@ -756,7 +776,6 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
         except Exception:
             return "R$ -"
 
-    import re
     def _find_id_col(df_: pd.DataFrame) -> str | None:
         cands = ["IDPESQUISA","ID_PESQUISA","ID BUSCA","IDBUSCA","ID","NOME_ARQUIVO_STD","NOME_ARQUIVO","NOME DO ARQUIVO","ARQUIVO"]
         norm = { re.sub(r"[^A-Z0-9]+","", c.upper()): c for c in df_.columns }
@@ -804,14 +823,13 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
     dfp = dfp[dfp["__PRECO__"].notna()].copy()
     if dfp.empty: st.info("Sem preços válidos no recorte atual."); return
 
+    pesq_por_ta = {}
     tmp = dfp.dropna(subset=["TRECHO_STD","ADVP",ID_COL,"__DTKEY__"]).copy()
     g = tmp.groupby(["TRECHO_STD","ADVP",ID_COL], as_index=False)["__DTKEY__"].max()
     if not g.empty:
         idx = g.groupby(["TRECHO_STD","ADVP"])["__DTKEY__"].idxmax()
         last_by_ta = g.loc[idx]
         pesq_por_ta = {(str(r["TRECHO_STD"]), str(r["ADVP"])): str(r[ID_COL]) for _, r in last_by_ta.iterrows()}
-    else:
-        pesq_por_ta = {}
 
     def _normalize_id(val):
         if val is None or (isinstance(val, float) and np.isnan(val)): return None
@@ -930,7 +948,7 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
             st.markdown(f"<div style='{TRE_HDR_STYLE}'>Trecho: <b>{trecho}</b></div>", unsafe_allow_html=True)
             st.markdown("<div style='" + GRID_STYLE + "'>" + "".join(boxes) + "</div>", unsafe_allow_html=True)
 
-# ---------- ABA 4: Ranking por Agências ----------
+# ─────────────────────── ABA: Ranking por Agências ───────────────────────────
 @register_tab("Ranking por Agências")
 def tab4_ranking_agencias(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t4", aba_label="Ranking por Agências")
@@ -987,15 +1005,16 @@ def tab4_ranking_agencias(df_raw: pd.DataFrame):
             sty = sty.apply(_hl_last_row, axis=1)
         return sty
 
-    def show_tbl(df_in: pd.DataFrame, percent_cols=None, int_cols=None,
-                 highlight_total_row=False, highlight_total_col=None,
-                 highlight_rows_map=None, height=440, caption: str | None = None):
+    def show_table_rank(df_in: pd.DataFrame, percent_cols=None, int_cols=None,
+                        highlight_total_row=False, highlight_total_col=None,
+                        highlight_rows_map=None, height=440):
         df_disp = df_in.reset_index(drop=True)
         df_disp.index = np.arange(1, len(df_disp) + 1)
-        sty = style_heatmap(df_disp, percent_cols=percent_cols, int_cols=int_cols,
-                            highlight_total_row=highlight_total_row, highlight_total_col=highlight_total_col,
-                            highlight_rows_map=highlight_rows_map, height=height)
-        show_table(df_disp, sty, caption=caption)
+        styled = style_heatmap(df_disp, percent_cols=percent_cols, int_cols=int_cols,
+                               highlight_total_row=highlight_total_row, highlight_total_col=highlight_total_col,
+                               highlight_rows_map=highlight_rows_map, height=height)
+        st.dataframe(styled, use_container_width=True, height=height)
+        _append_html(styled.to_html())
 
     RANKS = list(range(1, 16))
     counts = (work.groupby(["AGENCIA_UP", "Ranking"], as_index=False)
@@ -1023,52 +1042,47 @@ def tab4_ranking_agencias(df_raw: pd.DataFrame):
         t_qtd = t_qtd.rename(columns={t_qtd.columns[0]: "Agência/Companhia"})
 
     st.subheader("Quantidade de Ofertas por Ranking (Ofertas)")
-    show_tbl(
+    show_table_rank(
         t_qtd[["Agência/Companhia"] + RANKS + ["Total"]],
         int_cols=set(RANKS + ["Total"]),
         highlight_total_row=True,
         highlight_total_col="Total",
         highlight_rows_map=HL_MAP,
-        height=480,
-        caption="Quantidade de Ofertas por Ranking"
+        height=480
     )
 
     mat = pv[RANKS].copy()
     row_sum = mat.sum(axis=1).replace(0, np.nan)
     pct_linha = (mat.div(row_sum, axis=0) * 100).fillna(0)
     pct_linha = pct_linha.sort_values(by=1, ascending=False)
-
     t_pct_linha = pct_linha.reset_index()
     if t_pct_linha.columns[0] != "Agência/Companhia":
         t_pct_linha = t_pct_linha.rename(columns={t_pct_linha.columns[0]: "Agência/Companhia"})
 
     st.subheader("Participação Ranking dentro da Agência")
-    show_tbl(
+    show_table_rank(
         t_pct_linha[["Agência/Companhia"] + RANKS],
         percent_cols=set(RANKS),
         highlight_rows_map=HL_MAP,
-        height=440,
-        caption="Participação por Ranking dentro da Agência"
+        height=440
     )
 
     col_sum = mat.sum(axis=0).replace(0, np.nan)
     pct_coluna = (mat.div(col_sum, axis=1) * 100).fillna(0)
     pct_coluna = pct_coluna.sort_values(by=1, ascending=False)
-
     t_pct_coluna = pct_coluna.reset_index()
     if t_pct_coluna.columns[0] != "Agência/Companhia":
         t_pct_coluna = t_pct_coluna.rename(columns={t_pct_coluna.columns[0]: "Agência/Companhia"})
 
     st.subheader("Participação Ranking Geral")
-    show_tbl(
+    show_table_rank(
         t_pct_coluna[["Agência/Companhia"] + RANKS],
         percent_cols=set(RANKS),
         highlight_rows_map=HL_MAP,
-        height=440,
-        caption="Participação por Ranking na Base Geral"
+        height=440
     )
 
-# ---------- ABA 5: Competitividade Cia x Trecho ----------
+# ─────────────────────── ABA: Competitividade Cia x Trecho ───────────────────
 @register_tab("Competitividade Cia x Trecho")
 def tab5_competitividade(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t5", aba_label="Competitividade Cia x Trecho")
@@ -1133,6 +1147,7 @@ def tab5_competitividade(df_raw: pd.DataFrame):
         return pd.DataFrame(rows).sort_values("PCT", ascending=False, kind="mergesort").reset_index(drop=True)
 
     cia_colors = {"AZUL":("#2D6CDF","#FFFFFF"), "GOL":("#E67E22","#FFFFFF"), "LATAM":("#C0392B","#FFFFFF")}
+
     st.markdown("""
     <style>
       .comp-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;}
@@ -1141,8 +1156,9 @@ def tab5_competitividade(df_raw: pd.DataFrame):
       .comp-card{border:1px solid #e5e7eb;border-radius:12px;background:#fff;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.06);}
       .comp-head{padding:10px 12px;font-weight:900;letter-spacing:.2px;}
       .tbl{width:100%;border-collapse:collapse;}
-      .tbl th,.tbl td{border:1px solid #e5e7eb;padding:6px 8px;font-size:13px; text-align:center;}
+      .tbl th,.tbl td{border:1px solid #e5e7eb;padding:6px 8px;font-size:13px;text-align:center;}
       .muted{font-size:10px;color:#94a3b8;font-weight:800;display:block;line-height:1;margin-top:2px;}
+      .row0{background:#ffffff;} .row1{background:#fcfcfc;}
       .g123{color:#0B6B2B;font-weight:900;}
     </style>
     """, unsafe_allow_html=True)
@@ -1158,29 +1174,33 @@ def tab5_competitividade(df_raw: pd.DataFrame):
             body = "<div style='padding:14px;color:#64748b;font-weight:700;text-align:center;'>Sem dados</div>"
             return f"<div class='comp-card'>{head}{body}</div>"
         rows = []
-        rows.append("<table class='tbl'><thead><tr><th>TRECHO</th><th>AGENCIA</th><th>% DE GANHO</th><th># PESQ</th></tr></thead><tbody>")
-        for _, r in dfq.iterrows():
+        rows.append("<table class='tbl'><thead><tr><th>TRECHO</th><th>AGENCIA</th><th>% DE GANHO</th><th>Pesq.</th></tr></thead><tbody>")
+        for i, r in dfq.iterrows():
+            alt = "row1" if i % 2 else "row0"
             ag  = str(r["AGENCIA"])
             ag_cls = "g123" if ag in {"MAXMILHAS","123MILHAS"} else ""
             pct_txt = fmt_pct(r["PCT"])
+            n_txt = int(r["N"])
             rows.append(
-                f"<tr>"
+                f"<tr class='{alt}'>"
                 f"<td>{r['TRECHO']}</td>"
                 f"<td><span class='{ag_cls}'>{ag}</span></td>"
                 f"<td>{pct_txt}</td>"
-                f"<td>{int(r['N'])}</td>"
+                f"<td>{n_txt}</td>"
                 f"</tr>"
             )
         rows.append("</tbody></table>")
         return f"<div class='comp-card'>{head}{''.join(rows)}</div>"
 
     items = [quadro_html(cia, lideres_por_cia(cia)) for cia in ["AZUL","GOL","LATAM"]]
-    st.markdown("<div class='comp-grid'>" + "".join(items) + "</div>", unsafe_allow_html=True)
+    html_all = "<div class='comp-grid'>" + "".join(items) + "</div>"
+    st.markdown(html_all, unsafe_allow_html=True)
+    _append_html("<h3>Competitividade Cia × Trecho</h3>" + html_all)
 
-# ---------- ABA 6: Competitividade Cia x Trecho x ADVPs Agrupados ----------
+# ───────── ABA: Competitividade Cia x Trecho x ADVPs Agrupados ───────────────
 @register_tab("Competitividade Cia x Trecho x ADVPs Agrupados")
 def tab6_compet_tabelas(df_raw: pd.DataFrame):
-    df = render_filters(df_raw, key_prefix="t6", aba_label="Competitividade (Trecho x ADVPs)")
+    df = render_filters(df_raw, key_prefix="t6", aba_label="Competitividade Cia x Trecho x ADVPs Agrupados")
     if df.empty:
         st.subheader("Competividade  Cia x Trecho x ADVPs Agrupados")
         st.info("Sem resultados para os filtros atuais."); 
@@ -1230,6 +1250,16 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
       .dot{width:10px; height:10px; border-radius:2px; display:inline-block;}
       .az{background:#2D6CDF;} .go{background:#F7C948;} .la{background:#C0392B;} .g123{color:#0B6B2B; font-weight:900;}
       .alt{background:#fcfcfc;}
+      .cards-mini{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin:8px 0 0 0;}
+      @media (max-width:1100px){.cards-mini{grid-template-columns:repeat(2,minmax(0,1fr));}}
+      @media (max-width:700px){.cards-mini{grid-template-columns:1fr;}}
+      .mini{border:2px solid #94a3b8; border-radius:12px; background:#fff; padding:10px 12px; box-shadow:0 1px 2px rgba(0,0,0,.06);}
+      .mini-title{font-weight:900; font-size:13px; letter-spacing:.2px; color:#0A2A6B; margin:0 0 4px 0;}
+      .mini-name{font-weight:900; font-size:18px; color:#111827; margin:0;}
+      .mini-pct{font-weight:1000; font-size:24px; color:#111827; line-height:1; margin-top:4px;}
+      .mini-note{opacity:.6; font-weight:800; font-size:13px; margin-top:2px;}
+      .mini-line{display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin-top:4px;}
+      .group-title{margin:10px 0 4px 0; font-weight:900; font-size:12px; color:#0A2A6B; letter-spacing:.3px;}
     </style>
     """, unsafe_allow_html=True)
 
@@ -1247,26 +1277,27 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
     def ag_fmt(ag:str) -> str:
         return f"<span class='g123'>{ag}</span>" if ag in {"123MILHAS","MAXMILHAS"} else ag
 
-    def render_tbl_trecho():
-        html = ["<table class='t6'>",
-                "<thead><tr><th class='cia'>CIA</th><th class='trc l'>TRECHO</th><th class='ag l'>AGENCIA</th><th class='pct'>% DE GANHO</th></tr></thead><tbody>"]
-        for t in trechos_all:
-            rows = [pick_leader(cia, t) for cia in ["AZUL","GOL","LATAM"]]
-            for i, r in enumerate(rows):
-                alt = " class='alt'" if i % 2 else ""
-                html.append(
-                    f"<tr{alt}><td>{cia_chip(r['CIA'])}</td>"
-                    f"<td class='trc l clip'>{t}</td>"
-                    f"<td class='ag l clip'>{ag_fmt(r['AGENCIA'])}</td>"
-                    f"<td class='pct'>{pct_cell(r['PCT'], r['N'])}</td></tr>"
-                )
-            html.append("<tr class='sep'><td colspan='4'></td></tr>")
-        html.append("</tbody></table>")
-        safe_html = "".join(html)
-        st.markdown(safe_html, unsafe_allow_html=True)
-        _collect_html_block_from_table(pd.DataFrame(), None, "Tabela: Cia × Trecho")
-        st.session_state["_SLACK_HTML_BLOCKS"][-1] = safe_html
+    # ======= Tabela 1: Cia × Trecho =======
+    html = ["<table class='t6'>",
+            "<thead><tr><th class='cia'>CIA</th><th class='trc l'>TRECHO</th><th class='ag l'>AGENCIA</th><th class='pct'>% DE GANHO</th></tr></thead><tbody>"]
+    for t in trechos_all:
+        rows = [pick_leader(cia, t) for cia in ["AZUL","GOL","LATAM"]]
+        for i, r in enumerate(rows):
+            alt = " class='alt'" if i % 2 else ""
+            html.append(
+                f"<tr{alt}><td>{cia_chip(r['CIA'])}</td>"
+                f"<td class='trc l clip'>{t}</td>"
+                f"<td class='ag l clip'>{ag_fmt(r['AGENCIA'])}</td>"
+                f"<td class='pct'>{pct_cell(r['PCT'], r['N'])}</td></tr>"
+            )
+        html.append("<tr class='sep'><td colspan='4'></td></tr>")
+    html.append("</tbody></table>")
+    html_tbl_trecho = "".join(html)
+    st.markdown("**Cia × Trecho**", unsafe_allow_html=True)
+    st.markdown(html_tbl_trecho, unsafe_allow_html=True)
+    _append_html("<h3>Cia × Trecho</h3>" + html_tbl_trecho)
 
+    # ======= Tabela 2: Cia × ADVP + 6 cards =======
     buckets = [1,5,11,17,30]
     advp_series = pd.to_numeric(df.get("ADVP_CANON"), errors="coerce")
     df_advp = df[advp_series.notna()].copy()
@@ -1291,38 +1322,68 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         top = sub.sort_values(["Pct","QtdTop1","TotAdvp"], ascending=False).iloc[0]
         return {"CIA": cia, "ADVP": advp, "AGENCIA": str(top["AG_UP"]), "PCT": float(top["Pct"]), "N": int(top["TotAdvp"])}
 
-    def render_tbl_advp():
-        html = ["<table class='t6'>",
-                "<thead><tr><th class='cia'>CIA</th><th style='width:56px'>ADVP</th><th class='ag l'>AGENCIA</th><th class='pct'>% DE GANHO</th></tr></thead><tbody>"]
-        for a in buckets:
-            rows = [pick_leader_advp(cia, a) for cia in ["AZUL","GOL","LATAM"]]
-            for i, r in enumerate(rows):
-                alt = " class='alt'" if i % 2 else ""
-                html.append(
-                    f"<tr{alt}><td>{cia_chip(r['CIA'])}</td>"
-                    f"<td>{a}</td>"
-                    f"<td class='ag l clip'>{ag_fmt(r['AGENCIA'])}</td>"
-                    f"<td class='pct'>{pct_cell(r['PCT'], r['N'])}</td></tr>"
-                )
-            html.append("<tr class='sep'><td colspan='4'></td></tr>")
-        html.append("</tbody></table>")
-        safe_html = "".join(html)
-        st.markdown(safe_html, unsafe_allow_html=True)
-        _collect_html_block_from_table(pd.DataFrame(), None, "Tabela: Cia × ADVP")
-        st.session_state["_SLACK_HTML_BLOCKS"][-1] = safe_html
+    html2 = ["<table class='t6'>",
+             "<thead><tr><th class='cia'>CIA</th><th style='width:56px'>ADVP</th><th class='ag l'>AGENCIA</th><th class='pct'>% DE GANHO</th></tr></thead><tbody>"]
+    for a in buckets:
+        rows = [pick_leader_advp(cia, a) for cia in ["AZUL","GOL","LATAM"]]
+        for i, r in enumerate(rows):
+            alt = " class='alt'" if i % 2 else ""
+            html2.append(
+                f"<tr{alt}><td>{cia_chip(r['CIA'])}</td>"
+                f"<td>{a}</td>"
+                f"<td class='ag l clip'>{ag_fmt(r['AGENCIA'])}</td>"
+                f"<td class='pct'>{pct_cell(r['PCT'], r['N'])}</td></tr>"
+            )
+        html2.append("<tr class='sep'><td colspan='4'></td></tr>")
+    html2.append("</tbody></table>")
+    html_tbl_advp = "".join(html2)
+    st.markdown("**Cia × ADVP**", unsafe_allow_html=True)
+    st.markdown(html_tbl_advp, unsafe_allow_html=True)
+    _append_html("<h3>Cia × ADVP</h3>" + html_tbl_advp)
 
-    st.subheader("Competividade  Cia x Trecho x ADVPs Agrupados")
-    c1, c2 = st.columns(2, gap="small")
-    with c1:
-        st.caption("Cia × Trecho")
-        render_tbl_trecho()
-    with c2:
-        st.caption("Cia × ADVP")
-        render_tbl_advp()
+    # ===== Cards Resumo =====
+    total_base_trechos = int(df["IDPESQUISA"].nunique() or 0)
+    if total_base_trechos:
+        cia_s = d1.groupby("CIA_UP")["IDPESQUISA"].nunique().sort_values(ascending=False)
+        ag_s  = d1.groupby("AG_UP")["IDPESQUISA"].nunique().sort_values(ascending=False)
+        cia_nome, cia_qtd = (str(cia_s.index[0]), int(cia_s.iloc[0])) if not cia_s.empty else ("SEM OFERTAS", 0)
+        ag_nome, ag_qtd   = (str(ag_s.index[0]),  int(ag_s.iloc[0]))  if not ag_s.empty  else ("SEM OFERTAS", 0)
+        cia_pct = int(round(cia_qtd/total_base_trechos*100))
+        ag_pct  = int(round(ag_qtd/total_base_trechos*100))
+    else:
+        cia_nome=ag_nome="SEM OFERTAS"; cia_qtd=ag_qtd=cia_pct=ag_pct=0
 
-# ========================= MAIN ====================================
+    bloco_cards = f"""
+        <div class='cards-mini'>
+          <div class='mini'>
+            <div class='mini-title'>CIA + BARATA</div>
+            <div class='mini-name'>{cia_nome}</div>
+            <div class='mini-pct'>{cia_pct}%</div>
+            <div class='mini-note'>( {fmt_int(cia_qtd)} pesq )</div>
+          </div>
+          <div class='mini'>
+            <div class='mini-title'>Agência Vencedora</div>
+            <div class='mini-name'>{ag_nome}</div>
+            <div class='mini-pct'>{ag_pct}%</div>
+            <div class='mini-note'>( {fmt_int(ag_qtd)} pesq )</div>
+          </div>
+          <div class='mini'>
+            <div class='mini-title'>Base Considerada</div>
+            <div class='mini-name'>{fmt_int(total_base_trechos)} pesquisas</div>
+            <div class='mini-pct'>{max(cia_pct, ag_pct)}%</div>
+            <div class='mini-note'>Participação do líder</div>
+          </div>
+        </div>
+    """
+    st.markdown(bloco_cards, unsafe_allow_html=True)
+    _append_html("<h3>Resumo do Vencedor</h3>" + bloco_cards)
+
+# ================================ MAIN ========================================
 def main():
-    df_raw = load_base(DATA_PATH)
+    st.sidebar.button("🔄 Forçar Refresh do Parquet", on_click=force_refresh, help="Atualiza a base limpando o cache")
+
+    df_raw = load_base(DATA_PATH, st.session_state["refresh_key"])
+
     for ext in ("*.png","*.jpg","*.jpeg","*.gif","*.webp"):
         imgs = list(APP_DIR.glob(ext))
         if imgs:
