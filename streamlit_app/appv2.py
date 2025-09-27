@@ -1478,68 +1478,76 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
     if df.empty:
         st.info("Sem dados para os filtros selecionados.")
         return
+    
+    # Calcula o total de pesquisas únicas para usar como base 100%
+    total_pesquisas = df['IDPESQUISA'].nunique()
+    if total_pesquisas == 0:
+        st.info("Nenhuma pesquisa encontrada para os filtros selecionados.")
+        return
 
     # --- Gráfico 1: Por ADVP ---
     st.markdown("#### Percentual de Ofertas por ADVP")
     
-    # Agrupa os dados por ADVP e Cia, contando as ofertas
-    df_advp = df.groupby(['ADVP_CANON', 'CIA_NORM']).size().reset_index(name='counts')
+    # Agrupa contando pesquisas únicas e calcula a % sobre o total
+    df_advp = df.groupby(['ADVP_CANON', 'CIA_NORM'])['IDPESQUISA'].nunique().reset_index(name='pesquisas_unicas')
+    df_advp['percent'] = df_advp['pesquisas_unicas'] / total_pesquisas
 
     # Gráfico de barras
     bars_advp = alt.Chart(df_advp).mark_bar().encode(
         x=alt.X('ADVP_CANON:O', title='ADVP', axis=alt.Axis(labelAngle=0)),
-        y=alt.Y('sum(counts):Q', stack='normalize', axis=alt.Axis(format='%', title='Percentual de Ofertas')),
+        y=alt.Y('sum(percent):Q', axis=alt.Axis(format='%', title='Participação sobre Total de Pesquisas')),
         color=alt.Color('CIA_NORM:N', title='Cia Aérea', scale=alt.Scale(
             domain=['AZUL', 'GOL', 'LATAM'],
             range=['#0033A0', '#FF6600', '#8B0000']  # Azul, Laranja, Vermelho
         )),
-        tooltip=['ADVP_CANON', 'CIA_NORM', alt.Tooltip('sum(counts):Q', title='Nº de Ofertas')]
+        tooltip=['ADVP_CANON', 'CIA_NORM', alt.Tooltip('sum(pesquisas_unicas):Q', title='Nº de Pesquisas')]
     )
 
     # Rótulos de texto
     text_advp = bars_advp.mark_text(
         align='center',
         baseline='middle',
-        dy=-10,  # Ajusta a posição vertical do texto
         color='white',
-        fontWeight='bold'
+        fontWeight='bold',
+        fontSize=14  # Aumenta o tamanho da fonte
     ).encode(
-        text=alt.Text('sum(counts):Q', format='.0%')
+        text=alt.Text('sum(percent):Q', format='.0%')
     )
 
     st.altair_chart(
-        (bars_advp + text_advp).properties(height=400), 
+        (bars_advp + text_advp).properties(height=450), 
         use_container_width=True
     )
 
     # --- Gráfico 2: Por Trecho ---
     st.markdown("<hr style='margin:1rem 0'>", unsafe_allow_html=True)
     st.markdown("#### Percentual de Ofertas por Trecho (Top 15)")
-
-    # Filtra para os 15 trechos com mais ofertas para manter o gráfico legível
-    top_trechos = df['TRECHO'].dropna().value_counts().nlargest(15).index
+    
+    # Filtra para os 15 trechos com mais pesquisas para manter o gráfico legível
+    top_trechos = df.groupby('TRECHO')['IDPESQUISA'].nunique().nlargest(15).index
     df_trecho_filtered = df[df['TRECHO'].isin(top_trechos)]
-    df_trecho = df_trecho_filtered.groupby(['TRECHO', 'CIA_NORM']).size().reset_index(name='counts')
+    df_trecho = df_trecho_filtered.groupby(['TRECHO', 'CIA_NORM'])['IDPESQUISA'].nunique().reset_index(name='pesquisas_unicas')
+    df_trecho['percent'] = df_trecho['pesquisas_unicas'] / total_pesquisas
 
     bars_trecho = alt.Chart(df_trecho).mark_bar().encode(
         x=alt.X('TRECHO:N', title='Trecho', sort='-y', axis=alt.Axis(labelAngle=0)), # Rótulos na horizontal
-        y=alt.Y('sum(counts):Q', stack='normalize', axis=alt.Axis(format='%', title='Percentual de Ofertas')),
+        y=alt.Y('sum(percent):Q', axis=alt.Axis(format='%', title='Participação sobre Total de Pesquisas')),
         color=alt.Color('CIA_NORM:N', title='Cia Aérea', scale=alt.Scale(domain=['AZUL', 'GOL', 'LATAM'], range=['#0033A0', '#FF6600', '#8B0000'])),
-        tooltip=['TRECHO', 'CIA_NORM', alt.Tooltip('sum(counts):Q', title='Nº de Ofertas')]
+        tooltip=['TRECHO', 'CIA_NORM', alt.Tooltip('sum(pesquisas_unicas):Q', title='Nº de Pesquisas')]
     )
 
     text_trecho = bars_trecho.mark_text(
         align='center',
         baseline='middle',
-        dy=-10,
         color='white',
-        fontWeight='bold'
+        fontWeight='bold',
+        fontSize=14
     ).encode(
-        text=alt.Text('sum(counts):Q', format='.0%')
+        text=alt.Text('sum(percent):Q', format='.0%')
     )
 
     st.altair_chart(
-        (bars_trecho + text_trecho).properties(height=400), 
+        (bars_trecho + text_trecho).properties(height=450), 
         use_container_width=True
     )
 
