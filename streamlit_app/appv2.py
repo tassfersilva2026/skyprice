@@ -1469,7 +1469,7 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         st.caption("Cia × ADVP")
         render_tbl_advp_and_cards()   # tabela + 6 cards
 
-# ─────────────────────── ABA 7: Ofertas x Cias (rótulo centrado sem embolar) ─────
+# ─────────────────────── ABA 7: Ofertas x Cias (pré-cálculo y0/y1/centro) ─────
 @register_tab("Ofertas x Cias")
 def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t7")
@@ -1479,118 +1479,112 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         st.info("Sem dados para os filtros selecionados.")
         return
 
-    # Config
+    # Config fixa
     CIA_DOMAIN = ['AZUL', 'GOL', 'LATAM']
     CIA_COLORS = ['#0033A0', '#FF6600', '#8B0000']
-    SHOW_MIN = 0.02   # oculta rótulos < 2% para não poluir (ajuste para 0.0 se quiser todos)
-    BIG_FS   = 22     # >= 15%
-    MID_FS   = 16     # 5–15%
-    SML_FS   = 12     # < 5%
+    ORDER_MAP = {'AZUL': 0, 'GOL': 1, 'LATAM': 2}
 
-    def text_size_expr():
-        # fonte adaptativa por percentual (evita poluição em fatias pequenas)
-        return (
-            'datum.pct >= 0.15 ? {} : (datum.pct >= 0.05 ? {} : {})'
-            .format(BIG_FS, MID_FS, SML_FS)
-        )
+    # Regras de rótulo
+    SHOW_MIN = 0.02   # oculta % < 2% (ponha 0.0 se quiser tudo)
+    BIG, MID = 0.15, 0.05
+    def label_size(share: float) -> int:
+        return 22 if share >= BIG else (16 if share >= MID else 12)
 
-    # Normalizações
     base = df.copy()
     base['CIA_NORM'] = base['CIA_NORM'].astype(str).str.upper()
+
     if 'IDPESQUISA' not in base.columns:
         st.warning("Coluna IDPESQUISA ausente.")
         return
 
-    # Helper para montar os 2 gráficos (x_col pode ser 'ADVP_CANON' ou 'TRECHO')
-    def stacked_with_center_labels(df_in: pd.DataFrame, x_col: str, x_title: str):
-        # tabela de contagem por X×CIA
-        pivot = (
-            pd.pivot_table(
-                df_in, values='IDPESQUISA', index=x_col, columns='CIA_NORM',
-                aggfunc=pd.Series.nunique, fill_value=0
-            ).reset_index()
-        )
-        for cia in CIA_DOMAIN:
-            if cia not in pivot.columns:
-                pivot[cia] = 0
+    import numpy as np
 
-        long = pivot.melt(id_vars=[x_col], var_name='CIA_NORM', value_name='pesquisas')
+    def build_stacked(df_in: pd.DataFrame, group_col: str) -> pd.DataFrame:
+        # contagem por grupo x cia
+        counts = (df_in.groupby([group_col, 'CIA_NORM'])['IDPESQUISA']
+                        .nunique().reset_index(name='n'))
+        if counts.empty:
+            return counts
 
-        # Barras 100% empilhadas
+        # garantir as 3 cias em todos os grupos
+        all_groups = counts[group_col].dropna().unique()
+        full_idx = pd.MultiIndex.from_product([all_groups, CIA_DOMAIN],
+                                              names=[group_col, 'CIA_NORM'])
+        counts = counts.set_index([group_col, 'CIA_NORM']).reindex(full_idx, fill_value=0).reset_index()
+
+        # totais, shares (0..1)
+        counts['total'] = counts.groupby(group_col)['n'].transform('sum')
+        counts['share'] = np.where(counts['total'] > 0, counts['n'] / counts['total'], 0.0)
+
+        # ordenar e acumular pra y0/y1
+        counts['order'] = counts['CIA_NORM'].map(ORDER_MAP)
+        counts = counts.sort_values([group_col, 'order'])
+        counts['y1'] = counts.groupby(group_col)['share'].cumsum()
+        counts['y0'] = counts['y1'] - counts['share']
+        counts['y_center'] = (counts['y0'] + counts['y1']) / 2.0
+
+        # rótulo / tamanho
+        counts['pct_txt'] = counts['share'].map(lambda x: f"{x*100:.2f}%".replace('.', ','))
+        counts['size'] = counts['share'].map(label_size)
+        return counts
+
+    def draw_chart(stacked: pd.DataFrame, group_col: str, x_title: str):
+        if stacked.empty:
+            st.info(f"Sem dados para {x_title} no recorte atual.")
+            return
+
+        # Barras com y/y2 e escala 0..1 (sempre 100%)
         bars = (
-            alt.Chart(long)
-            .transform_joinaggregate(total='sum(pesquisas)', groupby=[x_col])
-            .transform_calculate(pct='datum.total == 0 ? 0 : datum.pesquisas / datum.total')
+            alt.Chart(stacked)
             .mark_bar()
             .encode(
-                x=alt.X(f'{x_col}:N', title=x_title, axis=alt.Axis(labelAngle=0)),
-                y=alt.Y('sum(pesquisas):Q', stack='normalize',
-                        axis=alt.Axis(format='%', title='Participação')),
-                order=alt.Order('CIA_NORM:N', sort='ascending'),
+                x=alt.X(f'{group_col}:N', title=x_title, axis=alt.Axis(labelAngle=0)),
+                y=alt.Y('y0:Q', title='Participação', axis=alt.Axis(format='%'),
+                        scale=alt.Scale(domain=[0, 1])),
+                y2='y1:Q',
+                order=alt.Order('order:Q', sort='ascending'),
                 color=alt.Color('CIA_NORM:N', title='Cia Aérea',
                                 scale=alt.Scale(domain=CIA_DOMAIN, range=CIA_COLORS)),
                 tooltip=[
-                    alt.Tooltip(f'{x_col}:N', title=x_title),
+                    alt.Tooltip(f'{group_col}:N', title=x_title),
                     alt.Tooltip('CIA_NORM:N', title='CIA'),
-                    alt.Tooltip('pesquisas:Q', title='Nº de Pesquisas'),
-                    alt.Tooltip('pct:Q', title='Participação', format='.2%')
+                    alt.Tooltip('n:Q', title='Nº de Pesquisas'),
+                    alt.Tooltip('share:Q', title='Participação', format='.2%')
                 ]
             )
         )
 
-        # Rótulos: calcula y0/y1 via transform stack e usa (y0+y1)/2
+        # Rótulos centrados no segmento; oculta fatias muito pequenas
         labels = (
-            alt.Chart(long)
-            # total por grupo para percentuais
-            .transform_joinaggregate(total='sum(pesquisas)', groupby=[x_col])
-            # stack para obter limites
-            .transform_stack(
-                stack='pesquisas', groupby=[x_col], sort=[alt.SortField('CIA_NORM', order='ascending')],
-                as_=['y0', 'y1']
-            )
-            # centro + percentual
-            .transform_calculate(
-                yc='(datum.y0 + datum.y1) / 2',
-                pct='datum.total == 0 ? 0 : (datum.y1 - datum.y0) / datum.total',
-                txt='replace(format(datum.pct, ".2%"), "\\\\.", ",")',  # vírgula pt-BR
-                fs=text_size_expr()
-            )
-            .transform_filter(f'datum.pct >= {SHOW_MIN}')
+            alt.Chart(stacked[stacked['share'] >= SHOW_MIN])
             .mark_text(color='white', fontWeight='bold', align='center', baseline='middle')
             .encode(
-                x=alt.X(f'{x_col}:N'),
-                y=alt.Y('yc:Q'),            # centro geométrico do segmento
-                text='txt:N',
-                detail='CIA_NORM:N',
-                size=alt.Size('fs:Q', legend=None)   # tamanho variável
+                x=alt.X(f'{group_col}:N'),
+                y=alt.Y('y_center:Q', scale=alt.Scale(domain=[0, 1])),
+                text='pct_txt:N',
+                size=alt.Size('size:Q', legend=None),
+                detail='CIA_NORM:N'
             )
         )
-        return bars + labels
+        st.altair_chart((bars + labels).properties(height=450), use_container_width=True)
 
     # ===================== 1) ADVP =====================
     st.markdown("#### Percentual de Ofertas por ADVP")
     if 'ADVP_CANON' not in base.columns:
         st.info("Coluna ADVP_CANON não encontrada nos dados.")
     else:
-        df_advp = base.copy()
-        df_advp['ADVP_CANON'] = pd.to_numeric(df_advp['ADVP_CANON'], errors='coerce')
-        df_advp = df_advp.dropna(subset=['ADVP_CANON'])
-        if df_advp.empty:
-            st.info("Sem ADVPs válidos no recorte atual.")
-        else:
-            ch1 = stacked_with_center_labels(df_advp, 'ADVP_CANON', 'ADVP').properties(height=450)
-            st.altair_chart(ch1, use_container_width=True)
+        advp = base.copy()
+        advp['ADVP_CANON'] = pd.to_numeric(advp['ADVP_CANON'], errors='coerce')
+        advp = advp.dropna(subset=['ADVP_CANON'])
+        draw_chart(build_stacked(advp, 'ADVP_CANON'), 'ADVP_CANON', 'ADVP')
 
     # ===================== 2) TRECHO (Top 15) =====================
     st.markdown("<hr style='margin:1rem 0'>", unsafe_allow_html=True)
     st.markdown("#### Percentual de Ofertas por Trecho (Top 15)")
-    top_trechos = base.groupby('TRECHO')['IDPESQUISA'].nunique().nlargest(15).index
-    dft = base[base['TRECHO'].isin(top_trechos)].copy()
-    if dft.empty:
-        st.info("Sem trechos suficientes no recorte atual.")
-    else:
-        ch2 = stacked_with_center_labels(dft, 'TRECHO', 'Trecho').properties(height=450)
-        st.altair_chart(ch2, use_container_width=True)
+    top15 = base.groupby('TRECHO')['IDPESQUISA'].nunique().nlargest(15).index
+    dft = base[base['TRECHO'].isin(top15)].copy()
+    draw_chart(build_stacked(dft, 'TRECHO'), 'TRECHO', 'Trecho')
+
 
 
 # ================================ MAIN ========================================
