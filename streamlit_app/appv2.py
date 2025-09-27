@@ -1472,84 +1472,90 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
 # ─────────────────────── ABA 7: Ofertas por Cia (Gráficos) ───────────────────────
 @register_tab("Ofertas x Cias")
 def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
-    df = render_filters(df_raw, key_prefix="t7")
-    st.subheader("Distribuição de Ofertas por Companhia Aérea")
-
-    if df.empty:
-        st.info("Sem dados para os filtros selecionados.")
-        return
-    
-    # Calcula o total de pesquisas únicas para usar como base 100%
-    total_pesquisas = df['IDPESQUISA'].nunique()
-    if total_pesquisas == 0:
-        st.info("Nenhuma pesquisa encontrada para os filtros selecionados.")
-        return
-
-    # --- Gráfico 1: Por ADVP ---
-    st.markdown("#### Percentual de Ofertas por ADVP")
-    
-    # Agrupa contando pesquisas únicas e calcula a % sobre o total
-    df_advp = df.groupby(['ADVP_CANON', 'CIA_NORM'])['IDPESQUISA'].nunique().reset_index(name='pesquisas_unicas')
-    df_advp['percent'] = df_advp['pesquisas_unicas'] / total_pesquisas
-
-    # Gráfico de barras
-    bars_advp = alt.Chart(df_advp).mark_bar().encode(
-        x=alt.X('ADVP_CANON:O', title='ADVP', axis=alt.Axis(labelAngle=0)),
-        y=alt.Y('sum(percent):Q', axis=alt.Axis(format='%', title='Participação sobre Total de Pesquisas')),
-        color=alt.Color('CIA_NORM:N', title='Cia Aérea', scale=alt.Scale(
-            domain=['AZUL', 'GOL', 'LATAM'],
-            range=['#0033A0', '#FF6600', '#8B0000']  # Azul, Laranja, Vermelho
-        )),
-        tooltip=['ADVP_CANON', 'CIA_NORM', alt.Tooltip('sum(pesquisas_unicas):Q', title='Nº de Pesquisas')]
-    )
-
-    # Rótulos de texto
-    text_advp = bars_advp.mark_text(
-        align='center',
-        baseline='middle',
-        fontWeight='bold',
-        fontSize=14  # Aumenta o tamanho da fonte
-    ).encode(
-        text=alt.Text('sum(percent):Q', format='.0%'),
-        color=alt.value('white')  # Define a cor do texto para branco
-    )
-
-    st.altair_chart(
-        (bars_advp + text_advp).properties(height=450), 
-        use_container_width=True
-    )
-
-    # --- Gráfico 2: Por Trecho ---
-    st.markdown("<hr style='margin:1rem 0'>", unsafe_allow_html=True)
-    st.markdown("#### Percentual de Ofertas por Trecho (Top 15)")
-    
-    # Filtra para os 15 trechos com mais pesquisas para manter o gráfico legível
-    top_trechos = df.groupby('TRECHO')['IDPESQUISA'].nunique().nlargest(15).index
-    df_trecho_filtered = df[df['TRECHO'].isin(top_trechos)]
-    df_trecho = df_trecho_filtered.groupby(['TRECHO', 'CIA_NORM'])['IDPESQUISA'].nunique().reset_index(name='pesquisas_unicas')
-    df_trecho['percent'] = df_trecho['pesquisas_unicas'] / total_pesquisas
-
-    bars_trecho = alt.Chart(df_trecho).mark_bar().encode(
-        x=alt.X('TRECHO:N', title='Trecho', sort='-y', axis=alt.Axis(labelAngle=0)), # Rótulos na horizontal
-        y=alt.Y('sum(percent):Q', axis=alt.Axis(format='%', title='Participação sobre Total de Pesquisas')),
-        color=alt.Color('CIA_NORM:N', title='Cia Aérea', scale=alt.Scale(domain=['AZUL', 'GOL', 'LATAM'], range=['#0033A0', '#FF6600', '#8B0000'])),
-        tooltip=['TRECHO', 'CIA_NORM', alt.Tooltip('sum(pesquisas_unicas):Q', title='Nº de Pesquisas')]
-    )
-
-    text_trecho = bars_trecho.mark_text(
-        align='center',
-        baseline='middle',
-        fontWeight='bold',
-        fontSize=14
-    ).encode(
-        text=alt.Text('sum(percent):Q', format='.0%'),
-        color=alt.value('white') # Define a cor do texto para branco
-    )
-
-    st.altair_chart(
-        (bars_trecho + text_trecho).properties(height=450), 
-        use_container_width=True
-    )
+	df = render_filters(df_raw, key_prefix="t7")
+	st.subheader("Distribuição de Ofertas por Companhia Aérea")
+	
+	if df.empty:
+		st.info("Sem dados para os filtros selecionados.")
+		return
+	
+	# --- Gráfico 1: Por ADVP (100% Stacked Bar Chart) ---
+	st.markdown("#### Percentual de Ofertas por ADVP")
+	
+	# Contagem de pesquisas únicas por ADVP e CIA
+	df_counts = df.groupby(['ADVP_CANON', 'CIA_NORM'])['IDPESQUISA'].nunique().reset_index(name='pesquisas')
+	
+	# Calcula o total de pesquisas por ADVP (para a base 100%)
+	df_total_advp = df_counts.groupby('ADVP_CANON')['pesquisas'].sum().reset_index(name='total_advp')
+	
+	# Mescla os totais de volta no dataframe original e calcula a % sobre o total da ADVP
+	df_final = pd.merge(df_counts, df_total_advp, on='ADVP_CANON')
+	df_final['percent'] = df_final['pesquisas'] / df_final['total_advp']
+	
+	# Cria o gráfico de barras empilhadas de 100%
+	base_chart = alt.Chart(df_final).encode(
+		x=alt.X('ADVP_CANON:O', title='ADVP', axis=alt.Axis(labelAngle=0)),
+		# O Y-axis é a soma das porcentagens por ADVP
+		y=alt.Y('percent:Q', axis=alt.Axis(format='%', title='Participação')),
+		color=alt.Color('CIA_NORM:N', title='Cia Aérea', scale=alt.Scale(
+			domain=['AZUL', 'GOL', 'LATAM'],
+			range=['#0033A0', '#FF6600', '#8B0000']
+		)),
+		tooltip=['ADVP_CANON', 'CIA_NORM', alt.Tooltip('percent:Q', format='.1%', title='Percentual'), alt.Tooltip('pesquisas:Q', title='Nº de Pesquisas')]
+	)
+	
+	# Camada para as barras
+	bars_advp = base_chart.mark_bar()
+	
+	# Camada para os rótulos de texto
+	text_advp = base_chart.mark_text(
+		align='center',
+		baseline='middle',
+		fontWeight='bold',
+		fontSize=14
+	).encode(
+		text=alt.Text('percent:Q', format='.0%'),
+		order=alt.Order('CIA_NORM', sort='descending'), # Alinha o texto corretamente
+		color=alt.value('white')
+	)
+	
+	st.altair_chart(
+		(bars_advp + text_advp).properties(height=450), 
+		use_container_width=True
+	)
+	
+	# --- Gráfico 2: Por Trecho ---
+	st.markdown("<hr style='margin:1rem 0'>", unsafe_allow_html=True)
+	st.markdown("#### Percentual de Ofertas por Trecho (Top 15)")
+	
+	# Filtra para os 15 trechos com mais pesquisas para manter o gráfico legível
+	top_trechos = df.groupby('TRECHO')['IDPESQUISA'].nunique().nlargest(15).index
+	df_trecho_filtered = df[df['TRECHO'].isin(top_trechos)]
+	df_trecho = df_trecho_filtered.groupby(['TRECHO', 'CIA_NORM'])['IDPESQUISA'].nunique().reset_index(name='pesquisas_unicas')
+	# A porcentagem aqui é sobre o total de pesquisas GERAL
+	df_trecho['percent'] = df_trecho['pesquisas_unicas'] / df['IDPESQUISA'].nunique()
+	
+	bars_trecho = alt.Chart(df_trecho).mark_bar().encode(
+		x=alt.X('TRECHO:N', title='Trecho', sort='-y', axis=alt.Axis(labelAngle=0)), # Rótulos na horizontal
+		y=alt.Y('sum(percent):Q', axis=alt.Axis(format='%', title='Participação sobre Total de Pesquisas')),
+		color=alt.Color('CIA_NORM:N', title='Cia Aérea', scale=alt.Scale(domain=['AZUL', 'GOL', 'LATAM'], range=['#0033A0', '#FF6600', '#8B0000'])),
+		tooltip=['TRECHO', 'CIA_NORM', alt.Tooltip('sum(pesquisas_unicas):Q', title='Nº de Pesquisas')]
+	)
+	
+	text_trecho = bars_trecho.mark_text(
+		align='center',
+		baseline='middle',
+		fontWeight='bold',
+		fontSize=14
+	).encode(
+		text=alt.Text('sum(percent):Q', format='.0%'),
+		color=alt.value('white') # Define a cor do texto para branco
+	)
+	
+	st.altair_chart(
+		(bars_trecho + text_trecho).properties(height=450), 
+		use_container_width=True
+	)
 
 # ================================ MAIN ========================================
 def main():
