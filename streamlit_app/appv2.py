@@ -1478,101 +1478,96 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
     if df.empty:
         st.info("Sem dados para os filtros selecionados.")
         return
-
-    # --- Paleta e ordem fixas
-    cia_scale = alt.Scale(domain=["AZUL", "GOL", "LATAM"],
-                          range=["#0033A0", "#FF6600", "#8B0000"])
-    advp_order = [0, 1, 5, 10, 11, 17, 30]  # mantém a ordem do print; ausentes são ignorados
-
-    # Bucketing local (só para esta aba) p/ bater com a imagem
-    def _nearest_bucket(v):
-        try:
-            x = float(str(v).replace(",", "."))
-        except Exception:
-            x = np.nan
-        if np.isnan(x):
-            return np.nan
-        return min(advp_order, key=lambda k: abs(x - k))
-
-    work = df.copy()
-    work["CIA_NORM"] = work["CIA_NORM"].astype(str).str.upper()
-    work["ADVP_BKT"] = pd.to_numeric(work.get("ADVP_CANON"), errors="coerce").map(_nearest_bucket)
-
-    # ============================================================
-    # GRÁFICO 1 — Cia x ADVP (100% empilhado com rótulos internos)
-    # ============================================================
-    st.markdown("#### Cia × ADVP (100% do ADVP)")
-
-    g1 = (work.dropna(subset=["ADVP_BKT", "CIA_NORM", "IDPESQUISA"])
-               .groupby(["ADVP_BKT", "CIA_NORM"], as_index=False)["IDPESQUISA"]
-               .nunique()
-               .rename(columns={"IDPESQUISA": "n"}))
-
-    # % dentro de cada ADVP (soma 100% por coluna)
-    tot_advp = g1.groupby("ADVP_BKT")["n"].transform("sum").replace(0, np.nan)
-    g1["pct"] = (g1["n"] / tot_advp).fillna(0.0)
-
-    bars_advp = alt.Chart(g1).mark_bar().encode(
-        x=alt.X("ADVP_BKT:O", title="ADVP", sort=advp_order, axis=alt.Axis(labelAngle=0)),
-        y=alt.Y("sum(pct):Q", stack="normalize",
-                axis=alt.Axis(format="%", title="Participação por ADVP (100%)")),
-        color=alt.Color("CIA_NORM:N", title="Cia Aérea", scale=cia_scale, legend=alt.Legend(orient="bottom")),
+    
+    # --- Gráfico 1: Por ADVP (100% Stacked Bar Chart) ---
+    st.markdown("#### Percentual de Ofertas por ADVP")
+    
+    # Usar pivot_table para garantir que todas as combinações (ADVP, CIA) estejam no dataframe,
+    # mesmo se o número de ofertas for zero.
+    df_counts = pd.pivot_table(
+        df,
+        values='IDPESQUISA',
+        index='ADVP_CANON',
+        columns='CIA_NORM',
+        aggfunc=pd.Series.nunique,
+        fill_value=0
+    ).reset_index()
+    
+    # Converter para formato 'long' para uso no Altair
+    df_final = df_counts.melt(id_vars=['ADVP_CANON'], var_name='CIA_NORM', value_name='pesquisas')
+    
+    # O gráfico já faz o empilhamento e cálculo percentual, então passamos apenas 'pesquisas'
+    bars_advp = alt.Chart(df_final).mark_bar().encode(
+        x=alt.X('ADVP_CANON:O', title='ADVP', axis=alt.Axis(labelAngle=0)),
+        # 'normalize' faz o cálculo da % e empilhamento automático
+        y=alt.Y('pesquisas:Q', stack='normalize', axis=alt.Axis(format='%', title='Participação')),
+        color=alt.Color('CIA_NORM:N', title='Cia Aérea', scale=alt.Scale(
+            domain=['AZUL', 'GOL', 'LATAM'],
+            range=['#0033A0', '#FF6600', '#8B0000']
+        )),
         tooltip=[
-            alt.Tooltip("ADVP_BKT:O", title="ADVP"),
-            alt.Tooltip("CIA_NORM:N", title="CIA"),
-            alt.Tooltip("n:Q", title="Pesquisas"),
-            alt.Tooltip("sum(pct):Q", title="% no ADVP", format=".0%"),
-        ],
+            alt.Tooltip('ADVP_CANON'),
+            alt.Tooltip('CIA_NORM'),
+            alt.Tooltip('pesquisas', title='Nº de Pesquisas'),
+            alt.Tooltip('pesquisas', stack='normalize', format='.1%', title='Percentual')
+        ]
     )
 
-    # Rótulos brancos centralizados em cada segmento
-    text_advp = alt.Chart(g1).mark_text(size=14, fontWeight="bold", color="white").encode(
-        x=alt.X("ADVP_BKT:O", sort=advp_order),
-        y=alt.Y("sum(pct):Q", stack="normalize"),
-        detail="CIA_NORM:N",
-        text=alt.Text("sum(pct):Q", format=".0%")
+    # Adiciona os rótulos de texto
+    text_advp = alt.Chart(df_final).mark_text(
+        align='center',
+        baseline='middle',
+        fontWeight='bold',
+        fontSize=14
+    ).encode(
+        x=alt.X('ADVP_CANON:O'),
+        y=alt.Y('pesquisas:Q', stack='normalize'),
+        # Adiciona o texto apenas se o número de pesquisas for maior que zero
+        text=alt.condition(
+            alt.datum.pesquisas > 0,
+            alt.Text('pesquisas:Q', stack='normalize', format='.0%'),
+            alt.value('')
+        ),
+        color=alt.value('white') # Define a cor do texto para branco, legível em todos os segmentos
     )
 
-    st.altair_chart((bars_advp + text_advp).properties(height=420), use_container_width=True)
-
-    # ============================================================
-    # GRÁFICO 2 — Cia x Trecho (Top 15) normalizado (100% por trecho)
-    # ============================================================
+    st.altair_chart(
+        (bars_advp + text_advp).properties(height=450, title="Percentual de Ofertas por ADVP"), 
+        use_container_width=True
+    )
+    
+    # --- Gráfico 2: Por Trecho ---
     st.markdown("<hr style='margin:1rem 0'>", unsafe_allow_html=True)
-    st.markdown("#### Cia × Trecho — Top 15 (100% por trecho)")
-
-    top_trechos = (work.groupby("TRECHO")["IDPESQUISA"]
-                        .nunique().sort_values(ascending=False).head(15).index)
-
-    g2 = (work[work["TRECHO"].isin(top_trechos)]
-              .dropna(subset=["TRECHO", "CIA_NORM", "IDPESQUISA"])
-              .groupby(["TRECHO", "CIA_NORM"], as_index=False)["IDPESQUISA"]
-              .nunique().rename(columns={"IDPESQUISA": "n"}))
-
-    tot_tr = g2.groupby("TRECHO")["n"].transform("sum").replace(0, np.nan)
-    g2["pct"] = (g2["n"] / tot_tr).fillna(0.0)
-
-    bars_tr = alt.Chart(g2).mark_bar().encode(
-        x=alt.X("TRECHO:N", title="Trecho", sort="-y", axis=alt.Axis(labelAngle=0)),
-        y=alt.Y("sum(pct):Q", stack="normalize",
-                axis=alt.Axis(format="%", title="Participação por Trecho (100%)")),
-        color=alt.Color("CIA_NORM:N", title="Cia Aérea", scale=cia_scale, legend=alt.Legend(orient="bottom")),
-        tooltip=[
-            alt.Tooltip("TRECHO:N", title="Trecho"),
-            alt.Tooltip("CIA_NORM:N", title="CIA"),
-            alt.Tooltip("n:Q", title="Pesquisas"),
-            alt.Tooltip("sum(pct):Q", title="% no trecho", format=".0%"),
-        ],
+    st.markdown("#### Percentual de Ofertas por Trecho (Top 15)")
+    
+    # Filtra para os 15 trechos com mais pesquisas para manter o gráfico legível
+    top_trechos = df.groupby('TRECHO')['IDPESQUISA'].nunique().nlargest(15).index
+    df_trecho_filtered = df[df['TRECHO'].isin(top_trechos)]
+    df_trecho = df_trecho_filtered.groupby(['TRECHO', 'CIA_NORM'])['IDPESQUISA'].nunique().reset_index(name='pesquisas_unicas')
+    # A porcentagem aqui é sobre o total de pesquisas GERAL
+    df_trecho['percent'] = df_trecho['pesquisas_unicas'] / df['IDPESQUISA'].nunique()
+    
+    bars_trecho = alt.Chart(df_trecho).mark_bar().encode(
+        x=alt.X('TRECHO:N', title='Trecho', sort='-y', axis=alt.Axis(labelAngle=0)), # Rótulos na horizontal
+        y=alt.Y('sum(percent):Q', axis=alt.Axis(format='%', title='Participação sobre Total de Pesquisas')),
+        color=alt.Color('CIA_NORM:N', title='Cia Aérea', scale=alt.Scale(domain=['AZUL', 'GOL', 'LATAM'], range=['#0033A0', '#FF6600', '#8B0000'])),
+        tooltip=['TRECHO', 'CIA_NORM', alt.Tooltip('sum(pesquisas_unicas):Q', title='Nº de Pesquisas')]
     )
-
-    text_tr = alt.Chart(g2).mark_text(size=12, fontWeight="bold", color="white").encode(
-        x=alt.X("TRECHO:N"),
-        y=alt.Y("sum(pct):Q", stack="normalize"),
-        detail="CIA_NORM:N",
-        text=alt.Text("sum(pct):Q", format=".0%")
+    
+    text_trecho = bars_trecho.mark_text(
+        align='center',
+        baseline='middle',
+        fontWeight='bold',
+        fontSize=14
+    ).encode(
+        text=alt.Text('sum(percent):Q', format='.0%'),
+        color=alt.value('white') # Define a cor do texto para branco
     )
-
-    st.altair_chart((bars_tr + text_tr).properties(height=460), use_container_width=True)
+    
+    st.altair_chart(
+        (bars_trecho + text_trecho).properties(height=450), 
+        use_container_width=True
+    )
 
 # ================================ MAIN ========================================
 def main():
