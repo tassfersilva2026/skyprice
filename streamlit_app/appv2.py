@@ -1518,13 +1518,14 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         baseline='middle',
         fontWeight='bold',
         fontSize=14,
-        color='white'
+        color='white' # Garante que a cor seja branca
     ).encode(
-        text=alt.condition(alt.datum.pesquisas > 0, alt.Text('sum(pesquisas):Q', format='.0%'), alt.value(''))
+        # O texto deve usar a mesma agregação e empilhamento das barras para mostrar o percentual correto
+        text=alt.condition(alt.datum.pesquisas > 0, alt.Text('pesquisas:Q', aggregate='sum', format='.0%'), alt.value(''))
     )
 
     st.altair_chart(
-        (bars_advp + text_advp).properties(height=450, title="Percentual de Ofertas por ADVP"), 
+        (bars_advp + text_advp).properties(height=450), 
         use_container_width=True
     )
     
@@ -1534,26 +1535,35 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
     
     # Filtra para os 15 trechos com mais pesquisas para manter o gráfico legível
     top_trechos = df.groupby('TRECHO')['IDPESQUISA'].nunique().nlargest(15).index
-    df_trecho_filtered = df[df['TRECHO'].isin(top_trechos)]
-    df_trecho = df_trecho_filtered.groupby(['TRECHO', 'CIA_NORM'])['IDPESQUISA'].nunique().reset_index(name='pesquisas_unicas')
-    # A porcentagem aqui é sobre o total de pesquisas GERAL
-    df_trecho['percent'] = df_trecho['pesquisas_unicas'] / df['IDPESQUISA'].nunique()
+    df_trecho_filtered = df[df['TRECHO'].isin(top_trechos)].copy()
+
+    # Prepara os dados para o gráfico de trechos
+    df_trecho_counts = pd.pivot_table(
+        df_trecho_filtered,
+        values='IDPESQUISA',
+        index='TRECHO',
+        columns='CIA_NORM',
+        aggfunc=pd.Series.nunique,
+        fill_value=0
+    ).reset_index()
+    df_trecho_final = df_trecho_counts.melt(id_vars=['TRECHO'], var_name='CIA_NORM', value_name='pesquisas')
     
-    bars_trecho = alt.Chart(df_trecho).mark_bar().encode(
+    # Gráfico de barras 100% empilhado para trechos
+    bars_trecho = alt.Chart(df_trecho_final).mark_bar().encode(
         x=alt.X('TRECHO:N', title='Trecho', sort='-y', axis=alt.Axis(labelAngle=0)), # Rótulos na horizontal
-        y=alt.Y('sum(percent):Q', axis=alt.Axis(format='%', title='Participação sobre Total de Pesquisas')),
+        y=alt.Y('pesquisas:Q', stack='normalize', axis=alt.Axis(format='%', title='Participação')),
         color=alt.Color('CIA_NORM:N', title='Cia Aérea', scale=alt.Scale(domain=['AZUL', 'GOL', 'LATAM'], range=['#0033A0', '#FF6600', '#8B0000'])),
-        tooltip=['TRECHO', 'CIA_NORM', alt.Tooltip('sum(pesquisas_unicas):Q', title='Nº de Pesquisas')]
+        tooltip=['TRECHO:N', 'CIA_NORM:N', alt.Tooltip('pesquisas:Q', title='Nº de Pesquisas')]
     )
     
     text_trecho = bars_trecho.mark_text(
         align='center',
         baseline='middle',
         fontWeight='bold',
-        fontSize=14
+        fontSize=14,
+        color='white'
     ).encode(
-        text=alt.Text('sum(percent):Q', format='.0%'),
-        color=alt.value('white') # Define a cor do texto para branco
+        text=alt.condition(alt.datum.pesquisas > 0, alt.Text('pesquisas:Q', aggregate='sum', format='.0%'), alt.value(''))
     )
     
     st.altair_chart(
