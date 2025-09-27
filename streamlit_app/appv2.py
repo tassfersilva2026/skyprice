@@ -1523,12 +1523,14 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         x=alt.X('ADVP_CANON:O'),
         y=alt.Y('pesquisas:Q', stack='normalize'),
         # Adiciona o texto apenas se o número de pesquisas for maior que zero
-        text=alt.condition(
-            alt.datum.pesquisas > 0,
-            alt.Text('pesquisas:Q', stack='normalize', format='.0%'),
-            alt.value('')
-        ),
-        color=alt.value('white') # Define a cor do texto para branco, legível em todos os segmentos
+        text=alt.condition(alt.datum.pesquisas > 0, alt.Text('sum(pesquisas):Q', format='.0%'), alt.value('')),
+        color=alt.value('white'), # Define a cor do texto para branco, legível em todos os segmentos
+        # A ordem de empilhamento do texto deve ser a mesma das barras
+        order=alt.Order(
+          'pesquisas:Q',
+          stack='normalize',
+          sort='ascending'
+        )
     )
 
     st.altair_chart(
