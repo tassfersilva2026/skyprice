@@ -1496,41 +1496,44 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
     # Converter para formato 'long' para uso no Altair
     df_final = df_counts.melt(id_vars=['ADVP_CANON'], var_name='CIA_NORM', value_name='pesquisas')
     
-    # O gráfico já faz o empilhamento e cálculo percentual, então passamos apenas 'pesquisas'
-    bars_advp = alt.Chart(df_final).mark_bar().encode(
+    # Usar transform_stack para calcular as posições percentuais (y0, y1)
+    # Isso nos dá mais controle e evita os erros de schema.
+    base_chart = alt.Chart(df_final).transform_stack(
+        stack='normalize',
+        as_=['y0', 'y1'],
+        field='pesquisas',
+        groupby=['ADVP_CANON']
+    )
+
+    # Camada de barras
+    bars_advp = base_chart.mark_bar().encode(
         x=alt.X('ADVP_CANON:O', title='ADVP', axis=alt.Axis(labelAngle=0)),
-        # 'normalize' faz o cálculo da % e empilhamento automático
-        y=alt.Y('pesquisas:Q', stack='normalize', axis=alt.Axis(format='%', title='Participação')),
+        y=alt.Y('y0:Q', axis=alt.Axis(format='%', title='Participação')),
+        y2=alt.Y2('y1:Q'),
         color=alt.Color('CIA_NORM:N', title='Cia Aérea', scale=alt.Scale(
             domain=['AZUL', 'GOL', 'LATAM'],
             range=['#0033A0', '#FF6600', '#8B0000']
         )),
         tooltip=[
-            alt.Tooltip('ADVP_CANON'),
-            alt.Tooltip('CIA_NORM'),
-            alt.Tooltip('pesquisas', title='Nº de Pesquisas'),
-            alt.Tooltip('pesquisas', stack='normalize', format='.1%', title='Percentual')
+            'ADVP_CANON:N',
+            'CIA_NORM:N',
+            alt.Tooltip('pesquisas:Q', title='Nº de Pesquisas'),
+            alt.Tooltip('y1:Q', format='.1%', title='Percentual') # Usa o valor calculado y1
         ]
     )
 
     # Adiciona os rótulos de texto
-    text_advp = alt.Chart(df_final).mark_text(
+    text_advp = base_chart.mark_text(
         align='center',
         baseline='middle',
         fontWeight='bold',
-        fontSize=14
+        fontSize=14,
+        color='white'
     ).encode(
         x=alt.X('ADVP_CANON:O'),
-        y=alt.Y('pesquisas:Q', stack='normalize'),
-        # Adiciona o texto apenas se o número de pesquisas for maior que zero
-        text=alt.condition(alt.datum.pesquisas > 0, alt.Text('sum(pesquisas):Q', format='.0%'), alt.value('')),
-        color=alt.value('white'), # Define a cor do texto para branco, legível em todos os segmentos
-        # A ordem de empilhamento do texto deve ser a mesma das barras
-        order=alt.Order(
-          'pesquisas:Q',
-          stack='normalize',
-          sort='ascending'
-        )
+        y=alt.Y('y0:Q', aggregate={'function': 'mean', 'field': 'y1'}), # Posição central
+        text=alt.condition(alt.datum.pesquisas > 0, alt.Text('y1:Q', aggregate='sum', format='.0%'), alt.value('')),
+        detail='CIA_NORM:N' # Necessário para o cálculo correto do texto
     )
 
     st.altair_chart(
