@@ -1469,197 +1469,74 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         st.caption("Cia × ADVP")
         render_tbl_advp_and_cards()   # tabela + 6 cards
 
-# ─────────────────────── ABA 7: Ofertas x Cias (100% + rótulos brancos) ─────
-# ─────────────────────── ABA 7: Ofertas x Cias (100% + rótulos brancos) ─────
+# ─────────────────────── ABA 7: Ofertas por Cia (Gráficos) ───────────────────────
 @register_tab("Ofertas x Cias")
 def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
-    df = render_filters(df_raw, key_prefix="t7")
-    st.subheader("Distribuição de Ofertas por Companhia Aérea")
+	df = render_filters(df_raw, key_prefix="t7")
+	st.subheader("Distribuição de Ofertas por Companhia Aérea")
 
-    if df.empty:
-        st.info("Sem dados para os filtros selecionados.")
-        return
+	if df.empty:
+		st.info("Sem dados para os filtros selecionados.")
+		return
 
-    # Domínios e cores fixas por CIA
-    CIA_DOMAIN = ['AZUL', 'GOL', 'LATAM']
-    CIA_COLORS = ['#0033A0', '#FF6600', '#8B0000']
+	# --- SUBSTITUA APENAS ESTE BLOCO (Participação Geral por Cia) ---
 
-    # Normalizações
-    df = df.copy()
-    df['CIA_NORM'] = df['CIA_NORM'].astype(str).str.upper()
-    if 'IDPESQUISA' not in df.columns:
-        st.warning("Coluna IDPESQUISA ausente.")
-        return
+	st.markdown("#### Participação Geral por Cia (baseada nos filtros)")
 
-    # ===================== 0) PARTICIPAÇÃO GERAL (BARRA ÚNICA) =====================
-    st.markdown("#### Participação Geral por Cia (baseada nos filtros)")
+	share = (
+		df.groupby('CIA_NORM', as_index=False)['IDPESQUISA']
+		  .nunique()
+		  .rename(columns={'IDPESQUISA': 'pesquisas'})
+	)
 
-    share = (df.groupby('CIA_NORM', as_index=False)['IDPESQUISA']
-               .nunique().rename(columns={'IDPESQUISA': 'pesquisas'}))
+	# Garante as 3 cias, mesmo que alguma esteja com 0
+	cia_domain = ['AZUL', 'GOL', 'LATAM']
+	cia_colors = ['#0033A0', '#FF6600', '#8B0000']
+	for cia in cia_domain:
+		if cia not in share['CIA_NORM'].astype(str).values:
+			share.loc[len(share)] = [cia, 0]
 
-    # Garante as 3 cias mesmo com 0 ofertas
-    for cia in CIA_DOMAIN:
-        if cia not in share['CIA_NORM'].values:
-            share.loc[len(share)] = [cia, 0]
+	# Coluna categórica "dummy" para ter UMA barra empilhada
+	share['__ALL__'] = 'GERAL'
 
-    # Categoría dummy para 1 barra
-    share['__ALL__'] = 'GERAL'
+	bars_total = (
+		alt.Chart(share)
+		.transform_joinaggregate(total='sum(pesquisas)')  # total da base filtrada
+		.transform_calculate(perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total')
+		.mark_bar()
+		.encode(
+			x=alt.X('sum(pesquisas):Q', stack='normalize',
+					axis=alt.Axis(format='%', title='Participação')),
+			y=alt.Y('__ALL__:N', title=None, axis=None, sort=None),  # <--- sem lista com None
+			color=alt.Color('CIA_NORM:N', title='Cia Aérea',
+							scale=alt.Scale(domain=cia_domain, range=cia_colors)),
+			tooltip=[
+				alt.Tooltip('CIA_NORM:N', title='CIA'),
+				alt.Tooltip('pesquisas:Q', title='Nº de Pesquisas'),
+				alt.Tooltip('perc:Q', title='Participação', format='.0%')
+			]
+		)
+	)
 
-    bars_total = (
-        alt.Chart(share)
-        .transform_joinaggregate(total='sum(pesquisas)')
-        .transform_calculate(perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total')
-        .mark_bar()
-        .encode(
-            x=alt.X('sum(pesquisas):Q', stack='normalize',
-                    axis=alt.Axis(format='%', title='Participação')),
-            y=alt.Y('__ALL__:N', title=None, axis=None),
-            color=alt.Color('CIA_NORM:N', title='Cia Aérea',
-                            scale=alt.Scale(domain=CIA_DOMAIN, range=CIA_COLORS)),
-            tooltip=[
-                alt.Tooltip('CIA_NORM:N', title='CIA'),
-                alt.Tooltip('pesquisas:Q', title='Nº de Pesquisas'),
-                alt.Tooltip('perc:Q', title='Participação', format='.0%')
-            ]
-        )
-    )
+	labels_total = (
+		bars_total.mark_text(
+			align='center',
+			baseline='middle',
+			fontWeight='bold',
+			fontSize=18,
+			color='white'
+		)
+		.encode(
+			text=alt.condition(
+				'datum.perc >= 0.005',  # evita rótulos em segmentos minúsculos
+				alt.Text('perc:Q', format='.0%'),
+				alt.value('')
+			)
+		)
+	)
 
-    labels_total = (
-        alt.Chart(share)
-        .transform_joinaggregate(total='sum(pesquisas)')
-        .transform_calculate(perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total')
-        .mark_text(align='center', baseline='middle', fontWeight='bold', fontSize=20, color='white')
-        .encode(
-            x=alt.X('sum(pesquisas):Q', stack='normalize'),
-            y=alt.Y('__ALL__:N'),
-            detail='CIA_NORM:N',
-            text=alt.condition('datum.pesquisas > 0', alt.Text('perc:Q', format='.0%'), alt.value(''))
-        )
-    )
-
-    st.altair_chart((bars_total + labels_total).properties(height=140), use_container_width=True)
-
-    # ===================== 1) PARTICIPAÇÃO POR ADVP (100% EMPILHADO) =====================
-    st.markdown("<hr style='margin:1rem 0'>", unsafe_allow_html=True)
-    st.markdown("#### Percentual de Ofertas por ADVP")
-
-    if 'ADVP_CANON' not in df.columns:
-        st.info("Coluna ADVP_CANON não encontrada nos dados.")
-        return
-
-    df_advp = df.copy()
-    df_advp['ADVP_CANON'] = pd.to_numeric(df_advp['ADVP_CANON'], errors='coerce')
-    df_advp = df_advp.dropna(subset=['ADVP_CANON'])
-    if df_advp.empty:
-        st.info("Sem ADVPs válidos no recorte atual.")
-        return
-
-    pivot_advp = pd.pivot_table(
-        df_advp, values='IDPESQUISA', index='ADVP_CANON', columns='CIA_NORM',
-        aggfunc=pd.Series.nunique, fill_value=0
-    ).reset_index()
-
-    # Assegura colunas das cias
-    for cia in CIA_DOMAIN:
-        if cia not in pivot_advp.columns:
-            pivot_advp[cia] = 0
-
-    long_advp = pivot_advp.melt(id_vars=['ADVP_CANON'], var_name='CIA_NORM', value_name='pesquisas')
-
-    bars_advp = (
-        alt.Chart(long_advp)
-        .transform_joinaggregate(total='sum(pesquisas)', groupby=['ADVP_CANON'])
-        .transform_calculate(perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total')
-        .mark_bar()
-        .encode(
-            x=alt.X('ADVP_CANON:O', title='ADVP', axis=alt.Axis(labelAngle=0)),
-            y=alt.Y('sum(pesquisas):Q', stack='normalize',
-                    axis=alt.Axis(format='%', title='Participação')),
-            color=alt.Color('CIA_NORM:N', title='Cia Aérea',
-                            scale=alt.Scale(domain=CIA_DOMAIN, range=CIA_COLORS)),
-            tooltip=[
-                alt.Tooltip('ADVP_CANON:N', title='ADVP'),
-                alt.Tooltip('CIA_NORM:N', title='CIA'),
-                alt.Tooltip('pesquisas:Q', title='Nº de Pesquisas'),
-                alt.Tooltip('perc:Q', title='Participação', format='.0%')
-            ]
-        )
-    )
-
-    labels_advp = (
-        alt.Chart(long_advp)
-        .transform_joinaggregate(total='sum(pesquisas)', groupby=['ADVP_CANON'])
-        .transform_calculate(perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total')
-        .mark_text(align='center', baseline='middle', fontWeight='bold', fontSize=18, color='white')
-        .encode(
-            x=alt.X('ADVP_CANON:O'),
-            y=alt.Y('sum(pesquisas):Q', stack='normalize'),
-            detail='CIA_NORM:N',
-            text=alt.condition('datum.pesquisas > 0', alt.Text('perc:Q', format='.0%'), alt.value(''))
-        )
-    )
-
-    st.altair_chart((bars_advp + labels_advp).properties(height=450), use_container_width=True)
-
-    # ===================== 2) PARTICIPAÇÃO POR TRECHO (TOP 15) =====================
-    st.markdown("<hr style='margin:1rem 0'>", unsafe_allow_html=True)
-    st.markdown("#### Percentual de Ofertas por Trecho (Top 15)")
-
-    top_trechos = df.groupby('TRECHO')['IDPESQUISA'].nunique().nlargest(15).index
-    dft = df[df['TRECHO'].isin(top_trechos)].copy()
-
-    if dft.empty:
-        st.info("Sem trechos suficientes no recorte atual.")
-        return
-
-    pivot_tr = pd.pivot_table(
-        dft, values='IDPESQUISA', index='TRECHO', columns='CIA_NORM',
-        aggfunc=pd.Series.nunique, fill_value=0
-    ).reset_index()
-
-    for cia in CIA_DOMAIN:
-        if cia not in pivot_tr.columns:
-            pivot_tr[cia] = 0
-
-    long_tr = pivot_tr.melt(id_vars=['TRECHO'], var_name='CIA_NORM', value_name='pesquisas')
-
-    bars_tr = (
-        alt.Chart(long_tr)
-        .transform_joinaggregate(total='sum(pesquisas)', groupby=['TRECHO'])
-        .transform_calculate(perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total')
-        .mark_bar()
-        .encode(
-            x=alt.X('TRECHO:N', title='Trecho', sort='-y', axis=alt.Axis(labelAngle=0)),
-            y=alt.Y('sum(pesquisas):Q', stack='normalize',
-                    axis=alt.Axis(format='%', title='Participação')),
-            color=alt.Color('CIA_NORM:N', title='Cia Aérea',
-                            scale=alt.Scale(domain=CIA_DOMAIN, range=CIA_COLORS)),
-            tooltip=[
-                alt.Tooltip('TRECHO:N', title='Trecho'),
-                alt.Tooltip('CIA_NORM:N', title='CIA'),
-                alt.Tooltip('pesquisas:Q', title='Nº de Pesquisas'),
-                alt.Tooltip('perc:Q', title='Participação', format='.0%')
-            ]
-        )
-    )
-
-    labels_tr = (
-        alt.Chart(long_tr)
-        .transform_joinaggregate(total='sum(pesquisas)', groupby=['TRECHO'])
-        .transform_calculate(perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total')
-        .mark_text(align='center', baseline='middle', fontWeight='bold', fontSize=18, color='white')
-        .encode(
-            x=alt.X('TRECHO:N'),
-            y=alt.Y('sum(pesquisas):Q', stack='normalize'),
-            detail='CIA_NORM:N',
-            text=alt.condition('datum.pesquisas > 0', alt.Text('perc:Q', format='.0%'), alt.value(''))
-        )
-    )
-
-    st.altair_chart((bars_tr + labels_tr).properties(height=450), use_container_width=True)
-
-
-
+	st.altair_chart((bars_total + labels_total).properties(height=120),
+					use_container_width=True)
 
 # ================================ MAIN ========================================
 def main():
