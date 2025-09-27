@@ -1470,6 +1470,7 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         render_tbl_advp_and_cards()   # tabela + 6 cards
 
 # ─────────────────────── ABA 7: Ofertas x Cias (100% + rótulos brancos) ─────
+# ─────────────────────── ABA 7: Ofertas x Cias (100% + rótulos brancos) ─────
 @register_tab("Ofertas x Cias")
 def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t7")
@@ -1656,6 +1657,7 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
     )
 
     st.altair_chart((bars_tr + labels_tr).properties(height=450), use_container_width=True)
+
 
 
 
