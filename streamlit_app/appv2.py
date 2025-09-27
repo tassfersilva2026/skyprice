@@ -1470,6 +1470,7 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         render_tbl_advp_and_cards()   # tabela + 6 cards
 
 # ─────────────────────── ABA 7: Ofertas x Cias (ADVP + Trecho) ─────
+# ─────────────────────── ABA 7: Ofertas x Cias (ADVP + Trecho, rótulos sem overlap) ─────
 @register_tab("Ofertas x Cias")
 def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t7")
@@ -1479,22 +1480,23 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         st.info("Sem dados para os filtros selecionados.")
         return
 
-    # ── Paleta fixa por CIA
+    # Paleta e domínio fixos
     CIA_DOMAIN = ['AZUL', 'GOL', 'LATAM']
     CIA_COLORS = ['#0033A0', '#FF6600', '#8B0000']
 
-    # ── Limiares mínimos p/ exibir rótulos (evita overlap)
-    MIN_LABEL_ADVP   = 0.10  # 10% por ADVP
-    MIN_LABEL_TRECHO = 0.10  # 10% por Trecho
+    # Limiares das camadas
+    BIG = 0.15     # >= 15% → fonte 22
+    MID = 0.05     # 5–15%   → fonte 16
+                   # < 5%    → fonte 12 + dy para desencontrar
 
-    # ── Normalizações
+    # Normalizações
     df = df.copy()
     df['CIA_NORM'] = df['CIA_NORM'].astype(str).str.upper()
     if 'IDPESQUISA' not in df.columns:
         st.warning("Coluna IDPESQUISA ausente.")
         return
 
-    # ===================== 1) PARTICIPAÇÃO POR ADVP (100% EMPILHADO) =====================
+    # ===================== 1) ADVP =====================
     st.markdown("#### Percentual de Ofertas por ADVP")
 
     if 'ADVP_CANON' not in df.columns:
@@ -1512,8 +1514,6 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         df_advp, values='IDPESQUISA', index='ADVP_CANON', columns='CIA_NORM',
         aggfunc=pd.Series.nunique, fill_value=0
     ).reset_index()
-
-    # Garante colunas das cias
     for cia in CIA_DOMAIN:
         if cia not in pivot_advp.columns:
             pivot_advp[cia] = 0
@@ -1527,8 +1527,8 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         .mark_bar()
         .encode(
             x=alt.X('ADVP_CANON:O', title='ADVP', axis=alt.Axis(labelAngle=0)),
-            y=alt.Y('sum(pesquisas):Q', stack='normalize',
-                    axis=alt.Axis(format='%', title='Participação')),
+            y=alt.Y('sum(pesquisas):Q', stack='normalize', axis=alt.Axis(format='%', title='Participação')),
+            order=alt.Order('CIA_NORM:N', sort='ascending'),
             color=alt.Color('CIA_NORM:N', title='Cia Aérea',
                             scale=alt.Scale(domain=CIA_DOMAIN, range=CIA_COLORS)),
             tooltip=[
@@ -1540,33 +1540,70 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         )
     )
 
-    # Rótulos: brancos, bold, centrados; oculta < 10% pra não embolar
-    labels_advp = (
+    # Função de formatação PT-BR (vírgula)
+    fmt_calc = 'replace(format(datum.perc, ".2%"), "\\\\.", ",")'
+
+    # Camada BIG (>= 15%)
+    labels_advp_big = (
         alt.Chart(long_advp)
         .transform_joinaggregate(total='sum(pesquisas)', groupby=['ADVP_CANON'])
-        .transform_calculate(
-            perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total',
-            label_txt='replace(format(datum.total == 0 ? 0 : datum.pesquisas / datum.total, ".2%"), "\\\\.", ",")'
-        )
-        .transform_filter(f'datum.perc >= {MIN_LABEL_ADVP}')
+        .transform_calculate(perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total',
+                             label_txt=fmt_calc)
+        .transform_filter(f'datum.perc >= {BIG}')
         .mark_text(align='center', baseline='middle', fontWeight='bold', fontSize=22, color='white')
         .encode(
-            x=alt.X('ADVP_CANON:O'),
+            x='ADVP_CANON:O',
             y=alt.Y('sum(pesquisas):Q', stack='normalize'),
             detail='CIA_NORM:N',
             text='label_txt:N'
         )
     )
 
-    st.altair_chart((bars_advp + labels_advp).properties(height=450), use_container_width=True)
+    # Camada MID (5%–15%)
+    labels_advp_mid = (
+        alt.Chart(long_advp)
+        .transform_joinaggregate(total='sum(pesquisas)', groupby=['ADVP_CANON'])
+        .transform_calculate(perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total',
+                             label_txt=fmt_calc)
+        .transform_filter(f'datum.perc >= {MID} && datum.perc < {BIG}')
+        .mark_text(align='center', baseline='middle', fontWeight='bold', fontSize=16, color='white')
+        .encode(
+            x='ADVP_CANON:O',
+            y=alt.Y('sum(pesquisas):Q', stack='normalize'),
+            detail='CIA_NORM:N',
+            text='label_txt:N'
+        )
+    )
 
-    # ===================== 2) PARTICIPAÇÃO POR TRECHO (TOP 15) =====================
+    # Camada SMALL (< 5%) com dy por CIA para desencontrar
+    labels_advp_small = (
+        alt.Chart(long_advp)
+        .transform_joinaggregate(total='sum(pesquisas)', groupby=['ADVP_CANON'])
+        .transform_calculate(
+            perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total',
+            label_txt=fmt_calc,
+            dy='datum.CIA_NORM == "AZUL" ? -10 : (datum.CIA_NORM == "GOL" ? 10 : 0)'
+        )
+        .transform_filter(f'datum.perc > 0 && datum.perc < {MID}')
+        .mark_text(align='center', baseline='middle', fontWeight='bold', fontSize=12, color='white')
+        .encode(
+            x='ADVP_CANON:O',
+            y=alt.Y('sum(pesquisas):Q', stack='normalize'),
+            dy='dy:Q',
+            detail='CIA_NORM:N',
+            text='label_txt:N'
+        )
+    )
+
+    st.altair_chart((bars_advp + labels_advp_big + labels_advp_mid + labels_advp_small)
+                    .properties(height=450), use_container_width=True)
+
+    # ===================== 2) TRECHO (Top 15) =====================
     st.markdown("<hr style='margin:1rem 0'>", unsafe_allow_html=True)
     st.markdown("#### Percentual de Ofertas por Trecho (Top 15)")
 
     top_trechos = df.groupby('TRECHO')['IDPESQUISA'].nunique().nlargest(15).index
     dft = df[df['TRECHO'].isin(top_trechos)].copy()
-
     if dft.empty:
         st.info("Sem trechos suficientes no recorte atual.")
         return
@@ -1575,7 +1612,6 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         dft, values='IDPESQUISA', index='TRECHO', columns='CIA_NORM',
         aggfunc=pd.Series.nunique, fill_value=0
     ).reset_index()
-
     for cia in CIA_DOMAIN:
         if cia not in pivot_tr.columns:
             pivot_tr[cia] = 0
@@ -1589,8 +1625,8 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         .mark_bar()
         .encode(
             x=alt.X('TRECHO:N', title='Trecho', sort='-y', axis=alt.Axis(labelAngle=0)),
-            y=alt.Y('sum(pesquisas):Q', stack='normalize',
-                    axis=alt.Axis(format='%', title='Participação')),
+            y=alt.Y('sum(pesquisas):Q', stack='normalize', axis=alt.Axis(format='%', title='Participação')),
+            order=alt.Order('CIA_NORM:N', sort='ascending'),
             color=alt.Color('CIA_NORM:N', title='Cia Aérea',
                             scale=alt.Scale(domain=CIA_DOMAIN, range=CIA_COLORS)),
             tooltip=[
@@ -1602,24 +1638,58 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         )
     )
 
-    labels_tr = (
+    labels_tr_big = (
         alt.Chart(long_tr)
         .transform_joinaggregate(total='sum(pesquisas)', groupby=['TRECHO'])
-        .transform_calculate(
-            perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total',
-            label_txt='replace(format(datum.total == 0 ? 0 : datum.pesquisas / datum.total, ".2%"), "\\\\.", ",")'
-        )
-        .transform_filter(f'datum.perc >= {MIN_LABEL_TRECHO}')
+        .transform_calculate(perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total',
+                             label_txt=fmt_calc)
+        .transform_filter(f'datum.perc >= {BIG}')
         .mark_text(align='center', baseline='middle', fontWeight='bold', fontSize=22, color='white')
         .encode(
-            x=alt.X('TRECHO:N'),
+            x='TRECHO:N',
             y=alt.Y('sum(pesquisas):Q', stack='normalize'),
             detail='CIA_NORM:N',
             text='label_txt:N'
         )
     )
 
-    st.altair_chart((bars_tr + labels_tr).properties(height=450), use_container_width=True)
+    labels_tr_mid = (
+        alt.Chart(long_tr)
+        .transform_joinaggregate(total='sum(pesquisas)', groupby=['TRECHO'])
+        .transform_calculate(perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total',
+                             label_txt=fmt_calc)
+        .transform_filter(f'datum.perc >= {MID} && datum.perc < {BIG}')
+        .mark_text(align='center', baseline='middle', fontWeight='bold', fontSize=16, color='white')
+        .encode(
+            x='TRECHO:N',
+            y=alt.Y('sum(pesquisas):Q', stack='normalize'),
+            detail='CIA_NORM:N',
+            text='label_txt:N'
+        )
+    )
+
+    labels_tr_small = (
+        alt.Chart(long_tr)
+        .transform_joinaggregate(total='sum(pesquisas)', groupby=['TRECHO'])
+        .transform_calculate(
+            perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total',
+            label_txt=fmt_calc,
+            dy='datum.CIA_NORM == "AZUL" ? -10 : (datum.CIA_NORM == "GOL" ? 10 : 0)'
+        )
+        .transform_filter(f'datum.perc > 0 && datum.perc < {MID}')
+        .mark_text(align='center', baseline='middle', fontWeight='bold', fontSize=12, color='white')
+        .encode(
+            x='TRECHO:N',
+            y=alt.Y('sum(pesquisas):Q', stack='normalize'),
+            dy='dy:Q',
+            detail='CIA_NORM:N',
+            text='label_txt:N'
+        )
+    )
+
+    st.altair_chart((bars_tr + labels_tr_big + labels_tr_mid + labels_tr_small)
+                    .properties(height=450), use_container_width=True)
+
 
 
 
