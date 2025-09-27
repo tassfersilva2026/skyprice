@@ -1507,11 +1507,11 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
     text_advp = bars_advp.mark_text(
         align='center',
         baseline='middle',
-        color='white',
         fontWeight='bold',
         fontSize=14  # Aumenta o tamanho da fonte
     ).encode(
-        text=alt.Text('sum(percent):Q', format='.0%')
+        text=alt.Text('sum(percent):Q', format='.0%'),
+        color=alt.value('white')  # Define a cor do texto para branco
     )
 
     st.altair_chart(
@@ -1539,11 +1539,11 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
     text_trecho = bars_trecho.mark_text(
         align='center',
         baseline='middle',
-        color='white',
         fontWeight='bold',
         fontSize=14
     ).encode(
-        text=alt.Text('sum(percent):Q', format='.0%')
+        text=alt.Text('sum(percent):Q', format='.0%'),
+        color=alt.value('white') # Define a cor do texto para branco
     )
 
     st.altair_chart(
