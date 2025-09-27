@@ -1469,8 +1469,7 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         st.caption("Cia × ADVP")
         render_tbl_advp_and_cards()   # tabela + 6 cards
 
-# ─────────────────────── ABA 7: Ofertas por Cia (Gráficos) ───────────────────────
-# ─────────────────────── ABA 7: Ofertas x Cias (ADVP + Trecho, rótulos sem overlap) ─────
+# ─────────────────────── ABA 7: Ofertas x Cias (ADVP + Trecho, rótulos anti-overlap) ─────
 @register_tab("Ofertas x Cias")
 def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t7")
@@ -1480,14 +1479,19 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         st.info("Sem dados para os filtros selecionados.")
         return
 
-    # Paleta/domínio fixos
+    # Domínio e cores fixos por CIA
     CIA_DOMAIN = ['AZUL', 'GOL', 'LATAM']
     CIA_COLORS = ['#0033A0', '#FF6600', '#8B0000']
 
-    # Limiar de camadas (para evitar rótulo embolado)
-    BIG = 0.15   # >= 15%: fonte 22
-    MID = 0.05   # 5%–15%: fonte 16
-                 # < 5%: fonte 12 + yOffset por CIA
+    # Limiar por camada (aumentei para reduzir colisões)
+    BIG = 0.18   # >= 18% → fonte 22
+    MID = 0.08   # 8–18%   → fonte 16 (offset leve)
+                 # < 8%    → fonte 12 (offset forte)
+
+    # Offsets por CIA (desencontro vertical)
+    # small: desloca mais; mid: desloca menos
+    OFF_SMALL = 'datum.CIA_NORM == "AZUL" ? 22 : (datum.CIA_NORM == "GOL" ? 0 : -22)'
+    OFF_MID   = 'datum.CIA_NORM == "AZUL" ? 12 : (datum.CIA_NORM == "GOL" ? 0 : -12)'
 
     # Normalizações
     df = df.copy()
@@ -1496,7 +1500,7 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         st.warning("Coluna IDPESQUISA ausente.")
         return
 
-    # ===================== 1) ADVP =====================
+    # ======== 1) ADVP ========
     st.markdown("#### Percentual de Ofertas por ADVP")
     if 'ADVP_CANON' not in df.columns:
         st.info("Coluna ADVP_CANON não encontrada nos dados.")
@@ -1539,9 +1543,10 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         )
     )
 
-    # formato PT-BR (vírgula)
+    # Formatação PT-BR para o texto
     fmt_calc = 'replace(format(datum.perc, ".2%"), "\\\\.", ",")'
 
+    # BIG (>= 18%)
     labels_advp_big = (
         alt.Chart(long_advp)
         .transform_joinaggregate(total='sum(pesquisas)', groupby=['ADVP_CANON'])
@@ -1557,29 +1562,34 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         )
     )
 
+    # MID (8–18%) com offset leve por CIA
     labels_advp_mid = (
         alt.Chart(long_advp)
         .transform_joinaggregate(total='sum(pesquisas)', groupby=['ADVP_CANON'])
-        .transform_calculate(perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total',
-                             label_txt=fmt_calc)
+        .transform_calculate(
+            perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total',
+            label_txt=fmt_calc,
+            yoff=OFF_MID
+        )
         .transform_filter(f'datum.perc >= {MID} && datum.perc < {BIG}')
         .mark_text(align='center', baseline='middle', fontWeight='bold', fontSize=16, color='white')
         .encode(
             x='ADVP_CANON:O',
             y=alt.Y('sum(pesquisas):Q', stack='normalize'),
+            yOffset='yoff:Q',
             detail='CIA_NORM:N',
             text='label_txt:N'
         )
     )
 
-    # Small: usa yOffset (data-driven) para desencontrar por CIA
+    # SMALL (< 8%) com offset forte por CIA
     labels_advp_small = (
         alt.Chart(long_advp)
         .transform_joinaggregate(total='sum(pesquisas)', groupby=['ADVP_CANON'])
         .transform_calculate(
             perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total',
             label_txt=fmt_calc,
-            yoff='datum.CIA_NORM == "AZUL" ? -10 : (datum.CIA_NORM == "GOL" ? 10 : 0)'
+            yoff=OFF_SMALL
         )
         .transform_filter(f'datum.perc > 0 && datum.perc < {MID}')
         .mark_text(align='center', baseline='middle', fontWeight='bold', fontSize=12, color='white')
@@ -1595,7 +1605,7 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
     st.altair_chart((bars_advp + labels_advp_big + labels_advp_mid + labels_advp_small)
                     .properties(height=450), use_container_width=True)
 
-    # ===================== 2) TRECHO (Top 15) =====================
+    # ======== 2) TRECHO (Top 15) ========
     st.markdown("<hr style='margin:1rem 0'>", unsafe_allow_html=True)
     st.markdown("#### Percentual de Ofertas por Trecho (Top 15)")
 
@@ -1653,13 +1663,17 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
     labels_tr_mid = (
         alt.Chart(long_tr)
         .transform_joinaggregate(total='sum(pesquisas)', groupby=['TRECHO'])
-        .transform_calculate(perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total',
-                             label_txt=fmt_calc)
+        .transform_calculate(
+            perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total',
+            label_txt=fmt_calc,
+            yoff=OFF_MID
+        )
         .transform_filter(f'datum.perc >= {MID} && datum.perc < {BIG}')
         .mark_text(align='center', baseline='middle', fontWeight='bold', fontSize=16, color='white')
         .encode(
             x='TRECHO:N',
             y=alt.Y('sum(pesquisas):Q', stack='normalize'),
+            yOffset='yoff:Q',
             detail='CIA_NORM:N',
             text='label_txt:N'
         )
@@ -1671,7 +1685,7 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         .transform_calculate(
             perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total',
             label_txt=fmt_calc,
-            yoff='datum.CIA_NORM == "AZUL" ? -10 : (datum.CIA_NORM == "GOL" ? 10 : 0)'
+            yoff=OFF_SMALL
         )
         .transform_filter(f'datum.perc > 0 && datum.perc < {MID}')
         .mark_text(align='center', baseline='middle', fontWeight='bold', fontSize=12, color='white')
