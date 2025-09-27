@@ -1469,7 +1469,6 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         st.caption("Cia × ADVP")
         render_tbl_advp_and_cards()   # tabela + 6 cards
 
-# ─────────────────────── ABA 7: Ofertas por Cia (Gráficos) ───────────────────────
 # ─────────────────────── ABA 7: Ofertas x Cias (ADVP + Trecho) ─────
 @register_tab("Ofertas x Cias")
 def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
@@ -1480,11 +1479,15 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         st.info("Sem dados para os filtros selecionados.")
         return
 
-    # Domínios e cores fixas por CIA
+    # ── Paleta fixa por CIA
     CIA_DOMAIN = ['AZUL', 'GOL', 'LATAM']
     CIA_COLORS = ['#0033A0', '#FF6600', '#8B0000']
 
-    # Normalizações
+    # ── Limiares mínimos p/ exibir rótulos (evita overlap)
+    MIN_LABEL_ADVP   = 0.10  # 10% por ADVP
+    MIN_LABEL_TRECHO = 0.10  # 10% por Trecho
+
+    # ── Normalizações
     df = df.copy()
     df['CIA_NORM'] = df['CIA_NORM'].astype(str).str.upper()
     if 'IDPESQUISA' not in df.columns:
@@ -1537,14 +1540,15 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         )
     )
 
-    # Rótulos: brancos, negrito, centrados, 2 casas e vírgula
+    # Rótulos: brancos, bold, centrados; oculta < 10% pra não embolar
     labels_advp = (
         alt.Chart(long_advp)
         .transform_joinaggregate(total='sum(pesquisas)', groupby=['ADVP_CANON'])
         .transform_calculate(
+            perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total',
             label_txt='replace(format(datum.total == 0 ? 0 : datum.pesquisas / datum.total, ".2%"), "\\\\.", ",")'
         )
-        .transform_filter('datum.pesquisas > 0')
+        .transform_filter(f'datum.perc >= {MIN_LABEL_ADVP}')
         .mark_text(align='center', baseline='middle', fontWeight='bold', fontSize=22, color='white')
         .encode(
             x=alt.X('ADVP_CANON:O'),
@@ -1602,9 +1606,10 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         alt.Chart(long_tr)
         .transform_joinaggregate(total='sum(pesquisas)', groupby=['TRECHO'])
         .transform_calculate(
+            perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total',
             label_txt='replace(format(datum.total == 0 ? 0 : datum.pesquisas / datum.total, ".2%"), "\\\\.", ",")'
         )
-        .transform_filter('datum.pesquisas > 0')
+        .transform_filter(f'datum.perc >= {MIN_LABEL_TRECHO}')
         .mark_text(align='center', baseline='middle', fontWeight='bold', fontSize=22, color='white')
         .encode(
             x=alt.X('TRECHO:N'),
@@ -1615,6 +1620,7 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
     )
 
     st.altair_chart((bars_tr + labels_tr).properties(height=450), use_container_width=True)
+
 
 
 # ================================ MAIN ========================================
