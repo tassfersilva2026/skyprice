@@ -1469,7 +1469,7 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         st.caption("Cia × ADVP")
         render_tbl_advp_and_cards()   # tabela + 6 cards
 
-# ─────────────────────── ABA 7: Ofertas por Cia (Gráficos) ───────────────────────
+# ─────────────────────── ABA 7: Ofertas por Cia (GRÁFICOS COM RÓTULO %) ─────
 @register_tab("Ofertas x Cias")
 def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t7")
@@ -1478,12 +1478,77 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
     if df.empty:
         st.info("Sem dados para os filtros selecionados.")
         return
-    
-    # --- Gráfico 1: Por ADVP (100% Stacked Bar Chart) ---
+
+    # Paleta fixa Azul/Gol/Latam
+    cia_domain = ['AZUL', 'GOL', 'LATAM']
+    cia_colors = ['#0033A0', '#FF6600', '#8B0000']
+
+    # ----------------------------------------------------------------------
+    # 0) Participação GERAL por CIA (com os filtros) – barra 100% empilhada
+    # ----------------------------------------------------------------------
+    st.markdown("#### Participação Geral por Cia (baseada nos filtros)")
+    share = (
+        df.groupby('CIA_NORM', as_index=False)['IDPESQUISA']
+          .nunique()
+          .rename(columns={'IDPESQUISA': 'pesquisas'})
+    )
+    # Garante as 3 cias, mesmo que alguma esteja com 0
+    for cia in cia_domain:
+        if cia not in share['CIA_NORM'].astype(str).values:
+            share.loc[len(share)] = [cia, 0]
+
+    bars_total = (
+        alt.Chart(share)
+        .transform_joinaggregate(
+            total='sum(pesquisas)'
+        )
+        .transform_calculate(
+            perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total'
+        )
+        .mark_bar()
+        .encode(
+            x=alt.X('sum(pesquisas):Q', stack='normalize',
+                    axis=alt.Axis(format='%', title='Participação')),
+            y=alt.Y('nominal:N', title=None, axis=None,
+                    # eixinho fake só pra ter uma barra única
+                    sort=[None]),
+            color=alt.Color('CIA_NORM:N', title='Cia Aérea',
+                            scale=alt.Scale(domain=cia_domain, range=cia_colors)),
+            tooltip=[
+                alt.Tooltip('CIA_NORM:N', title='CIA'),
+                alt.Tooltip('pesquisas:Q', title='Nº de Pesquisas'),
+                alt.Tooltip('perc:Q', title='Participação', format='.0%')
+            ]
+        )
+    )
+
+    labels_total = (
+        bars_total.mark_text(
+            align='center',
+            baseline='middle',
+            fontWeight='bold',
+            fontSize=18,
+            color='white'
+        )
+        .encode(
+            text=alt.condition(
+                'datum.perc >= 0.005',  # evita rótulos em segmentos minúsculos
+                alt.Text('perc:Q', format='.0%'),
+                alt.value('')
+            )
+        )
+    )
+
+    st.altair_chart((bars_total + labels_total).properties(height=120, width='container'),
+                    use_container_width=True)
+
+    st.markdown("<hr style='margin:1rem 0'>", unsafe_allow_html=True)
+
+    # ----------------------------------------------------------------------
+    # 1) Percentual por ADVP (100% empilhado) com rótulo %
+    # ----------------------------------------------------------------------
     st.markdown("#### Percentual de Ofertas por ADVP")
-    
-    # Usar pivot_table para garantir que todas as combinações (ADVP, CIA) estejam no dataframe,
-    # mesmo se o número de ofertas for zero.
+
     df_counts = pd.pivot_table(
         df,
         values='IDPESQUISA',
@@ -1492,84 +1557,124 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         aggfunc=pd.Series.nunique,
         fill_value=0
     ).reset_index()
-    
-    # Converter para formato 'long' para uso no Altair
-    df_final = df_counts.melt(id_vars=['ADVP_CANON'], var_name='CIA_NORM', value_name='pesquisas')
-    
-    # Gráfico de barras 100% empilhado
-    bars_advp = alt.Chart(df_final).mark_bar().encode(
-        x=alt.X('ADVP_CANON:O', title='ADVP', axis=alt.Axis(labelAngle=0)),
-        # 'normalize' faz o cálculo da % e empilhamento automático
-        y=alt.Y('pesquisas:Q', stack='normalize', axis=alt.Axis(format='%', title='Participação')),
-        color=alt.Color('CIA_NORM:N', title='Cia Aérea', scale=alt.Scale(
-            domain=['AZUL', 'GOL', 'LATAM'],
-            range=['#0033A0', '#FF6600', '#8B0000']
-        )),
-        tooltip=[
-            'ADVP_CANON:N',
-            'CIA_NORM:N',
-            alt.Tooltip('pesquisas:Q', title='Nº de Pesquisas')
-        ]
+
+    df_long = df_counts.melt(id_vars=['ADVP_CANON'],
+                             var_name='CIA_NORM', value_name='pesquisas')
+
+    chart_advp = (
+        alt.Chart(df_long)
+        .transform_joinaggregate(
+            total='sum(pesquisas)', groupby=['ADVP_CANON']
+        )
+        .transform_calculate(
+            perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total'
+        )
+        .mark_bar()
+        .encode(
+            x=alt.X('ADVP_CANON:O', title='ADVP', axis=alt.Axis(labelAngle=0)),
+            y=alt.Y('sum(pesquisas):Q', stack='normalize',
+                    axis=alt.Axis(format='%', title='Participação')),
+            color=alt.Color('CIA_NORM:N', title='Cia Aérea',
+                            scale=alt.Scale(domain=cia_domain, range=cia_colors)),
+            tooltip=[
+                alt.Tooltip('ADVP_CANON:N', title='ADVP'),
+                alt.Tooltip('CIA_NORM:N', title='CIA'),
+                alt.Tooltip('pesquisas:Q', title='Nº de Pesquisas'),
+                alt.Tooltip('perc:Q', title='Participação', format='.0%')
+            ]
+        )
     )
 
-    # Adiciona os rótulos de texto
-    text_advp = bars_advp.mark_text(
-        align='center',
-        baseline='middle',
-        fontWeight='bold',
-        fontSize=14,
-        color='white' # Garante que a cor seja branca
-    ).encode(
-        # O texto deve usar a mesma agregação e empilhamento das barras para mostrar o percentual correto
-        text=alt.condition(alt.datum.pesquisas > 0, alt.Text('pesquisas:Q', aggregate='sum', format='.0%'), alt.value(''))
+    labels_advp = (
+        alt.MarkDef(type='text', align='center', baseline='middle')
+    )
+    text_advp = (
+        chart_advp.mark_text(
+            align='center',
+            baseline='middle',
+            fontWeight='bold',
+            fontSize=18,
+            color='white'
+        )
+        .encode(
+            text=alt.condition(
+                'datum.perc >= 0.005',
+                alt.Text('perc:Q', format='.0%'),
+                alt.value('')
+            )
+        )
     )
 
-    st.altair_chart(
-        (bars_advp + text_advp).properties(height=450), 
-        use_container_width=True
-    )
-    
-    # --- Gráfico 2: Por Trecho ---
+    st.altair_chart((chart_advp + text_advp).properties(height=450),
+                    use_container_width=True)
+
+    # ----------------------------------------------------------------------
+    # 2) Percentual por Trecho (Top 15) (100% empilhado) com rótulo %
+    # ----------------------------------------------------------------------
     st.markdown("<hr style='margin:1rem 0'>", unsafe_allow_html=True)
     st.markdown("#### Percentual de Ofertas por Trecho (Top 15)")
-    
-    # Filtra para os 15 trechos com mais pesquisas para manter o gráfico legível
-    top_trechos = df.groupby('TRECHO')['IDPESQUISA'].nunique().nlargest(15).index
-    df_trecho_filtered = df[df['TRECHO'].isin(top_trechos)].copy()
 
-    # Prepara os dados para o gráfico de trechos
+    top_trechos = df.groupby('TRECHO')['IDPESQUISA'].nunique().nlargest(15).index
+    dft = df[df['TRECHO'].isin(top_trechos)].copy()
+
     df_trecho_counts = pd.pivot_table(
-        df_trecho_filtered,
+        dft,
         values='IDPESQUISA',
         index='TRECHO',
         columns='CIA_NORM',
         aggfunc=pd.Series.nunique,
         fill_value=0
     ).reset_index()
-    df_trecho_final = df_trecho_counts.melt(id_vars=['TRECHO'], var_name='CIA_NORM', value_name='pesquisas')
-    
-    # Gráfico de barras 100% empilhado para trechos
-    bars_trecho = alt.Chart(df_trecho_final).mark_bar().encode(
-        x=alt.X('TRECHO:N', title='Trecho', sort='-y', axis=alt.Axis(labelAngle=0)), # Rótulos na horizontal
-        y=alt.Y('pesquisas:Q', stack='normalize', axis=alt.Axis(format='%', title='Participação')),
-        color=alt.Color('CIA_NORM:N', title='Cia Aérea', scale=alt.Scale(domain=['AZUL', 'GOL', 'LATAM'], range=['#0033A0', '#FF6600', '#8B0000'])),
-        tooltip=['TRECHO:N', 'CIA_NORM:N', alt.Tooltip('pesquisas:Q', title='Nº de Pesquisas')]
+
+    df_trecho_long = df_trecho_counts.melt(id_vars=['TRECHO'],
+                                           var_name='CIA_NORM',
+                                           value_name='pesquisas')
+
+    chart_trecho = (
+        alt.Chart(df_trecho_long)
+        .transform_joinaggregate(
+            total='sum(pesquisas)', groupby=['TRECHO']
+        )
+        .transform_calculate(
+            perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total'
+        )
+        .mark_bar()
+        .encode(
+            x=alt.X('TRECHO:N', title='Trecho', sort='-y',
+                    axis=alt.Axis(labelAngle=0)),
+            y=alt.Y('sum(pesquisas):Q', stack='normalize',
+                    axis=alt.Axis(format='%', title='Participação')),
+            color=alt.Color('CIA_NORM:N', title='Cia Aérea',
+                            scale=alt.Scale(domain=cia_domain, range=cia_colors)),
+            tooltip=[
+                alt.Tooltip('TRECHO:N', title='Trecho'),
+                alt.Tooltip('CIA_NORM:N', title='CIA'),
+                alt.Tooltip('pesquisas:Q', title='Nº de Pesquisas'),
+                alt.Tooltip('perc:Q', title='Participação', format='.0%')
+            ]
+        )
     )
-    
-    text_trecho = bars_trecho.mark_text(
-        align='center',
-        baseline='middle',
-        fontWeight='bold',
-        fontSize=14,
-        color='white'
-    ).encode(
-        text=alt.condition(alt.datum.pesquisas > 0, alt.Text('pesquisas:Q', aggregate='sum', format='.0%'), alt.value(''))
+
+    text_trecho = (
+        chart_trecho.mark_text(
+            align='center',
+            baseline='middle',
+            fontWeight='bold',
+            fontSize=18,
+            color='white'
+        )
+        .encode(
+            text=alt.condition(
+                'datum.perc >= 0.005',
+                alt.Text('perc:Q', format='.0%'),
+                alt.value('')
+            )
+        )
     )
-    
-    st.altair_chart(
-        (bars_trecho + text_trecho).properties(height=450), 
-        use_container_width=True
-    )
+
+    st.altair_chart((chart_trecho + text_trecho).properties(height=450),
+                    use_container_width=True)
+
 
 # ================================ MAIN ========================================
 def main():
