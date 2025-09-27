@@ -1496,41 +1496,31 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
     # Converter para formato 'long' para uso no Altair
     df_final = df_counts.melt(id_vars=['ADVP_CANON'], var_name='CIA_NORM', value_name='pesquisas')
     
-    # O gráfico já faz o empilhamento e cálculo percentual, então passamos apenas 'pesquisas'
+    # Gráfico de barras 100% empilhado
     bars_advp = alt.Chart(df_final).mark_bar().encode(
         x=alt.X('ADVP_CANON:O', title='ADVP', axis=alt.Axis(labelAngle=0)),
         # 'normalize' faz o cálculo da % e empilhamento automático
-        y=alt.Y('sum(pesquisas):Q', stack='normalize', axis=alt.Axis(format='%', title='Participação')),
+        y=alt.Y('pesquisas:Q', stack='normalize', axis=alt.Axis(format='%', title='Participação')),
         color=alt.Color('CIA_NORM:N', title='Cia Aérea', scale=alt.Scale(
             domain=['AZUL', 'GOL', 'LATAM'],
             range=['#0033A0', '#FF6600', '#8B0000']
         )),
         tooltip=[
-            alt.Tooltip('ADVP_CANON'),
-            alt.Tooltip('CIA_NORM'),
-            alt.Tooltip('sum(pesquisas):Q', title='Nº de Pesquisas'),
+            'ADVP_CANON:N',
+            'CIA_NORM:N',
+            alt.Tooltip('pesquisas:Q', title='Nº de Pesquisas')
         ]
     )
 
     # Adiciona os rótulos de texto
-    # Para os rótulos, precisamos calcular o percentual manualmente
-    text_advp = alt.Chart(df_final).transform_joinaggregate(
-        total_pesquisas='sum(pesquisas)',
-        groupby=['ADVP_CANON']
-    ).transform_calculate(
-        pct='datum.pesquisas / datum.total_pesquisas'
-    ).mark_text(
+    text_advp = bars_advp.mark_text(
         align='center',
         baseline='middle',
         fontWeight='bold',
         fontSize=14,
         color='white'
     ).encode(
-        x=alt.X('ADVP_CANON:O', title='ADVP'),
-        y=alt.Y('sum(pesquisas):Q', stack='normalize'),
-        text=alt.condition(alt.datum.pesquisas > 0, alt.Text('pct:Q', format='.0%'), alt.value('')),
-        detail='CIA_NORM:N',
-        order=alt.Order('CIA_NORM', sort='descending')
+        text=alt.condition(alt.datum.pesquisas > 0, alt.Text('sum(pesquisas):Q', format='.0%'), alt.value(''))
     )
 
     st.altair_chart(
