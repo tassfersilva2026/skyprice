@@ -1469,8 +1469,7 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         st.caption("Cia × ADVP")
         render_tbl_advp_and_cards()   # tabela + 6 cards
 
-# ─────────────────────── ABA 7: Ofertas por Cia (Gráficos) ───────────────────────
-# ─────────────────────── ABA 7: Ofertas por Cia (100% + rótulos brancos) ─────
+# ─────────────────────── ABA 7: Ofertas x Cias (100% + rótulos brancos) ─────
 @register_tab("Ofertas x Cias")
 def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t7")
@@ -1480,31 +1479,29 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         st.info("Sem dados para os filtros selecionados.")
         return
 
-    # Domínios fixos de cor
+    # Domínios e cores fixas por CIA
     CIA_DOMAIN = ['AZUL', 'GOL', 'LATAM']
     CIA_COLORS = ['#0033A0', '#FF6600', '#8B0000']
 
-    # Normalizações mínimas
+    # Normalizações
     df = df.copy()
     df['CIA_NORM'] = df['CIA_NORM'].astype(str).str.upper()
-    df['ADVP_CANON'] = pd.to_numeric(df['ADVP_CANON'], errors='coerce')
+    if 'IDPESQUISA' not in df.columns:
+        st.warning("Coluna IDPESQUISA ausente.")
+        return
 
-    # =====================================================================
-    # 0) Participação GERAL por Cia (100% empilhado) — baseado nos filtros
-    # =====================================================================
+    # ===================== 0) PARTICIPAÇÃO GERAL (BARRA ÚNICA) =====================
     st.markdown("#### Participação Geral por Cia (baseada nos filtros)")
 
-    share = (
-        df.groupby('CIA_NORM', as_index=False)['IDPESQUISA']
-          .nunique()
-          .rename(columns={'IDPESQUISA': 'pesquisas'})
-    )
-    # Garante as 3 cias mesmo com zero
+    share = (df.groupby('CIA_NORM', as_index=False)['IDPESQUISA']
+               .nunique().rename(columns={'IDPESQUISA': 'pesquisas'}))
+
+    # Garante as 3 cias mesmo com 0 ofertas
     for cia in CIA_DOMAIN:
         if cia not in share['CIA_NORM'].values:
             share.loc[len(share)] = [cia, 0]
 
-    # Coluna categórica única para formar UMA barra empilhada
+    # Categoría dummy para 1 barra
     share['__ALL__'] = 'GERAL'
 
     bars_total = (
@@ -1527,41 +1524,48 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
     )
 
     labels_total = (
-        bars_total.mark_text(
-            align='center',
-            baseline='middle',
-            fontWeight='bold',
-            fontSize=20,   # GRANDE
-            color='white'  # BRANCO
-        )
+        alt.Chart(share)
+        .transform_joinaggregate(total='sum(pesquisas)')
+        .transform_calculate(perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total')
+        .mark_text(align='center', baseline='middle', fontWeight='bold', fontSize=20, color='white')
         .encode(
-            text=alt.condition('datum.perc >= 0.005', alt.Text('perc:Q', format='.0%'), alt.value(''))
+            x=alt.X('sum(pesquisas):Q', stack='normalize'),
+            y=alt.Y('__ALL__:N'),
+            detail='CIA_NORM:N',
+            text=alt.condition('datum.pesquisas > 0', alt.Text('perc:Q', format='.0%'), alt.value(''))
         )
     )
 
     st.altair_chart((bars_total + labels_total).properties(height=140), use_container_width=True)
 
-    # =====================================================================
-    # 1) Percentual por ADVP (100% empilhado) + rótulos brancos/negrito/grandes
-    # =====================================================================
+    # ===================== 1) PARTICIPAÇÃO POR ADVP (100% EMPILHADO) =====================
     st.markdown("<hr style='margin:1rem 0'>", unsafe_allow_html=True)
     st.markdown("#### Percentual de Ofertas por ADVP")
 
-    df_advp = df.dropna(subset=['ADVP_CANON']).copy()
+    if 'ADVP_CANON' not in df.columns:
+        st.info("Coluna ADVP_CANON não encontrada nos dados.")
+        return
 
-    # Pivot -> long
-    df_counts = pd.pivot_table(
+    df_advp = df.copy()
+    df_advp['ADVP_CANON'] = pd.to_numeric(df_advp['ADVP_CANON'], errors='coerce')
+    df_advp = df_advp.dropna(subset=['ADVP_CANON'])
+    if df_advp.empty:
+        st.info("Sem ADVPs válidos no recorte atual.")
+        return
+
+    pivot_advp = pd.pivot_table(
         df_advp, values='IDPESQUISA', index='ADVP_CANON', columns='CIA_NORM',
         aggfunc=pd.Series.nunique, fill_value=0
     ).reset_index()
 
+    # Assegura colunas das cias
     for cia in CIA_DOMAIN:
-        if cia not in df_counts.columns:
-            df_counts[cia] = 0
+        if cia not in pivot_advp.columns:
+            pivot_advp[cia] = 0
 
-    long_advp = df_counts.melt(id_vars=['ADVP_CANON'], var_name='CIA_NORM', value_name='pesquisas')
+    long_advp = pivot_advp.melt(id_vars=['ADVP_CANON'], var_name='CIA_NORM', value_name='pesquisas')
 
-    chart_advp = (
+    bars_advp = (
         alt.Chart(long_advp)
         .transform_joinaggregate(total='sum(pesquisas)', groupby=['ADVP_CANON'])
         .transform_calculate(perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total')
@@ -1582,23 +1586,21 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
     )
 
     labels_advp = (
-        chart_advp.mark_text(
-            align='center',
-            baseline='middle',
-            fontWeight='bold',
-            fontSize=18,
-            color='white'
-        )
+        alt.Chart(long_advp)
+        .transform_joinaggregate(total='sum(pesquisas)', groupby=['ADVP_CANON'])
+        .transform_calculate(perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total')
+        .mark_text(align='center', baseline='middle', fontWeight='bold', fontSize=18, color='white')
         .encode(
-            text=alt.condition('datum.perc >= 0.005', alt.Text('perc:Q', format='.0%'), alt.value(''))
+            x=alt.X('ADVP_CANON:O'),
+            y=alt.Y('sum(pesquisas):Q', stack='normalize'),
+            detail='CIA_NORM:N',
+            text=alt.condition('datum.pesquisas > 0', alt.Text('perc:Q', format='.0%'), alt.value(''))
         )
     )
 
-    st.altair_chart((chart_advp + labels_advp).properties(height=450), use_container_width=True)
+    st.altair_chart((bars_advp + labels_advp).properties(height=450), use_container_width=True)
 
-    # =====================================================================
-    # 2) Percentual por Trecho (Top 15) (100% empilhado) + rótulos brancos
-    # =====================================================================
+    # ===================== 2) PARTICIPAÇÃO POR TRECHO (TOP 15) =====================
     st.markdown("<hr style='margin:1rem 0'>", unsafe_allow_html=True)
     st.markdown("#### Percentual de Ofertas por Trecho (Top 15)")
 
@@ -1609,19 +1611,19 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         st.info("Sem trechos suficientes no recorte atual.")
         return
 
-    df_trecho_counts = pd.pivot_table(
+    pivot_tr = pd.pivot_table(
         dft, values='IDPESQUISA', index='TRECHO', columns='CIA_NORM',
         aggfunc=pd.Series.nunique, fill_value=0
     ).reset_index()
 
     for cia in CIA_DOMAIN:
-        if cia not in df_trecho_counts.columns:
-            df_trecho_counts[cia] = 0
+        if cia not in pivot_tr.columns:
+            pivot_tr[cia] = 0
 
-    long_trecho = df_trecho_counts.melt(id_vars=['TRECHO'], var_name='CIA_NORM', value_name='pesquisas')
+    long_tr = pivot_tr.melt(id_vars=['TRECHO'], var_name='CIA_NORM', value_name='pesquisas')
 
-    chart_trecho = (
-        alt.Chart(long_trecho)
+    bars_tr = (
+        alt.Chart(long_tr)
         .transform_joinaggregate(total='sum(pesquisas)', groupby=['TRECHO'])
         .transform_calculate(perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total')
         .mark_bar()
@@ -1640,20 +1642,21 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         )
     )
 
-    labels_trecho = (
-        chart_trecho.mark_text(
-            align='center',
-            baseline='middle',
-            fontWeight='bold',
-            fontSize=18,
-            color='white'
-        )
+    labels_tr = (
+        alt.Chart(long_tr)
+        .transform_joinaggregate(total='sum(pesquisas)', groupby=['TRECHO'])
+        .transform_calculate(perc='datum.total == 0 ? 0 : datum.pesquisas / datum.total')
+        .mark_text(align='center', baseline='middle', fontWeight='bold', fontSize=18, color='white')
         .encode(
-            text=alt.condition('datum.perc >= 0.005', alt.Text('perc:Q', format='.0%'), alt.value(''))
+            x=alt.X('TRECHO:N'),
+            y=alt.Y('sum(pesquisas):Q', stack='normalize'),
+            detail='CIA_NORM:N',
+            text=alt.condition('datum.pesquisas > 0', alt.Text('perc:Q', format='.0%'), alt.value(''))
         )
     )
 
-    st.altair_chart((chart_trecho + labels_trecho).properties(height=450), use_container_width=True)
+    st.altair_chart((bars_tr + labels_tr).properties(height=450), use_container_width=True)
+
 
 
 # ================================ MAIN ========================================
