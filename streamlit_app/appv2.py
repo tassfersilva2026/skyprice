@@ -211,27 +211,7 @@ CARDS_STACK_CSS = """
 st.markdown(CARDS_STACK_CSS, unsafe_allow_html=True)
 
 def card_html(nome: str, p1: float, p2: float, p3: float, rank_cls: str = "") -> str:
-    """Gera o HTML para um card de ranking, exibindo os 3 primeiros lugares."""
-    try:
-        p1 = float(p1 or 0.0)
-        p2 = float(p2 or 0.0)
-        p3 = float(p3 or 0.0)
-    except Exception:
-        p1, p2, p3 = 0.0, 0.0, 0.0
-    p1 = max(0.0, min(100.0, p1)); p2 = max(0.0, min(100.0, p2)); p3 = max(0.0, min(100.0, p3))
-    cls = f"card {rank_cls}".strip()
-    return (
-        f"<div class='{cls}'>"
-        f"<div class='title'>{nome}</div>"
-        f"<div class='row'>"
-        f"<div class='item'><span class='pos'>1º</span><span class='pct'>{p1:.0f}%</span></div>"
-        f"<div class='item'><span class='pos'>2º</span><span class='pct'>{p2:.0f}%</span></div>"
-        f"<div class='item'><span class='pos'>3º</span><span class='pct'>{p3:.0f}%</span></div>"
-        f"</div></div>"
-    )
-
-def card_html_cia(nome: str, p1: float, rank_cls: str = "") -> str:
-    """Gera o HTML para um card de ranking de Cia, exibindo apenas o 1º lugar."""
+    """Gera o HTML para um card de ranking, exibindo apenas o 1º lugar."""
     try:
         p1 = float(p1 or 0.0)
     except Exception:
@@ -242,7 +222,7 @@ def card_html_cia(nome: str, p1: float, rank_cls: str = "") -> str:
         f"<div class='{cls}'>"
         f"<div class='title'>{nome}</div>"
         f"<div class='row'>"
-        f"<div class='item'><span class='pos'>1º</span><span class='pct'>{p1:.0f}%</span></div>"
+        f"<div class='item'><span class='pos'>1º</span><span class='pct'>{p1:.2f}%</span></div>"
         f"</div></div>"
     )
 
@@ -495,7 +475,7 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
         mask &= df_raw.get("CIA_NORM").astype(str).str.upper().isin(st.session_state["flt"]["cia"])
 
     df = df_raw[mask].copy()
-    st.caption(f"Quantidade de Ofertas: {fmt_int(len(df))}")
+    st.caption(f"Linhas após filtros: {fmt_int(len(df))} • Última atualização: {last_update_from_cols(df)}")
     st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
     return df
 
@@ -506,17 +486,19 @@ def tab1_painel(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t1")
     st.subheader("Painel")
     total_pesq = df["IDPESQUISA"].nunique() or 1
-    last_update = last_update_from_cols(df)
+    cov = {r: df.loc[df["RANKING"].eq(r), "IDPESQUISA"].nunique() for r in (1, 2, 3)}
     st.markdown(
-        f"<div style='font-size:14px;opacity:.85;margin-top:-6px;'>"
-        f"<b>Total de Pesquisas realizadas:</b> {fmt_int(total_pesq)} | "
-        f"<b>Última Atualização:</b> {last_update}</div>",
+        f"<div style='font-size:13px;opacity:.85;margin-top:-6px;'>"
+        f"Pesquisas únicas: <b>{fmt_int(total_pesq)}</b> • "
+        f"Cobertura 1º: {cov[1]/total_pesq*100:.1f}% • "
+        f"2º: {cov[2]/total_pesq*100:.1f}% • "
+        f"3º: {cov[3]/total_pesq*100:.1f}%</div>",
         unsafe_allow_html=True
     )
     st.markdown("<hr style='margin:6px 0'>", unsafe_allow_html=True)
 
     # Layout principal: 2 colunas (1 para geral, 2 para cias)
-    main_col1, main_col2 = st.columns([0.3, 0.7], gap="large")
+    main_col1, main_col2 = st.columns([0.35, 0.65], gap="large")
 
     with main_col1:
         st.subheader("Ranking Geral")
@@ -556,7 +538,7 @@ def tab1_painel(df_raw: pd.DataFrame):
         st.markdown(f"<div class='cards-stack'>{''.join(cards)}</div>", unsafe_allow_html=True)
 
     with main_col2:
-        st.subheader("Ranking Por Cia")
+        st.subheader("Painel por Cia")
         if "CIA_NORM" not in df.columns:
             st.info("Coluna 'CIA_NORM' não encontrada nos dados filtrados."); return
         c1, c2, c3 = st.columns(3)
@@ -590,7 +572,6 @@ def tab1_painel(df_raw: pd.DataFrame):
                     p3 = float((base["R3"] == tgt).mean()) * 100
                     return p1, p2, p3
                 targets_sorted_local = sorted(targets, key=lambda t: pct_target(t)[0], reverse=True)
-                # Usa a nova função de card que mostra apenas o 1º lugar
                 cards_local = [card_html_cia(t, pct_target(t)[0]) for t in targets_sorted_local]
                 st.markdown(f"<div class='cards-stack'>{''.join(cards_local)}</div>", unsafe_allow_html=True)
     
