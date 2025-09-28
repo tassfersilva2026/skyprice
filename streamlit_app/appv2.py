@@ -1486,7 +1486,7 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
 
     # Regras de rótulo
     SHOW_MIN = 0.02   # oculta % < 2% (coloque 0.0 se quiser mostrar tudo)
-    BIG, MID = 0.10, 0.05
+    BIG, MID = 0.30, 0.05
     def label_size(share: float) -> int:
         # tamanhos menores (limpos)
         return 8 if share >= BIG else (8 if share >= MID else 8)
