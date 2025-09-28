@@ -1514,7 +1514,7 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         )
         st.altair_chart((bars + labels).properties(height=450), use_container_width=True)
     # ===================== 1) ADVP =====================
-    st.markdown("#### Percentual de Ofertas por ADVP")
+    st.markdown("#### Participação Cias Por ADVP")
     if 'ADVP_CANON' not in base.columns:
         st.info("Coluna ADVP_CANON não encontrada nos dados.")
     else:
@@ -1524,7 +1524,7 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         draw_chart(build_stacked(advp, 'ADVP_CANON'), 'ADVP_CANON', 'ADVP')
     # ===================== 2) TRECHO (Top 15) =====================
     st.markdown("<hr style='margin:1rem 0'>", unsafe_allow_html=True)
-    st.markdown("#### Percentual de Ofertas por Trecho (Top 15)")
+    st.markdown("#### Participação Cias Por Trechos")
     top15 = base.groupby('TRECHO')['IDPESQUISA'].nunique().nlargest(15).index
     dft = base[base['TRECHO'].isin(top15)].copy()
     draw_chart(build_stacked(dft, 'TRECHO'), 'TRECHO', 'Trecho')
