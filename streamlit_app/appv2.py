@@ -1469,8 +1469,7 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         st.caption("Cia × ADVP")
         render_tbl_advp_and_cards()   # tabela + 6 cards
 
-# ─────────────────────── ABA 7: Ofertas x Cias (pré-cálculo y0/y1/centro) ─────
-# ─────────────────────── ABA 7: Ofertas x Cias (pré-cálculo y0/y1/centro) ─────
+# ─────────────────────── ABA 7: Ofertas x Cias (estável, rótulo centrado) ─────
 @register_tab("Ofertas x Cias")
 def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t7")
@@ -1480,54 +1479,58 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         st.info("Sem dados para os filtros selecionados.")
         return
 
-    # Config
+    # Config fixa
     CIA_DOMAIN = ['AZUL', 'GOL', 'LATAM']
     CIA_COLORS = ['#0033A0', '#FF6600', '#8B0000']
-    ORDER_MAP = {'AZUL': 0, 'GOL': 1, 'LATAM': 2}
+    ORDER_MAP  = {'AZUL': 0, 'GOL': 1, 'LATAM': 2}
 
-    # Rótulos: tamanho e corte mínimo
-    SHOW_MIN = 0.02   # oculte <2%; use 0.0 se quiser TODOS os rótulos
+    # Regras de rótulo
+    SHOW_MIN = 0.02   # oculta % < 2% (coloque 0.0 se quiser mostrar tudo)
     BIG, MID = 0.15, 0.05
     def label_size(share: float) -> int:
-        return 22 if share >= BIG else (16 if share >= MID else 12)
+        # tamanhos menores (limpos)
+        return 18 if share >= BIG else (14 if share >= MID else 11)
 
     base = df.copy()
     base['CIA_NORM'] = base['CIA_NORM'].astype(str).str.upper()
+
     if 'IDPESQUISA' not in base.columns:
         st.warning("Coluna IDPESQUISA ausente.")
         return
 
     import numpy as np
 
+    # -------- helper: prepara dados empilhados 0..1 com y0/y1 e centro --------
     def build_stacked(df_in: pd.DataFrame, group_col: str) -> pd.DataFrame:
-        # contagem por grupo x cia
         counts = (df_in.groupby([group_col, 'CIA_NORM'])['IDPESQUISA']
                         .nunique().reset_index(name='n'))
         if counts.empty:
             return counts
 
-        # garantir as 3 cias em todos os grupos
+        # garantir 3 cias em todos os grupos
         all_groups = counts[group_col].dropna().unique()
         full_idx = pd.MultiIndex.from_product([all_groups, CIA_DOMAIN],
                                               names=[group_col, 'CIA_NORM'])
-        counts = counts.set_index([group_col, 'CIA_NORM']).reindex(full_idx, fill_value=0).reset_index()
+        counts = (counts.set_index([group_col, 'CIA_NORM'])
+                        .reindex(full_idx, fill_value=0)
+                        .reset_index())
 
-        # totais e participação (0..1)
         counts['total'] = counts.groupby(group_col)['n'].transform('sum')
         counts['share'] = np.where(counts['total'] > 0, counts['n'] / counts['total'], 0.0)
 
-        # ordenar e acumular p/ y0/y1
         counts['order'] = counts['CIA_NORM'].map(ORDER_MAP)
         counts = counts.sort_values([group_col, 'order'])
+
         counts['y1'] = counts.groupby(group_col)['share'].cumsum()
         counts['y0'] = counts['y1'] - counts['share']
         counts['y_center'] = (counts['y0'] + counts['y1']) / 2.0
 
-        # rótulo PT-BR e tamanho
-        counts['pct_txt'] = counts['share'].map(lambda x: f"{x*100:.2f}%".replace('.', ','))
-        counts['size'] = counts['share'].map(label_size)
+        # rótulo sem casas e tamanho adaptativo
+        counts['pct_txt'] = counts['share'].map(lambda x: f"{x*100:.0f}%")
+        counts['size']    = counts['share'].map(label_size)
         return counts
 
+    # -------- helper: desenha o gráfico (barras + rótulos) --------
     def draw_chart(stacked: pd.DataFrame, group_col: str, x_title: str):
         if stacked.empty:
             st.info(f"Sem dados para {x_title} no recorte atual.")
@@ -1567,7 +1570,7 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
 
         st.altair_chart((bars + labels).properties(height=450), use_container_width=True)
 
-    # ========= 1) ADVP =========
+    # ===================== 1) ADVP =====================
     st.markdown("#### Percentual de Ofertas por ADVP")
     if 'ADVP_CANON' not in base.columns:
         st.info("Coluna ADVP_CANON não encontrada nos dados.")
@@ -1577,7 +1580,7 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         advp = advp.dropna(subset=['ADVP_CANON'])
         draw_chart(build_stacked(advp, 'ADVP_CANON'), 'ADVP_CANON', 'ADVP')
 
-    # ========= 2) TRECHO (Top 15) =========
+    # ===================== 2) TRECHO (Top 15) =====================
     st.markdown("<hr style='margin:1rem 0'>", unsafe_allow_html=True)
     st.markdown("#### Percentual de Ofertas por Trecho (Top 15)")
     top15 = base.groupby('TRECHO')['IDPESQUISA'].nunique().nlargest(15).index
