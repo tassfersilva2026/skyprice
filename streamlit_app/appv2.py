@@ -490,13 +490,11 @@ def tab1_painel(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t1")
     st.subheader("Painel")
     total_pesq = df["IDPESQUISA"].nunique() or 1
-    cov = {r: df.loc[df["RANKING"].eq(r), "IDPESQUISA"].nunique() for r in (1, 2, 3)}
+    last_update = last_update_from_cols(df)
     st.markdown(
-        f"<div style='font-size:13px;opacity:.85;margin-top:-6px;'>"
-        f"Pesquisas únicas: <b>{fmt_int(total_pesq)}</b> • "
-        f"Cobertura 1º: {cov[1]/total_pesq*100:.0f}% • "
-        f"2º: {cov[2]/total_pesq*100:.0f}% • "
-        f"3º: {cov[3]/total_pesq*100:.0f}%</div>",
+        f"<div style='font-size:14px;opacity:.85;margin-top:-6px;'>"
+        f"<b>Total de Pesquisas realizadas:</b> {fmt_int(total_pesq)} | "
+        f"<b>Última Atualização:</b> {last_update}</div>",
         unsafe_allow_html=True
     )
     st.markdown("<hr style='margin:6px 0'>", unsafe_allow_html=True)
