@@ -556,7 +556,7 @@ def tab1_painel(df_raw: pd.DataFrame):
         st.markdown(f"<div class='cards-stack'>{''.join(cards)}</div>", unsafe_allow_html=True)
 
     with main_col2:
-        st.subheader("Painel por Cia")
+        st.subheader("Ranking por Cia")
         if "CIA_NORM" not in df.columns:
             st.info("Coluna 'CIA_NORM' não encontrada nos dados filtrados."); return
         c1, c2, c3 = st.columns(3)
