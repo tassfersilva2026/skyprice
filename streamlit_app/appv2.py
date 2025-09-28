@@ -574,7 +574,7 @@ def tab1_painel(df_raw: pd.DataFrame):
             targets_sorted_local = sorted(targets, key=lambda t: pct_target(t)[0], reverse=True)
             cards_local = [card_html(t, *pct_target(t)) for t in targets_sorted_local]
             st.markdown(f"<div class='cards-stack'>{''.join(cards_local)}</div>", unsafe_allow_html=True)
-        
+
         render_por_cia(c1, df, "AZUL"); render_por_cia(c2, df, "GOL"); render_por_cia(c3, df, "LATAM")
 
 # ──────────────────────── ABA: Top 3 Agências (START) ────────────────────────
