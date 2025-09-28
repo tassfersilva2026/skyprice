@@ -13,8 +13,8 @@ import re
 # ─────────────────────────── CONFIG DA PÁGINA ────────────────────────────────
 st.set_page_config(page_title="Skyscanner — Painel", layout="wide", initial_sidebar_state="expanded")
 
-APP_DIR   = Path(__file__).resolve().parent
-DATA_PATH = APP_DIR / "data" / "OFERTASCONSOLIDADO_OFERTAS.parquet"   # ajuste se necessário
+APP_DIR   = Path(__file__).resolve().parent
+DATA_PATH = APP_DIR / "data" / "OFERTASCONSOLIDADO_OFERTAS.parquet"   # ajuste se necessário
 
 # ─────────────────────────── HELPERS BÁSICOS ─────────────────────────────────
 def _norm_hhmmss(v: object) -> str | None:
@@ -29,23 +29,23 @@ def _norm_hhmmss(v: object) -> str | None:
 
 def std_agencia(raw: str) -> str:
     ag = (raw or "").strip().upper()
-    if ag == "BOOKINGCOM":            return "BOOKING.COM"
-    if ag == "KIWICOM":               return "KIWI.COM"
-    if ag.startswith("123MILHAS") or ag == "123":   return "123MILHAS"
-    if ag.startswith("MAXMILHAS") or ag == "MAX":   return "MAXMILHAS"
-    if ag.startswith("CAPOVIAGENS"):  return "CAPOVIAGENS"
-    if ag.startswith("FLIPMILHAS"):   return "FLIPMILHAS"
-    if ag.startswith("VAIDEPROMO"):   return "VAIDEPROMO"
-    if ag.startswith("KISSANDFLY"):   return "KISSANDFLY"
-    if ag.startswith("ZUPPER"):       return "ZUPPER"
-    if ag.startswith("MYTRIP"):       return "MYTRIP"
-    if ag.startswith("GOTOGATE"):     return "GOTOGATE"
-    if ag.startswith("DECOLAR"):      return "DECOLAR"
-    if ag.startswith("EXPEDIA"):      return "EXPEDIA"
-    if ag.startswith("GOL"):          return "GOL"
-    if ag.startswith("LATAM"):        return "LATAM"
-    if ag.startswith("TRIPCOM"):      return "TRIP.COM"
-    if ag.startswith("VIAJANET"):     return "VIAJANET"
+    if ag == "BOOKINGCOM":            return "BOOKING.COM"
+    if ag == "KIWICOM":               return "KIWI.COM"
+    if ag.startswith("123MILHAS") or ag == "123":   return "123MILHAS"
+    if ag.startswith("MAXMILHAS") or ag == "MAX":   return "MAXMILHAS"
+    if ag.startswith("CAPOVIAGENS"):  return "CAPOVIAGENS"
+    if ag.startswith("FLIPMILHAS"):   return "FLIPMILHAS"
+    if ag.startswith("VAIDEPROMO"):   return "VAIDEPROMO"
+    if ag.startswith("KISSANDFLY"):   return "KISSANDFLY"
+    if ag.startswith("ZUPPER"):       return "ZUPPER"
+    if ag.startswith("MYTRIP"):       return "MYTRIP"
+    if ag.startswith("GOTOGATE"):     return "GOTOGATE"
+    if ag.startswith("DECOLAR"):      return "DECOLAR"
+    if ag.startswith("EXPEDIA"):      return "EXPEDIA"
+    if ag.startswith("GOL"):          return "GOL"
+    if ag.startswith("LATAM"):        return "LATAM"
+    if ag.startswith("TRIPCOM"):      return "TRIP.COM"
+    if ag.startswith("VIAJANET"):     return "VIAJANET"
     if ag in ("", "NAN", "NONE", "NULL", "SKYSCANNER"): return "SEM OFERTAS"
     return ag
 
@@ -53,7 +53,7 @@ def std_cia(raw: str) -> str:
     s = (str(raw) or "").strip().upper()
     s_simple = "".join(ch for ch in s if ch.isalnum() or ch.isspace())
     if s in {"AD", "AZU"} or s.startswith("AZUL") or "AZUL" in s_simple: return "AZUL"
-    if s in {"G3"} or s.startswith("GOL") or "GOL" in s_simple:          return "GOL"
+    if s in {"G3"} or s.startswith("GOL") or "GOL" in s_simple:          return "GOL"
     if s in {"LA", "JJ"} or s.startswith("TAM") or s.startswith("LATAM") or "LATAM" in s_simple or "TAM" in s_simple:
         return "LATAM"
     if s in {"AZUL", "GOL", "LATAM"}: return s
@@ -134,11 +134,11 @@ def load_base(path: Path) -> pd.DataFrame:
 
     # Normalizações auxiliares
     df["AGENCIA_NORM"] = df.get("AGENCIA_COMP", pd.Series([], dtype=str)).apply(std_agencia)
-    df["ADVP_CANON"]   = df.get("ADVP", pd.Series([], dtype=str)).apply(lambda x: advp_nearest(x) if pd.notna(x) else np.nan)
-    df["CIA_NORM"]     = df.get("CIA", pd.Series([None]*len(df))).apply(std_cia)
+    df["ADVP_CANON"]   = df.get("ADVP", pd.Series([], dtype=str)).apply(lambda x: advp_nearest(x) if pd.notna(x) else np.nan)
+    df["CIA_NORM"]     = df.get("CIA", pd.Series([None]*len(df))).apply(std_cia)
 
     # ── __DTKEY__ robusto (alinhado ao common.py)
-    dt_base = pd.to_datetime(df.get("DATAHORA_BUSCA"), errors="coerce", dayfirst=True)  # pode ter data+hora ou só data
+    dt_base = pd.to_datetime(df.get("DATAHORA_BUSCA"), errors="coerce", dayfirst=True)  # pode ter data+hora ou só data
     # hora em segundos a partir de HORA_BUSCA
     def _hh_to_sec(hs: object) -> float:
         s = _norm_hhmmss(hs)
@@ -155,7 +155,7 @@ def load_base(path: Path) -> pd.DataFrame:
     dtkey = dt_norm + pd.to_timedelta(hora_sec.fillna(0), unit="s")
 
     mask_dt_ok = pd.notna(dt_base)
-    mask_h_ok  = pd.notna(hora_sec)
+    mask_h_ok  = pd.notna(hora_sec)
     # privilegia dt_base.date + hora_sec (quando hora existe), senão fica dt_base.normalized() + 0s
     dtkey = dtkey.where(~mask_dt_ok, dt_base.dt.normalize() + pd.to_timedelta(hora_sec.fillna(0), unit="s"))
     # se não houver nem data nem hora, fica NaT
@@ -176,27 +176,27 @@ st.markdown(GLOBAL_TABLE_CSS, unsafe_allow_html=True)
 
 CARD_CSS = """
 <style>
-  .cards-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-  @media (max-width: 1100px) { .cards-grid { grid-template-columns: repeat(2, minmax(0,1fr)); } }
-  @media (max-width: 700px) { .cards-grid { grid-template-columns: 1fr; } }
-  .card { border:1px solid #e9e9ee; border-radius:14px; padding:10px 12px; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.04); }
-  .card .title { font-weight:650; font-size:15px; margin-bottom:8px; }
-  .goldcard{background:#FFF9E5;border-color:#D4AF37;}
-  .silvercard{background:#F7F7FA;border-color:#C0C0C0;}
-  .bronzecard{background:#FFF1E8;border-color:#CD7F32;}
-  .row{display:flex;gap:8px;}
-  .item{flex:1;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:10px;border:1px solid #e3e3e8;background:#fafbfc;}
-  .pos{font-weight:700;font-size:12px;opacity:.85;}
-  .pct{font-size:16px;font-weight:650;}
+  .cards-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  @media (max-width: 1100px) { .cards-grid { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+  @media (max-width: 700px) { .cards-grid { grid-template-columns: 1fr; } }
+  .card { border:1px solid #e9e9ee; border-radius:14px; padding:10px 12px; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+  .card .title { font-weight:650; font-size:15px; margin-bottom:8px; }
+  .goldcard{background:#FFF9E5;border-color:#D4AF37;}
+  .silvercard{background:#F7F7FA;border-color:#C0C0C0;}
+  .bronzecard{background:#FFF1E8;border-color:#CD7F32;}
+  .row{display:flex;gap:8px;}
+  .item{flex:1;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:10px;border:1px solid #e3e3e8;background:#fafbfc;}
+  .pos{font-weight:700;font-size:12px;opacity:.85;}
+  .pct{font-size:16px;font-weight:650;}
 </style>
 """
 st.markdown(CARD_CSS, unsafe_allow_html=True)
 
 CARDS_STACK_CSS = """
 <style>
-  .cards-stack { display:flex; flex-direction:column; gap:10px; }
-  .cards-stack .card { width:100%; }
-  .stack-title { font-weight:800; padding:8px 10px; margin:6px 0 10px 0; border-radius:10px; border:1px solid #e9e9ee; background:#f8fafc; color:#0A2A6B; }
+  .cards-stack { display:flex; flex-direction:column; gap:10px; }
+  .cards-stack .card { width:100%; }
+  .stack-title { font-weight:800; padding:8px 10px; margin:6px 0 10px 0; border-radius:10px; border:1px solid #e9e9ee; background:#f8fafc; color:#0A2A6B; }
 </style>
 """
 st.markdown(CARDS_STACK_CSS, unsafe_allow_html=True)
@@ -252,25 +252,25 @@ def make_line(df: pd.DataFrame, x_col: str, y_col: str, color: str | None = None
     return alt.Chart(d).mark_line(point=True).encode(**enc).properties(height=300)
 
 # Heatmap/Styler
-BLUE  = "#cfe3ff"; ORANGE= "#fdd0a2"; GREEN = "#c7e9c0"; YELLOW= "#fee391"; PINK  = "#f1b6da"
+BLUE  = "#cfe3ff"; ORANGE= "#fdd0a2"; GREEN = "#c7e9c0"; YELLOW= "#fee391"; PINK  = "#f1b6da"
 def _hex_to_rgb(h): return tuple(int(h[i:i+2], 16) for i in (1,3,5))
 def _rgb_to_hex(t): return f"#{t[0]:02x}{t[1]:02x}{t[2]:02x}"
 def _blend(c_from, c_to, t):
     f, to = _hex_to_rgb(c_from), _hex_to_rgb(c_to)
     return _rgb_to_hex(tuple(int(round(f[i] + (to[i]-f[i])*t)) for i in range(3)))
 def make_scale(base_hex, steps=5): return [_blend("#ffffff", base_hex, k/(steps-1)) for k in range(steps)]
-SCALE_BLUE   = make_scale(BLUE)
+SCALE_BLUE   = make_scale(BLUE)
 SCALE_ORANGE = make_scale(ORANGE)
-SCALE_GREEN  = make_scale(GREEN)
+SCALE_GREEN  = make_scale(GREEN)
 SCALE_YELLOW = make_scale(YELLOW)
-SCALE_PINK   = make_scale(PINK)
+SCALE_PINK   = make_scale(PINK)
 
 def _pick_scale(colname: str):
     u = str(colname).upper()
-    if "MAXMILHAS" in u:   return SCALE_GREEN
-    if "123" in u:         return SCALE_ORANGE
-    if "FLIP" in u:        return SCALE_YELLOW
-    if "CAPO" in u:        return SCALE_PINK
+    if "MAXMILHAS" in u:   return SCALE_GREEN
+    if "123" in u:         return SCALE_ORANGE
+    if "FLIP" in u:        return SCALE_YELLOW
+    if "CAPO" in u:        return SCALE_PINK
     return SCALE_BLUE
 
 def _is_null_like(v) -> bool:
@@ -297,8 +297,8 @@ def style_heatmap_discrete(styler: pd.io.formats.style.Styler, col: str, scale_c
 
 def style_smart_colwise(df_show: pd.DataFrame, fmt_map: dict, grad_cols: list[str]):
     sty = (df_show.style
-           .set_properties(**{"background-color": "#FFFFFF", "color": "#111111"})
-           .set_table_attributes('style="width:100%; table-layout:fixed"'))
+            .set_properties(**{"background-color": "#FFFFFF", "color": "#111111"})
+            .set_table_attributes('style="width:100%; table-layout:fixed"'))
     if fmt_map:
         sty = sty.format(fmt_map, na_rep="-")
     for c in grad_cols:
@@ -370,14 +370,15 @@ def _init_filter_state(df_raw: pd.DataFrame):
 
 def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
     _init_filter_state(df_raw)
-    st.markdown("&lt;div style='height:4px'&gt;&lt;/div&gt;", unsafe_allow_html=True)
-
-    # 7 colunas — a última (c7) é o botão ↻ pequeno no fim da linha
+    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+    
+    # Adicionando o botão de recarregar no final dos filtros
     c1, c2, c3, c4, c5, c6, c7 = st.columns([1.1, 1.1, 1.0, 2.0, 1.0, 1.4, 0.32])
 
     base_dt = pd.to_datetime(df_raw.get("__DTKEY__"), errors="coerce")
     if base_dt.isna().all():
         base_dt = pd.to_datetime(df_raw.get("DATAHORA_BUSCA"), errors="coerce", dayfirst=True)
+
     dmin_abs = base_dt.min()
     dmax_abs = base_dt.max()
     dmin_abs = dmin_abs.date() if pd.notna(dmin_abs) else date(2000, 1, 1)
@@ -409,15 +410,14 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
         cia_default = [c for c in st.session_state["flt"]["cia"] if c in cia_opts]
         cia_sel = st.multiselect("Cia (Azul/Gol/Latam)", options=cia_opts,
                                  default=cia_default, key=f"{key_prefix}_cia")
-
-    # Botão redondo e discreto, alinhado ao final dos filtros (mesma linha)
+    
+    # Botão de recarregar
     with c7:
-        st.markdown("&lt;div style='height:28px'&gt;&lt;/div&gt;", unsafe_allow_html=True)  # alinhar verticalmente
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)  # alinhar verticalmente
         clicked = st.button("↻", key=f"{key_prefix}_refresh", type="secondary", help="Recarregar base")
         if clicked:
-            # limpa cache de dados e força re-run
             st.cache_data.clear()
-            st.session_state.pop("flt", None)  # reseta seleção para evitar conflitos de range
+            st.session_state.pop("flt", None)
             st.rerun()
 
     st.session_state["flt"] = {
@@ -447,7 +447,7 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
 
     df = df_raw[mask].copy()
     st.caption(f"Linhas após filtros: {fmt_int(len(df))} • Última atualização: {last_update_from_cols(df)}")
-    st.markdown("&lt;div style='height:2px'&gt;&lt;/div&gt;", unsafe_allow_html=True)
+    st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
     return df
 
 # ───────────────────────────── ABAS DO APLICATIVO ────────────────────────────
@@ -641,8 +641,8 @@ def tab2_top3_agencias(df_raw: pd.DataFrame):
     # 5) Comparativo Cia × Agências de milhas (mesma pesquisa) – mantém largura e sem '#'
     A_123, A_MAX, A_FLIP, A_CAPO = "123MILHAS", "MAXMILHAS", "FLIPMILHAS", "CAPOVIAGENS"
     by_air = (df_last.groupby(["TRECHO","CIA_NORM"], as_index=False)
-                    .agg(PRECO_AIR_MIN=("PRECO","min"))
-                    .rename(columns={"TRECHO":"TRECHO_STD","CIA_NORM":"Cia Menor Preço"}))
+                     .agg(PRECO_AIR_MIN=("PRECO","min"))
+                     .rename(columns={"TRECHO":"TRECHO_STD","CIA_NORM":"Cia Menor Preço"}))
     idx = by_air.groupby("TRECHO_STD")["PRECO_AIR_MIN"].idxmin()
     base_min = by_air.loc[idx, ["TRECHO_STD","Cia Menor Preço","PRECO_AIR_MIN"]] \
                      .rename(columns={"PRECO_AIR_MIN":"Preço Menor Valor"})
@@ -714,18 +714,18 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
             if key in norm: return norm[key]
         return df_.columns[0] if len(df_.columns) else None
 
-    GRID_STYLE    = "display:grid;grid-auto-flow:column;grid-auto-columns:260px;gap:10px;overflow-x:auto;padding:6px 2px 10px 2px;scrollbar-width:thin;"
-    BOX_STYLE     = "border:1px solid #e5e7eb;border-radius:12px;background:#fff;"
-    HEAD_STYLE    = "padding:8px 10px;border-bottom:1px solid #f1f5f9;font-weight:700;color:#111827;"
-    STACK_STYLE   = "display:grid;gap:8px;padding:8px;"
-    CARD_BASE     = "position:relative;border:1px solid #e5e7eb;border-radius:10px;padding:8px;background:#fff;min-height:78px;"
+    GRID_STYLE    = "display:grid;grid-auto-flow:column;grid-auto-columns:260px;gap:10px;overflow-x:auto;padding:6px 2px 10px 2px;scrollbar-width:thin;"
+    BOX_STYLE     = "border:1px solid #e5e7eb;border-radius:12px;background:#fff;"
+    HEAD_STYLE    = "padding:8px 10px;border-bottom:1px solid #f1f5f9;font-weight:700;color:#111827;"
+    STACK_STYLE   = "display:grid;gap:8px;padding:8px;"
+    CARD_BASE     = "position:relative;border:1px solid #e5e7eb;border-radius:10px;padding:8px;background:#fff;min-height:78px;"
     DT_WRAP_STYLE = "position:absolute;right:8px;top:6px;display:flex;align-items:center;gap:6px;"
-    DT_TXT_STYLE  = "font-size:10px;color:#94a3b8;font-weight:800;"
-    RANK_STYLE    = "font-weight:900;font-size:11px;color:#6b7280;letter-spacing:.3px;text-transform:uppercase;"
-    AG_STYLE      = "font-weight:800;font-size:15px;color:#111827;margin-top:2px;"
-    PR_STYLE      = "font-weight:900;font-size:18px;color:#111827;margin-top:2px;"
-    SUB_STYLE     = "font-weight:700;font-size:12px;color:#374151;"
-    NO_STYLE      = "padding:22px 12px;color:#6b7280;font-weight:800;text-align:center;border:1px dashed #e5e7eb;border-radius:10px;background:#fafafa;"
+    DT_TXT_STYLE  = "font-size:10px;color:#94a3b8;font-weight:800;"
+    RANK_STYLE    = "font-weight:900;font-size:11px;color:#6b7280;letter-spacing:.3px;text-transform:uppercase;"
+    AG_STYLE      = "font-weight:800;font-size:15px;color:#111827;margin-top:2px;"
+    PR_STYLE      = "font-weight:900;font-size:18px;color:#111827;margin-top:2px;"
+    SUB_STYLE     = "font-weight:700;font-size:12px;color:#374151;"
+    NO_STYLE      = "padding:22px 12px;color:#6b7280;font-weight:800;text-align:center;border:1px dashed #e5e7eb;border-radius:10px;background:#fafafa;"
     TRE_HDR_STYLE = "margin:14px 0 10px 0;padding:10px 12px;border-left:4px solid #0B5FFF;background:#ECF3FF;border-radius:8px;font-weight:800;color:#0A2A6B;"
 
     BADGE_POP_CSS = """
@@ -745,9 +745,9 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
     dfp = df.copy()
     dfp["TRECHO_STD"] = dfp.get("TRECHO", "").astype(str)
     dfp["AGENCIA_UP"] = dfp.get("AGENCIA_NORM", "").astype(str)
-    dfp["ADVP"]       = (dfp.get("ADVP_CANON").fillna(dfp.get("ADVP"))).astype(str)
-    dfp["__PRECO__"]  = pd.to_numeric(dfp.get("PRECO"), errors="coerce")
-    dfp["__DTKEY__"]  = pd.to_datetime(dfp.get("DATAHORA_BUSCA"), errors="coerce")
+    dfp["ADVP"]       = (dfp.get("ADVP_CANON").fillna(dfp.get("ADVP"))).astype(str)
+    dfp["__PRECO__"]  = pd.to_numeric(dfp.get("PRECO"), errors="coerce")
+    dfp["__DTKEY__"]  = pd.to_datetime(dfp.get("DATAHORA_BUSCA"), errors="coerce")
 
     ID_COL = "IDPESQUISA" if "IDPESQUISA" in dfp.columns else _find_id_col(dfp)
     dfp = dfp[dfp["__PRECO__"].notna()].copy()
@@ -777,8 +777,8 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
         if sub_rows.empty: return "", None
         r = sub_rows.loc[sub_rows["__DTKEY__"].idxmax()]
         date_part = pd.to_datetime(r["DATAHORA_BUSCA"], errors="coerce")
-        date_txt  = date_part.strftime("%d/%m") if pd.notna(date_part) else ""
-        htxt_raw  = str(r.get("HORA_BUSCA","")).strip()
+        date_txt  = date_part.strftime("%d/%m") if pd.notna(date_part) else ""
+        htxt_raw  = str(r.get("HORA_BUSCA","")).strip()
         htxt = _norm_hhmmss(htxt_raw) or (pd.to_datetime(r["__DTKEY__"], errors="coerce").strftime("%H:%M:%S") if pd.notna(r["__DTKEY__"]) else "")
         id_val = _normalize_id(r.get("IDPESQUISA"))
         lbl = f"{date_txt} {htxt}".strip()
@@ -859,7 +859,7 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
             elif idx_max[0] > 2:
                 pos = idx_max[0] + 1
                 preco = float(base_rank.iloc[idx_max[0]]["__PRECO__"])
-                dif  = int(round((preco - p1_val) / p1_val * 100)) if p1_val else 0
+                dif  = int(round((preco - p1_val) / p1_val * 100)) if p1_val else 0
                 msgs.append(f"Maxmilhas: {pos}º - {fmt_moeda_br(preco)} (+{dif}% vs 1º)")
             # 123MILHAS
             idx_123 = base_rank.index[base_rank["AGENCIA_UP"] == "123MILHAS"].tolist()
@@ -868,7 +868,7 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
             elif idx_123[0] > 2:
                 pos = idx_123[0] + 1
                 preco = float(base_rank.iloc[idx_123[0]]["__PRECO__"])
-                dif  = int(round((preco - p1_val) / p1_val * 100)) if p1_val else 0
+                dif  = int(round((preco - p1_val) / p1_val * 100)) if p1_val else 0
                 msgs.append(f"123milhas: {pos}º - {fmt_moeda_br(preco)} (+{dif}% vs 1º)")
 
             if msgs:
@@ -954,8 +954,8 @@ def tab4_ranking_agencias(df_raw: pd.DataFrame):
         return sty
 
     def show_table(df_in: pd.DataFrame, percent_cols=None, int_cols=None,
-                   highlight_total_row=False, highlight_total_col=None,
-                   highlight_rows_map=None, height=440):
+                      highlight_total_row=False, highlight_total_col=None,
+                      highlight_rows_map=None, height=440):
         df_disp = df_in.reset_index(drop=True)
         df_disp.index = np.arange(1, len(df_disp) + 1)  # índice iniciando em 1 (igual ao anexo)
         st.dataframe(
@@ -968,11 +968,11 @@ def tab4_ranking_agencias(df_raw: pd.DataFrame):
     # 4) Pivot principal (Quantidade por Ranking)
     RANKS = list(range(1, 16))
     counts = (work.groupby(["AGENCIA_UP", "Ranking"], as_index=False)
-                   .agg(OFERTAS=("AGENCIA_UP", "size")))
+                     .agg(OFERTAS=("AGENCIA_UP", "size")))
 
     pv = (counts.pivot(index="AGENCIA_UP", columns="Ranking", values="OFERTAS")
-                 .reindex(columns=RANKS, fill_value=0)
-                 .fillna(0).astype(int))
+                     .reindex(columns=RANKS, fill_value=0)
+                     .fillna(0).astype(int))
     pv.index.name = "Agência/Companhia"
 
     if 1 not in pv.columns:  # por segurança
@@ -1054,9 +1054,9 @@ def tab5_competitividade(df_raw: pd.DataFrame):
         st.info("Nenhum 1º lugar no recorte."); return
 
     # 2) Normalizações
-    df1["CIA_UP"]     = df1["CIA_NORM"].astype(str).str.upper()
+    df1["CIA_UP"]     = df1["CIA_NORM"].astype(str).str.upper()
     df1["TRECHO_STD"] = df1["TRECHO"].astype(str)
-    df1["AG_UP"]      = df1["AGENCIA_NORM"].astype(str)
+    df1["AG_UP"]      = df1["AGENCIA_NORM"].astype(str)
 
     # 3) Universo de 11 trechos: top 11 por nº de pesquisas no recorte
     top_trechos = (df1.groupby("TRECHO_STD")["IDPESQUISA"]
@@ -1067,9 +1067,9 @@ def tab5_competitividade(df_raw: pd.DataFrame):
 
     # 4) % de 1º por Cia×Trecho×Agência + total por Cia×Trecho
     tot = (df1.groupby(["CIA_UP","TRECHO_STD"])["IDPESQUISA"]
-              .nunique().reset_index(name="TotalPesq"))
+             .nunique().reset_index(name="TotalPesq"))
     win = (df1.groupby(["CIA_UP","TRECHO_STD","AG_UP"])["IDPESQUISA"]
-              .nunique().reset_index(name="QtdTop1"))
+             .nunique().reset_index(name="QtdTop1"))
     base = win.merge(tot, on=["CIA_UP","TRECHO_STD"], how="right")  # garante Cia×Trecho
     base["QtdTop1"] = base["QtdTop1"].fillna(0)
     base["Pct"] = (base["QtdTop1"] / base["TotalPesq"].replace(0, np.nan) * 100).fillna(0.0)
@@ -1099,9 +1099,9 @@ def tab5_competitividade(df_raw: pd.DataFrame):
         rows = []
         for t in top_trechos:
             if t in lideres.index:
-                ag  = str(lideres.loc[t, "AG_UP"]) if pd.notna(lideres.loc[t, "AG_UP"]) else "SEM OFERTAS"
-                pct = float(lideres.loc[t, "Pct"])  if pd.notna(lideres.loc[t, "Pct"])  else 0.0
-                n   = int(lideres.loc[t, "TotalPesq"]) if pd.notna(lideres.loc[t, "TotalPesq"]) else _tot_for(cia, t)
+                ag  = str(lideres.loc[t, "AG_UP"]) if pd.notna(lideres.loc[t, "AG_UP"]) else "SEM OFERTAS"
+                pct = float(lideres.loc[t, "Pct"])  if pd.notna(lideres.loc[t, "Pct"])  else 0.0
+                n   = int(lideres.loc[t, "TotalPesq"]) if pd.notna(lideres.loc[t, "TotalPesq"]) else _tot_for(cia, t)
             else:
                 ag, pct, n = "SEM OFERTAS", 0.0, _tot_for(cia, t)
             rows.append({"TRECHO": t, "AGENCIA": ag, "PCT": pct, "N": n})
@@ -1143,7 +1143,7 @@ def tab5_competitividade(df_raw: pd.DataFrame):
         rows.append("<table class='tbl'><thead><tr><th>TRECHO</th><th>AGENCIA</th><th>% DE GANHO</th></tr></thead><tbody>")
         for i, r in dfq.iterrows():
             alt = "row1" if i % 2 else "row0"
-            ag  = str(r["AGENCIA"])
+            ag  = str(r["AGENCIA"])
             ag_cls = "g123" if ag in {"MAXMILHAS","123MILHAS"} else ""
             pct_txt = fmt_pct(r["PCT"])
             n_txt = f"<span class='muted'>{int(r['N'])} pesq.</span>"
@@ -1174,9 +1174,9 @@ def tab5_competitividade(df_raw: pd.DataFrame):
 
     # totais e vitórias por ADVP
     totA = (df1_advp.groupby(["CIA_UP","ADVP_BKT"])["IDPESQUISA"]
-              .nunique().reset_index(name="TotAdvp"))
+             .nunique().reset_index(name="TotAdvp"))
     winA = (df1_advp.groupby(["CIA_UP","ADVP_BKT","AG_UP"])["IDPESQUISA"]
-              .nunique().reset_index(name="QtdTop1"))
+             .nunique().reset_index(name="QtdTop1"))
     baseA = winA.merge(totA, on=["CIA_UP","ADVP_BKT"], how="right")
     baseA["QtdTop1"] = baseA["QtdTop1"].fillna(0)
     baseA["Pct"] = (baseA["QtdTop1"] / baseA["TotAdvp"].replace(0, np.nan) * 100).fillna(0.0)
@@ -1192,8 +1192,8 @@ def tab5_competitividade(df_raw: pd.DataFrame):
             lid = pd.DataFrame(columns=["AG_UP","Pct"])
         for a in advp_buckets:  # ordem fixa 1,5,11,17,30
             if a in lid.index:
-                ag  = str(lid.loc[a, "AG_UP"]) if pd.notna(lid.loc[a, "AG_UP"]) else "SEM OFERTAS"
-                pct = float(lid.loc[a, "Pct"])  if pd.notna(lid.loc[a, "Pct"])  else 0.0
+                ag  = str(lid.loc[a, "AG_UP"]) if pd.notna(lid.loc[a, "AG_UP"]) else "SEM OFERTAS"
+                pct = float(lid.loc[a, "Pct"])  if pd.notna(lid.loc[a, "Pct"])  else 0.0
             else:
                 ag, pct = "SEM OFERTAS", 0.0
             rows.append({"ADVP": a, "AGENCIA": ag, "PCT": pct})
@@ -1210,7 +1210,7 @@ def tab5_competitividade(df_raw: pd.DataFrame):
         rows.append("<table class='tblc'><thead><tr><th>ADVP</th><th>AGENCIA</th><th>% DE GANHO</th></tr></thead><tbody>")
         for i, r in dfq.iterrows():
             alt = "row1" if i % 2 else "row0"
-            ag  = str(r["AGENCIA"])
+            ag  = str(r["AGENCIA"])
             ag_cls = "g123" if ag in {"MAXMILHAS","123MILHAS"} else ""
             pct_txt = fmt_pct(r["PCT"])
             rows.append(
@@ -1228,35 +1228,36 @@ def tab5_competitividade(df_raw: pd.DataFrame):
 
 
 # ─────────────────────── ABA 6: Competitividade (tabelas + 6 cards) ──────────
+# ───────── ABA 6: Competitividade Cia x Trecho x ADVPs Agrupados (tabelas + 6 cards) ─────────
 @register_tab("Competitividade Cia x Trecho x ADVPs Agrupados")
 def tab6_compet_tabelas(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t6")
     if df.empty:
-        st.subheader("Competividade  Cia x Trecho x ADVPs Agrupados")
-        st.info("Sem resultados para os filtros atuais."); 
+        st.subheader("Competividade  Cia x Trecho x ADVPs Agrupados")
+        st.info("Sem resultados para os filtros atuais.");
         return
 
     need = {"RANKING","CIA_NORM","TRECHO","AGENCIA_NORM","IDPESQUISA"}
     if not need.issubset(df.columns):
-        st.subheader("Competividade  Cia x Trecho x ADVPs Agrupados")
-        st.warning(f"Colunas ausentes: {sorted(list(need - set(df.columns)))}"); 
+        st.subheader("Competividade  Cia x Trecho x ADVPs Agrupados")
+        st.warning(f"Colunas ausentes: {sorted(list(need - set(df.columns)))}");
         return
 
     # winners
     d1 = df[df["RANKING"].astype("Int64") == 1].copy()
-    d1["CIA_UP"]     = d1["CIA_NORM"].astype(str).str.upper()
+    d1["CIA_UP"]     = d1["CIA_NORM"].astype(str).str.upper()
     d1["TRECHO_STD"] = d1["TRECHO"].astype(str)
-    d1["AG_UP"]      = d1["AGENCIA_NORM"].astype(str)
+    d1["AG_UP"]      = d1["AGENCIA_NORM"].astype(str)
 
     trechos_all = sorted(df["TRECHO"].dropna().astype(str).unique().tolist())
 
     # Totais/Top1 por Cia×Trecho
     tot_t = (df.assign(CIA_UP=df["CIA_NORM"].astype(str).str.upper(),
                        TRECHO_STD=df["TRECHO"].astype(str))
-               .groupby(["CIA_UP","TRECHO_STD"])["IDPESQUISA"]
-               .nunique().reset_index(name="TotPesq"))
+                .groupby(["CIA_UP","TRECHO_STD"])["IDPESQUISA"]
+                .nunique().reset_index(name="TotPesq"))
     win_t = (d1.groupby(["CIA_UP","TRECHO_STD","AG_UP"])["IDPESQUISA"]
-               .nunique().reset_index(name="QtdTop1"))
+                .nunique().reset_index(name="QtdTop1"))
     base_t = win_t.merge(tot_t, on=["CIA_UP","TRECHO_STD"], how="right").fillna({"QtdTop1":0})
     base_t["Pct"] = (base_t["QtdTop1"] / base_t["TotPesq"].replace(0, np.nan) * 100).fillna(0.0)
 
@@ -1315,11 +1316,11 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         if win_df.empty or total_base == 0:
             return ("SEM OFERTAS", 0, 0, "SEM OFERTAS", 0, 0, 0)
         cia_s = win_df.groupby("CIA_UP")["IDPESQUISA"].nunique().sort_values(ascending=False)
-        ag_s  = win_df.groupby("AG_UP")["IDPESQUISA"].nunique().sort_values(ascending=False)
+        ag_s  = win_df.groupby("AG_UP")["IDPESQUISA"].nunique().sort_values(ascending=False)
         cia_nome, cia_qtd = (str(cia_s.index[0]), int(cia_s.iloc[0])) if not cia_s.empty else ("SEM OFERTAS", 0)
-        ag_nome, ag_qtd   = (str(ag_s.index[0]),  int(ag_s.iloc[0]))  if not ag_s.empty  else ("SEM OFERTAS", 0)
+        ag_nome, ag_qtd   = (str(ag_s.index[0]),  int(ag_s.iloc[0]))  if not ag_s.empty  else ("SEM OFERTAS", 0)
         cia_pct = int(round(cia_qtd/total_base*100)) if total_base else 0
-        ag_pct  = int(round(ag_qtd/total_base*100))  if total_base else 0
+        ag_pct  = int(round(ag_qtd/total_base*100))  if total_base else 0
         return (cia_nome, cia_qtd, cia_pct, ag_nome, ag_qtd, ag_pct, total_base)
 
     def cards_block(title: str, cia_nome, cia_qtd, cia_pct, ag_nome, ag_qtd, ag_pct, total_base):
@@ -1350,14 +1351,14 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
     # ===== bloco especial: Competitividade - Grupo123 (apenas ADVP) =====
     def cards_block_grupo123(d1_advp: pd.DataFrame, base_advp_n: int):
         gset = {"123MILHAS","MAXMILHAS"}
-        sub  = d1_advp[d1_advp["AG_UP"].isin(gset)].copy()
+        sub  = d1_advp[d1_advp["AG_UP"].isin(gset)].copy()
 
         # CIA + BARATA onde Grupo123 venceu
         total_gwins = sub["IDPESQUISA"].nunique() or 0
         if total_gwins:
             cia_cnt = sub.groupby("CIA_UP")["IDPESQUISA"].nunique().sort_values(ascending=False)
             cia_gnome = str(cia_cnt.index[0]); cia_gqtd = int(cia_cnt.iloc[0])
-            cia_gpct  = int(round(cia_gqtd / total_gwins * 100))
+            cia_gpct  = int(round(cia_gqtd / total_gwins * 100))
         else:
             cia_gnome, cia_gqtd, cia_gpct = "SEM OFERTAS", 0, 0
 
@@ -1428,10 +1429,10 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
     d1a = d1a.dropna(subset=["ADVP_BKT"])
 
     tot_a = (df_advp.assign(CIA_UP=df_advp["CIA_NORM"].astype(str).str.upper())
-                    .groupby(["CIA_UP","ADVP_BKT"])["IDPESQUISA"]
-                    .nunique().reset_index(name="TotAdvp"))
+                      .groupby(["CIA_UP","ADVP_BKT"])["IDPESQUISA"]
+                      .nunique().reset_index(name="TotAdvp"))
     win_a = (d1a.groupby(["CIA_UP","ADVP_BKT","AG_UP"])["IDPESQUISA"]
-                .nunique().reset_index(name="QtdTop1"))
+                 .nunique().reset_index(name="QtdTop1"))
     base_a = win_a.merge(tot_a, on=["CIA_UP","ADVP_BKT"], how="right").fillna({"QtdTop1":0})
     base_a["Pct"] = (base_a["QtdTop1"] / base_a["TotAdvp"].replace(0, np.nan) * 100).fillna(0.0)
 
@@ -1470,16 +1471,16 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         st.markdown(cards_block_grupo123(d1a, base_advp_n), unsafe_allow_html=True)
 
     # ===== Render =====
-    st.subheader("Competividade  Cia x Trecho x ADVPs Agrupados")
+    st.subheader("Competividade  Cia x Trecho x ADVPs Agrupados")
     c1, c2 = st.columns(2, gap="small")
     with c1:
         st.caption("Cia × Trecho")
-        render_tbl_trecho()           # sem cards
+        render_tbl_trecho()  # sem cards
     with c2:
         st.caption("Cia × ADVP")
-        render_tbl_advp_and_cards()   # tabela + 6 cards
+        render_tbl_advp_and_cards()  # tabela + 6 cards
 
-# ─────────────────────── ABA 7: Ofertas por Cia (Gráficos) ───────────────────────
+# ─────────────────────── ABA 7: Ofertas x Cias (rótulo com tamanho fixo) ─────
 @register_tab("Ofertas x Cias")
 def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t7")
@@ -1489,50 +1490,117 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         st.info("Sem dados para os filtros selecionados.")
         return
 
-    cia_domain = ['AZUL', 'GOL', 'LATAM']
-    cia_colors = ['#0033A0', '#FF6600', '#8B0000']
+    # ======== ajuste rápido do tamanho do rótulo ========
+    LABEL_SIZE = 18      # <<< Mude aqui: ex. 12, 13, 14...
+    SHOW_MIN   = 0.02   # oculta rótulos < 2% (coloque 0.0 p/ mostrar todos)
+    # ====================================================
 
-    # --- Gráfico 1: Por ADVP (100% Stacked Vertical Bar Chart) ---
+    # Cores/ordem fixas
+    CIA_DOMAIN = ['AZUL', 'GOL', 'LATAM']
+    CIA_COLORS = ['#0033A0', '#FF6600', '#8B0000']
+    ORDER_MAP  = {'AZUL': 0, 'GOL': 1, 'LATAM': 2}
+
+    base = df.copy()
+    base['CIA_NORM'] = base['CIA_NORM'].astype(str).str.upper()
+    if 'IDPESQUISA' not in base.columns:
+        st.warning("Coluna IDPESQUISA ausente.")
+        return
+
+    import numpy as np
+
+    # -------- prepara dados empilhados 0..1 com y0/y1 e centro --------
+    def build_stacked(df_in: pd.DataFrame, group_col: str) -> pd.DataFrame:
+        counts = (df_in.groupby([group_col, 'CIA_NORM'])['IDPESQUISA']
+                         .nunique().reset_index(name='n'))
+        if counts.empty:
+            return counts
+
+        # garantir 3 cias em todos os grupos
+        all_groups = counts[group_col].dropna().unique()
+        full_idx = pd.MultiIndex.from_product([all_groups, CIA_DOMAIN],
+                                               names=[group_col, 'CIA_NORM'])
+        counts = (counts.set_index([group_col, 'CIA_NORM'])
+                         .reindex(full_idx, fill_value=0)
+                         .reset_index())
+
+        counts['total'] = counts.groupby(group_col)['n'].transform('sum')
+        counts['share'] = np.where(counts['total'] > 0, counts['n'] / counts['total'], 0.0)
+
+        counts['order'] = counts['CIA_NORM'].map(ORDER_MAP)
+        counts = counts.sort_values([group_col, 'order'])
+
+        counts['y1'] = counts.groupby(group_col)['share'].cumsum()
+        counts['y0'] = counts['y1'] - counts['share']
+        counts['y_center'] = (counts['y0'] + counts['y1']) / 2.0
+
+        # rótulo sem casas decimais
+        counts['pct_txt'] = counts['share'].map(lambda x: f"{x*100:.0f}%")
+        return counts
+
+    # -------- desenha (barras 100% + rótulo no centro) --------
+    def draw_chart(stacked: pd.DataFrame, group_col: str, x_title: str):
+        if stacked.empty:
+            st.info(f"Sem dados para {x_title} no recorte atual.")
+            return
+
+        bars = (
+            alt.Chart(stacked)
+            .mark_bar()
+            .encode(
+                x=alt.X(f'{group_col}:N', title=x_title, axis=alt.Axis(labelAngle=0)),
+                y=alt.Y('y0:Q', title='Participação', axis=alt.Axis(format='%'),
+                         scale=alt.Scale(domain=[0, 1])),
+                y2='y1:Q',
+                order=alt.Order('order:Q', sort='ascending'),
+                color=alt.Color('CIA_NORM:N', title='Cia Aérea',
+                                 scale=alt.Scale(domain=CIA_DOMAIN, range=CIA_COLORS)),
+                tooltip=[
+                    alt.Tooltip(f'{group_col}:N', title=x_title),
+                    alt.Tooltip('CIA_NORM:N', title='CIA'),
+                    alt.Tooltip('n:Q', title='Nº de Pesquisas'),
+                    alt.Tooltip('share:Q', title='Participação', format='.2%')
+                ]
+            )
+        )
+
+        labels = (
+            alt.Chart(stacked[stacked['share'] >= SHOW_MIN])
+            .mark_text(
+                color='white',
+                fontWeight='bold',
+                align='center',
+                baseline='middle',
+                size=LABEL_SIZE  # <<< tamanho fixo dos rótulos
+            )
+            .encode(
+                x=alt.X(f'{group_col}:N'),
+                y=alt.Y('y_center:Q', scale=alt.Scale(domain=[0, 1])),
+                text='pct_txt:N',
+                detail='CIA_NORM:N'
+            )
+        )
+
+        st.altair_chart((bars + labels).properties(height=450), use_container_width=True)
+
+    # ===================== 1) ADVP =====================
     st.markdown("#### Percentual de Ofertas por ADVP")
-    
-    df_advp = df.groupby(['ADVP_CANON', 'CIA_NORM'])['IDPESQUISA'].nunique().reset_index(name='pesquisas')
+    if 'ADVP_CANON' not in base.columns:
+        st.info("Coluna ADVP_CANON não encontrada nos dados.")
+    else:
+        advp = base.copy()
+        advp['ADVP_CANON'] = pd.to_numeric(advp['ADVP_CANON'], errors='coerce')
+        advp = advp.dropna(subset=['ADVP_CANON'])
+        draw_chart(build_stacked(advp, 'ADVP_CANON'), 'ADVP_CANON', 'ADVP')
 
-    bars_advp = alt.Chart(df_advp).mark_bar().encode(
-        x=alt.X('ADVP_CANON:O', title='ADVP', axis=alt.Axis(labelAngle=0)),
-        y=alt.Y('sum(pesquisas):Q', stack='normalize', axis=alt.Axis(format='%', title='Participação')),
-        color=alt.Color('CIA_NORM:N', title='Cia Aérea', scale=alt.Scale(domain=cia_domain, range=cia_colors)),
-        tooltip=['ADVP_CANON:N', 'CIA_NORM:N', alt.Tooltip('sum(pesquisas):Q', title='Nº de Pesquisas')]
-    )
-
-    text_advp = bars_advp.mark_text(
-        align='center', baseline='middle', fontWeight='bold', fontSize=14, color='white'
-    ).encode(
-        text=alt.condition(alt.datum.pesquisas > 0, alt.Text('sum(pesquisas):Q', format='.0%'), alt.value(''))
-    )
-
-    st.altair_chart((bars_advp + text_advp).properties(height=450), use_container_width=True)
-
-    # --- Gráfico 2: Por Trecho (100% Stacked Vertical Bar Chart) ---
+    # ===================== 2) TRECHO (Top 15) =====================
     st.markdown("<hr style='margin:1rem 0'>", unsafe_allow_html=True)
     st.markdown("#### Percentual de Ofertas por Trecho (Top 15)")
-    
-    top_trechos = df.groupby('TRECHO')['IDPESQUISA'].nunique().nlargest(15).index
-    df_trecho = df[df['TRECHO'].isin(top_trechos)].groupby(['TRECHO', 'CIA_NORM'])['IDPESQUISA'].nunique().reset_index(name='pesquisas')
+    top15 = base.groupby('TRECHO')['IDPESQUISA'].nunique().nlargest(15).index
+    dft = base[base['TRECHO'].isin(top15)].copy()
+    draw_chart(build_stacked(dft, 'TRECHO'), 'TRECHO', 'Trecho')
 
-    bars_trecho = alt.Chart(df_trecho).mark_bar().encode(
-        x=alt.X('TRECHO:N', title='Trecho', sort='-y', axis=alt.Axis(labelAngle=0)),
-        y=alt.Y('sum(pesquisas):Q', stack='normalize', axis=alt.Axis(format='%', title='Participação')),
-        color=alt.Color('CIA_NORM:N', title='Cia Aérea', scale=alt.Scale(domain=cia_domain, range=cia_colors)),
-        tooltip=['TRECHO:N', 'CIA_NORM:N', alt.Tooltip('sum(pesquisas):Q', title='Nº de Pesquisas')]
-    )
 
-    text_trecho = bars_trecho.mark_text(
-        align='center', baseline='middle', fontWeight='bold', fontSize=14, color='white'
-    ).encode(
-        text=alt.condition(alt.datum.pesquisas > 0, alt.Text('sum(pesquisas):Q', format='.0%'), alt.value(''))
-    )
 
-    st.altair_chart((bars_trecho + text_trecho).properties(height=450), use_container_width=True)
 
 # ================================ MAIN ========================================
 def main():
