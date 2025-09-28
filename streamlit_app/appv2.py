@@ -230,6 +230,22 @@ def card_html(nome: str, p1: float, p2: float, p3: float, rank_cls: str = "") ->
         f"</div></div>"
     )
 
+def card_html_cia(nome: str, p1: float, rank_cls: str = "") -> str:
+    """Gera o HTML para um card de ranking de Cia, exibindo apenas o 1º lugar."""
+    try:
+        p1 = float(p1 or 0.0)
+    except Exception:
+        p1 = 0.0
+    p1 = max(0.0, min(100.0, p1))
+    cls = f"card {rank_cls}".strip()
+    return (
+        f"<div class='{cls}'>"
+        f"<div class='title'>{nome}</div>"
+        f"<div class='row'>"
+        f"<div class='item'><span class='pos'>1º</span><span class='pct'>{p1:.0f}%</span></div>"
+        f"</div></div>"
+    )
+
 def make_bar(df: pd.DataFrame, x_col: str, y_col: str, sort_y_desc: bool = True):
     """Cria um gráfico de barras Altair."""
     d = df[[y_col, x_col]].copy()
@@ -574,7 +590,8 @@ def tab1_painel(df_raw: pd.DataFrame):
                     p3 = float((base["R3"] == tgt).mean()) * 100
                     return p1, p2, p3
                 targets_sorted_local = sorted(targets, key=lambda t: pct_target(t)[0], reverse=True)
-                cards_local = [card_html(t, *pct_target(t)) for t in targets_sorted_local]
+                # Usa a nova função de card que mostra apenas o 1º lugar
+                cards_local = [card_html_cia(t, pct_target(t)[0]) for t in targets_sorted_local]
                 st.markdown(f"<div class='cards-stack'>{''.join(cards_local)}</div>", unsafe_allow_html=True)
     
         render_por_cia(c1, df, "AZUL"); render_por_cia(c2, df, "GOL"); render_por_cia(c3, df, "LATAM")
