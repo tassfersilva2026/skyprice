@@ -405,7 +405,10 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
     """Renderiza os widgets de filtro e aplica as seleções ao DataFrame."""
     _init_filter_state(df_raw)
     st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
-    c1, c2, c3, c4, c5, c6 = st.columns([1.1, 1.1, 1, 2, 1, 1.4])
+
+    # 7 colunas — a última (c7) é o botão ↻ discreto ao lado do filtro de CIA
+    c1, c2, c3, c4, c5, c6, c7 = st.columns([1.1, 1.1, 1.0, 2.0, 1.0, 1.4, 0.32])
+
     base_dt = pd.to_datetime(df_raw.get("__DTKEY__"), errors="coerce")
     if base_dt.isna().all():
         base_dt = pd.to_datetime(df_raw.get("DATAHORA_BUSCA"), errors="coerce", dayfirst=True)
@@ -413,6 +416,7 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
     dmax_abs = base_dt.max()
     dmin_abs = dmin_abs.date() if pd.notna(dmin_abs) else date(2000, 1, 1)
     dmax_abs = dmax_abs.date() if pd.notna(dmax_abs) else date.today()
+
     with c1:
         dt_ini = st.date_input("Data inicial", key=f"{key_prefix}_dtini",
                                value=st.session_state["flt"]["dt_ini"],
@@ -439,13 +443,23 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
         cia_default = [c for c in st.session_state["flt"]["cia"] if c in cia_opts]
         cia_sel = st.multiselect("Cia (Azul/Gol/Latam)", options=cia_opts,
                                  default=cia_default, key=f"{key_prefix}_cia")
+    with c7:
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)  # alinhamento vertical
+        if st.button("↻", key=f"{key_prefix}_refresh", type="secondary", help="Recarregar base"):
+            st.cache_data.clear()
+            st.session_state.pop("flt", None)
+            st.rerun()
+
     st.session_state["flt"] = {
         "dt_ini": dt_ini, "dt_fim": dt_fim, "advp": advp_sel or [],
         "trechos": tr_sel or [], "hh": hh_sel or [], "cia": cia_sel or []
     }
+
+    # Filtro por data (inclusivo)
     base_date_series = pd.to_datetime(df_raw.get("__DTKEY__"), errors="coerce").dt.date
     if base_date_series.isna().all():
         base_date_series = pd.to_datetime(df_raw.get("DATAHORA_BUSCA"), errors="coerce").dt.date
+
     mask = pd.Series(True, index=df_raw.index)
     mask &= (base_date_series >= dt_ini) & (base_date_series <= dt_fim)
     if advp_sel:
@@ -459,6 +473,7 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
         mask &= hh_series.isin(hh_sel)
     if st.session_state["flt"]["cia"]:
         mask &= df_raw.get("CIA_NORM").astype(str).str.upper().isin(st.session_state["flt"]["cia"])
+
     df = df_raw[mask].copy()
     st.caption(f"Linhas após filtros: {fmt_int(len(df))} • Última atualização: {last_update_from_cols(df)}")
     st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
