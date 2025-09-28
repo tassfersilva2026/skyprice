@@ -542,39 +542,39 @@ def tab1_painel(df_raw: pd.DataFrame):
         if "CIA_NORM" not in df.columns:
             st.info("Coluna 'CIA_NORM' não encontrada nos dados filtrados."); return
         c1, c2, c3 = st.columns(3)
-
-    cia_colors = {
-        "AZUL": "background-color: #0033A0; color: white;",
-        "GOL": "background-color: #FF6600; color: white;",
-        "LATAM": "background-color: #8B0000; color: white;"
-    }
-    def render_por_cia(container, df_in: pd.DataFrame, cia_name: str):
-        with container:
-            style = cia_colors.get(cia_name, "background:#f8fafc; color:#0A2A6B;")
-            st.markdown(f"<div class='stack-title' style='{style}'>Ranking {cia_name.title()}</div>", unsafe_allow_html=True)
-            sub = df_in[df_in["CIA_NORM"].astype(str).str.upper() == cia_name]
-            if sub.empty:
-                st.info("Sem dados para os filtros atuais."); return
-            Wc = winners_by_position(sub)
-            Wc_g = Wc.replace({
-                "R1": {"MAXMILHAS": "GRUPO 123", "123MILHAS": "GRUPO 123"},
-                "R2": {"MAXMILHAS": "GRUPO 123", "123MILHAS": "GRUPO 123"},
-                "R3": {"MAXMILHAS": "GRUPO 123", "123MILHAS": "GRUPO 123"},
-            })
-            ags = sorted(set(sub["AGENCIA_NORM"].dropna().astype(str)))
-            targets = [a for a in ags if a != "SEM OFERTAS"]
-            if "GRUPO 123" not in targets:
-                targets.insert(0, "GRUPO 123")
-            def pct_target(tgt: str):
-                base = Wc_g if tgt == "GRUPO 123" else Wc
-                p1 = float((base["R1"] == tgt).mean()) * 100
-                p2 = float((base["R2"] == tgt).mean()) * 100
-                p3 = float((base["R3"] == tgt).mean()) * 100
-                return p1, p2, p3
-            targets_sorted_local = sorted(targets, key=lambda t: pct_target(t)[0], reverse=True)
-            cards_local = [card_html(t, *pct_target(t)) for t in targets_sorted_local]
-            st.markdown(f"<div class='cards-stack'>{''.join(cards_local)}</div>", unsafe_allow_html=True)
-
+    
+        cia_colors = {
+            "AZUL": "background-color: #0033A0; color: white;",
+            "GOL": "background-color: #FF6600; color: white;",
+            "LATAM": "background-color: #8B0000; color: white;"
+        }
+        def render_por_cia(container, df_in: pd.DataFrame, cia_name: str):
+            with container:
+                style = cia_colors.get(cia_name, "background:#f8fafc; color:#0A2A6B;")
+                st.markdown(f"<div class='stack-title' style='{style}'>Ranking {cia_name.title()}</div>", unsafe_allow_html=True)
+                sub = df_in[df_in["CIA_NORM"].astype(str).str.upper() == cia_name]
+                if sub.empty:
+                    st.info("Sem dados para os filtros atuais."); return
+                Wc = winners_by_position(sub)
+                Wc_g = Wc.replace({
+                    "R1": {"MAXMILHAS": "GRUPO 123", "123MILHAS": "GRUPO 123"},
+                    "R2": {"MAXMILHAS": "GRUPO 123", "123MILHAS": "GRUPO 123"},
+                    "R3": {"MAXMILHAS": "GRUPO 123", "123MILHAS": "GRUPO 123"},
+                })
+                ags = sorted(set(sub["AGENCIA_NORM"].dropna().astype(str)))
+                targets = [a for a in ags if a != "SEM OFERTAS"]
+                if "GRUPO 123" not in targets:
+                    targets.insert(0, "GRUPO 123")
+                def pct_target(tgt: str):
+                    base = Wc_g if tgt == "GRUPO 123" else Wc
+                    p1 = float((base["R1"] == tgt).mean()) * 100
+                    p2 = float((base["R2"] == tgt).mean()) * 100
+                    p3 = float((base["R3"] == tgt).mean()) * 100
+                    return p1, p2, p3
+                targets_sorted_local = sorted(targets, key=lambda t: pct_target(t)[0], reverse=True)
+                cards_local = [card_html(t, *pct_target(t)) for t in targets_sorted_local]
+                st.markdown(f"<div class='cards-stack'>{''.join(cards_local)}</div>", unsafe_allow_html=True)
+    
         render_por_cia(c1, df, "AZUL"); render_por_cia(c2, df, "GOL"); render_por_cia(c3, df, "LATAM")
 
 # ──────────────────────── ABA: Top 3 Agências (START) ────────────────────────
