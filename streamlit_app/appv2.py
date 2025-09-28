@@ -224,9 +224,9 @@ def card_html(nome: str, p1: float, p2: float, p3: float, rank_cls: str = "") ->
         f"<div class='{cls}'>"
         f"<div class='title'>{nome}</div>"
         f"<div class='row'>"
-        f"<div class='item'><span class='pos'>1º</span><span class='pct'>{p1:.2f}%</span></div>"
-        f"<div class='item'><span class='pos'>2º</span><span class='pct'>{p2:.2f}%</span></div>"
-        f"<div class='item'><span class='pos'>3º</span><span class='pct'>{p3:.2f}%</span></div>"
+        f"<div class='item'><span class='pos'>1º</span><span class='pct'>{p1:.0f}%</span></div>"
+        f"<div class='item'><span class='pos'>2º</span><span class='pct'>{p2:.0f}%</span></div>"
+        f"<div class='item'><span class='pos'>3º</span><span class='pct'>{p3:.0f}%</span></div>"
         f"</div></div>"
     )
 
@@ -494,9 +494,9 @@ def tab1_painel(df_raw: pd.DataFrame):
     st.markdown(
         f"<div style='font-size:13px;opacity:.85;margin-top:-6px;'>"
         f"Pesquisas únicas: <b>{fmt_int(total_pesq)}</b> • "
-        f"Cobertura 1º: {cov[1]/total_pesq*100:.1f}% • "
-        f"2º: {cov[2]/total_pesq*100:.1f}% • "
-        f"3º: {cov[3]/total_pesq*100:.1f}%</div>",
+        f"Cobertura 1º: {cov[1]/total_pesq*100:.0f}% • "
+        f"2º: {cov[2]/total_pesq*100:.0f}% • "
+        f"3º: {cov[3]/total_pesq*100:.0f}%</div>",
         unsafe_allow_html=True
     )
     st.markdown("<hr style='margin:6px 0'>", unsafe_allow_html=True)
@@ -542,7 +542,7 @@ def tab1_painel(df_raw: pd.DataFrame):
         st.markdown(f"<div class='cards-stack'>{''.join(cards)}</div>", unsafe_allow_html=True)
 
     with main_col2:
-        st.subheader("Ranking por Cia")
+        st.subheader("Painel por Cia")
         if "CIA_NORM" not in df.columns:
             st.info("Coluna 'CIA_NORM' não encontrada nos dados filtrados."); return
         c1, c2, c3 = st.columns(3)
