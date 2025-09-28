@@ -498,7 +498,7 @@ def tab1_painel(df_raw: pd.DataFrame):
     st.markdown("<hr style='margin:6px 0'>", unsafe_allow_html=True)
 
     # Layout principal: 2 colunas (1 para geral, 2 para cias)
-    main_col1, main_col2 = st.columns([0.35, 0.65], gap="large")
+    main_col1, main_col2 = st.columns([0.3, 0.7], gap="large")
 
     with main_col1:
         st.subheader("Ranking Geral")
