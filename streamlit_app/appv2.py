@@ -211,18 +211,18 @@ CARDS_STACK_CSS = """
 st.markdown(CARDS_STACK_CSS, unsafe_allow_html=True)
 
 def card_html(nome: str, p1: float, p2: float, p3: float, rank_cls: str = "") -> str:
-    """Gera o HTML para um card de ranking."""
-    p1 = max(0.0, min(100.0, float(p1 or 0.0)))
-    p2 = max(0.0, min(100.0, float(p2 or 0.0)))
-    p3 = max(0.0, min(100.0, float(p3 or 0.0)))
+    """Gera o HTML para um card de ranking, exibindo apenas o 1º lugar."""
+    try:
+        p1 = float(p1 or 0.0)
+    except Exception:
+        p1 = 0.0
+    p1 = max(0.0, min(100.0, p1))
     cls = f"card {rank_cls}".strip()
     return (
         f"<div class='{cls}'>"
         f"<div class='title'>{nome}</div>"
         f"<div class='row'>"
         f"<div class='item'><span class='pos'>1º</span><span class='pct'>{p1:.2f}%</span></div>"
-        f"<div class='item'><span class='pos'>2º</span><span class='pct'>{p2:.2f}%</span></div>"
-        f"<div class='item'><span class='pos'>3º</span><span class='pct'>{p3:.2f}%</span></div>"
         f"</div></div>"
     )
 
