@@ -1480,7 +1480,7 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         return
 
     # ======== ajuste rápido do tamanho do rótulo ========
-    LABEL_SIZE = 9      # <<< Mude aqui: ex. 12, 13, 14...
+    LABEL_SIZE = 18      # <<< Mude aqui: ex. 12, 13, 14...
     SHOW_MIN   = 0.02   # oculta rótulos < 2% (coloque 0.0 p/ mostrar todos)
     # ====================================================
 
