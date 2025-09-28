@@ -1489,7 +1489,7 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
     BIG, MID = 0.15, 0.05
     def label_size(share: float) -> int:
         # tamanhos menores (limpos)
-        return 18 if share >= BIG else (14 if share >= MID else 11)
+        return 14 if share >= BIG else (12 if share >= MID else 11)
 
     base = df.copy()
     base['CIA_NORM'] = base['CIA_NORM'].astype(str).str.upper()
