@@ -495,48 +495,54 @@ def tab1_painel(df_raw: pd.DataFrame):
         f"3º: {cov[3]/total_pesq*100:.1f}%</div>",
         unsafe_allow_html=True
     )
-    st.markdown(CARD_CSS, unsafe_allow_html=True)
     st.markdown("<hr style='margin:6px 0'>", unsafe_allow_html=True)
-    W = winners_by_position(df)
-    Wg = W.replace({
-        "R1": {"MAXMILHAS": "GRUPO 123", "123MILHAS": "GRUPO 123"},
-        "R2": {"MAXMILHAS": "GRUPO 123", "123MILHAS": "GRUPO 123"},
-        "R3": {"MAXMILHAS": "GRUPO 123", "123MILHAS": "GRUPO 123"},
-    })
-    agencias_all = sorted(set(df["AGENCIA_NORM"].dropna().astype(str)))
-    targets_base = list(agencias_all)
-    if "GRUPO 123" not in targets_base:
-        targets_base.insert(0, "GRUPO 123")
-    if "SEM OFERTAS" not in targets_base:
-        targets_base.append("SEM OFERTAS")
-    def pcts_for_target(base_df: pd.DataFrame, tgt: str, agrupado: bool) -> tuple[float, float, float]:
-        base = (base_df.replace({
+
+    # Layout principal: 2 colunas (1 para geral, 2 para cias)
+    main_col1, main_col2 = st.columns([0.35, 0.65], gap="large")
+
+    with main_col1:
+        st.subheader("Ranking Geral")
+        W = winners_by_position(df)
+        Wg = W.replace({
             "R1": {"MAXMILHAS": "GRUPO 123", "123MILHAS": "GRUPO 123"},
             "R2": {"MAXMILHAS": "GRUPO 123", "123MILHAS": "GRUPO 123"},
             "R3": {"MAXMILHAS": "GRUPO 123", "123MILHAS": "GRUPO 123"},
-        }) if agrupado else base_df)
-        p1 = float((base["R1"] == tgt).mean()) * 100
-        p2 = float((base["R2"] == tgt).mean()) * 100
-        p3 = float((base["R3"] == tgt).mean()) * 100
-        return p1, p2, p3
-    targets_sorted = sorted(
-        targets_base,
-        key=lambda t: pcts_for_target(Wg if t == "GRUPO 123" else W, t, t == "GRUPO 123")[0],
-        reverse=True
-    )
-    cards = []
-    for idx, tgt in enumerate(targets_sorted):
-        p1, p2, p3 = pcts_for_target(Wg if tgt == "GRUPO 123" else W, tgt, tgt == "GRUPO 123")
-        rank_cls = "goldcard" if idx == 0 else "silvercard" if idx == 1 else "bronzecard" if idx == 2 else ""
-        cards.append(card_html(tgt, p1, p2, p3, rank_cls))
-    st.markdown(f"<div class='cards-grid'>{''.join(cards)}</div>", unsafe_allow_html=True)
-    st.markdown("<hr style='margin:14px 0 8px 0'>", unsafe_allow_html=True)
-    st.subheader("Painel por Cia")
-    st.caption("Cada coluna mostra o ranking das agências para a CIA correspondente (cards um abaixo do outro).")
-    st.markdown(CARDS_STACK_CSS, unsafe_allow_html=True)
-    if "CIA_NORM" not in df.columns:
-        st.info("Coluna 'CIA_NORM' não encontrada nos dados filtrados."); return
-    c1, c2, c3 = st.columns(3)
+        })
+        agencias_all = sorted(set(df["AGENCIA_NORM"].dropna().astype(str)))
+        targets_base = list(agencias_all)
+        if "GRUPO 123" not in targets_base:
+            targets_base.insert(0, "GRUPO 123")
+        if "SEM OFERTAS" not in targets_base:
+            targets_base.append("SEM OFERTAS")
+        def pcts_for_target(base_df: pd.DataFrame, tgt: str, agrupado: bool) -> tuple[float, float, float]:
+            base = (base_df.replace({
+                "R1": {"MAXMILHAS": "GRUPO 123", "123MILHAS": "GRUPO 123"},
+                "R2": {"MAXMILHAS": "GRUPO 123", "123MILHAS": "GRUPO 123"},
+                "R3": {"MAXMILHAS": "GRUPO 123", "123MILHAS": "GRUPO 123"},
+            }) if agrupado else base_df)
+            p1 = float((base["R1"] == tgt).mean()) * 100
+            p2 = float((base["R2"] == tgt).mean()) * 100
+            p3 = float((base["R3"] == tgt).mean()) * 100
+            return p1, p2, p3
+        targets_sorted = sorted(
+            targets_base,
+            key=lambda t: pcts_for_target(Wg if t == "GRUPO 123" else W, t, t == "GRUPO 123")[0],
+            reverse=True
+        )
+        cards = []
+        for idx, tgt in enumerate(targets_sorted):
+            p1, p2, p3 = pcts_for_target(Wg if tgt == "GRUPO 123" else W, tgt, tgt == "GRUPO 123")
+            rank_cls = "goldcard" if idx == 0 else "silvercard" if idx == 1 else "bronzecard" if idx == 2 else ""
+            cards.append(card_html(tgt, p1, p2, p3, rank_cls))
+        # Usa 'cards-stack' para empilhar verticalmente
+        st.markdown(f"<div class='cards-stack'>{''.join(cards)}</div>", unsafe_allow_html=True)
+
+    with main_col2:
+        st.subheader("Painel por Cia")
+        if "CIA_NORM" not in df.columns:
+            st.info("Coluna 'CIA_NORM' não encontrada nos dados filtrados."); return
+        c1, c2, c3 = st.columns(3)
+
     cia_colors = {
         "AZUL": "background-color: #0033A0; color: white;",
         "GOL": "background-color: #FF6600; color: white;",
@@ -568,7 +574,8 @@ def tab1_painel(df_raw: pd.DataFrame):
             targets_sorted_local = sorted(targets, key=lambda t: pct_target(t)[0], reverse=True)
             cards_local = [card_html(t, *pct_target(t)) for t in targets_sorted_local]
             st.markdown(f"<div class='cards-stack'>{''.join(cards_local)}</div>", unsafe_allow_html=True)
-    render_por_cia(c1, df, "AZUL"); render_por_cia(c2, df, "GOL"); render_por_cia(c3, df, "LATAM")
+
+        render_por_cia(c1, df, "AZUL"); render_por_cia(c2, df, "GOL"); render_por_cia(c3, df, "LATAM")
 
 # ──────────────────────── ABA: Top 3 Agências (START) ────────────────────────
 @register_tab("Top 3 Agências")
