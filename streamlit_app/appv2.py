@@ -495,7 +495,7 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
         mask &= df_raw.get("CIA_NORM").astype(str).str.upper().isin(st.session_state["flt"]["cia"])
 
     df = df_raw[mask].copy()
-    st.caption(f"Linhas após filtros: {fmt_int(len(df))} • Última atualização: {last_update_from_cols(df)}")
+    st.caption(f"Quantidade de Ofertas: {fmt_int(len(df))}")
     st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
     return df
 
@@ -556,7 +556,7 @@ def tab1_painel(df_raw: pd.DataFrame):
         st.markdown(f"<div class='cards-stack'>{''.join(cards)}</div>", unsafe_allow_html=True)
 
     with main_col2:
-        st.subheader("Ranking por Cia")
+        st.subheader("Ranking Por Cia")
         if "CIA_NORM" not in df.columns:
             st.info("Coluna 'CIA_NORM' não encontrada nos dados filtrados."); return
         c1, c2, c3 = st.columns(3)
