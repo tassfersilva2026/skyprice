@@ -14,7 +14,7 @@ import re
 st.set_page_config(page_title="Skyscanner — Painel", layout="wide", initial_sidebar_state="expanded")
 
 APP_DIR   = Path(__file__).resolve().parent
-DATA_PATH = r"C:\Users\tassiana.silva\Downloads\MKT\skyscanner-app\data\OFERTAS.parquet"   # ajuste se necessário
+DATA_PATH = Path(r"C:\Users\tassiana.silva\Downloads\MKT\skyscanner-app\data\OFERTAS.parquet")   # ajuste se necessário
 
 # ─────────────────────────── HELPERS BÁSICOS ─────────────────────────────────
 def _norm_hhmmss(v: object) -> str | None:
@@ -515,9 +515,18 @@ def tab1_painel(df_raw: pd.DataFrame):
         st.info("Coluna 'CIA_NORM' não encontrada nos dados filtrados."); return
 
     c1, c2, c3 = st.columns(3)
+
+    # Cores personalizadas para cada Cia
+    cia_colors = {
+        "AZUL": "background-color: #0033A0; color: white;", # Azul forte
+        "GOL": "background-color: #FF6600; color: white;",  # Alaranjado
+        "LATAM": "background-color: #8B0000; color: white;" # Vermelho escuro
+    }
+
     def render_por_cia(container, df_in: pd.DataFrame, cia_name: str):
         with container:
-            st.markdown(f"<div class='stack-title'>Ranking {cia_name.title()}</div>", unsafe_allow_html=True)
+            style = cia_colors.get(cia_name, "background:#f8fafc; color:#0A2A6B;") # Cor padrão como fallback
+            st.markdown(f"<div class='stack-title' style='{style}'>Ranking {cia_name.title()}</div>", unsafe_allow_html=True)
             sub = df_in[df_in["CIA_NORM"].astype(str).str.upper() == cia_name]
             if sub.empty: st.info("Sem dados para os filtros atuais."); return
             Wc = winners_by_position(sub)
@@ -1219,7 +1228,6 @@ def tab5_competitividade(df_raw: pd.DataFrame):
 
 
 # ─────────────────────── ABA 6: Competitividade (tabelas + 6 cards) ──────────
-# ───────── ABA 6: Competitividade Cia x Trecho x ADVPs Agrupados (tabelas + 6 cards) ─────────
 @register_tab("Competitividade Cia x Trecho x ADVPs Agrupados")
 def tab6_compet_tabelas(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t6")
@@ -1471,6 +1479,60 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         st.caption("Cia × ADVP")
         render_tbl_advp_and_cards()   # tabela + 6 cards
 
+# ─────────────────────── ABA 7: Ofertas por Cia (Gráficos) ───────────────────────
+@register_tab("Ofertas x Cias")
+def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
+    df = render_filters(df_raw, key_prefix="t7")
+    st.subheader("Distribuição de Ofertas por Companhia Aérea")
+
+    if df.empty:
+        st.info("Sem dados para os filtros selecionados.")
+        return
+
+    cia_domain = ['AZUL', 'GOL', 'LATAM']
+    cia_colors = ['#0033A0', '#FF6600', '#8B0000']
+
+    # --- Gráfico 1: Por ADVP (100% Stacked Vertical Bar Chart) ---
+    st.markdown("#### Percentual de Ofertas por ADVP")
+    
+    df_advp = df.groupby(['ADVP_CANON', 'CIA_NORM'])['IDPESQUISA'].nunique().reset_index(name='pesquisas')
+
+    bars_advp = alt.Chart(df_advp).mark_bar().encode(
+        x=alt.X('ADVP_CANON:O', title='ADVP', axis=alt.Axis(labelAngle=0)),
+        y=alt.Y('sum(pesquisas):Q', stack='normalize', axis=alt.Axis(format='%', title='Participação')),
+        color=alt.Color('CIA_NORM:N', title='Cia Aérea', scale=alt.Scale(domain=cia_domain, range=cia_colors)),
+        tooltip=['ADVP_CANON:N', 'CIA_NORM:N', alt.Tooltip('sum(pesquisas):Q', title='Nº de Pesquisas')]
+    )
+
+    text_advp = bars_advp.mark_text(
+        align='center', baseline='middle', fontWeight='bold', fontSize=14, color='white'
+    ).encode(
+        text=alt.condition(alt.datum.pesquisas > 0, alt.Text('sum(pesquisas):Q', format='.0%'), alt.value(''))
+    )
+
+    st.altair_chart((bars_advp + text_advp).properties(height=450), use_container_width=True)
+
+    # --- Gráfico 2: Por Trecho (100% Stacked Vertical Bar Chart) ---
+    st.markdown("<hr style='margin:1rem 0'>", unsafe_allow_html=True)
+    st.markdown("#### Percentual de Ofertas por Trecho (Top 15)")
+    
+    top_trechos = df.groupby('TRECHO')['IDPESQUISA'].nunique().nlargest(15).index
+    df_trecho = df[df['TRECHO'].isin(top_trechos)].groupby(['TRECHO', 'CIA_NORM'])['IDPESQUISA'].nunique().reset_index(name='pesquisas')
+
+    bars_trecho = alt.Chart(df_trecho).mark_bar().encode(
+        x=alt.X('TRECHO:N', title='Trecho', sort='-y', axis=alt.Axis(labelAngle=0)),
+        y=alt.Y('sum(pesquisas):Q', stack='normalize', axis=alt.Axis(format='%', title='Participação')),
+        color=alt.Color('CIA_NORM:N', title='Cia Aérea', scale=alt.Scale(domain=cia_domain, range=cia_colors)),
+        tooltip=['TRECHO:N', 'CIA_NORM:N', alt.Tooltip('sum(pesquisas):Q', title='Nº de Pesquisas')]
+    )
+
+    text_trecho = bars_trecho.mark_text(
+        align='center', baseline='middle', fontWeight='bold', fontSize=14, color='white'
+    ).encode(
+        text=alt.condition(alt.datum.pesquisas > 0, alt.Text('sum(pesquisas):Q', format='.0%'), alt.value(''))
+    )
+
+    st.altair_chart((bars_trecho + text_trecho).properties(height=450), use_container_width=True)
 
 # ================================ MAIN ========================================
 def main():
