@@ -1469,7 +1469,7 @@ def tab6_compet_tabelas(df_raw: pd.DataFrame):
         st.caption("Cia × ADVP")
         render_tbl_advp_and_cards()   # tabela + 6 cards
 
-# ─────────────────────── ABA 7: Ofertas x Cias (estável, rótulo centrado) ─────
+# ─────────────────────── ABA 7: Ofertas x Cias (rótulo com tamanho fixo) ─────
 @register_tab("Ofertas x Cias")
 def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
     df = render_filters(df_raw, key_prefix="t7")
@@ -1479,28 +1479,25 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         st.info("Sem dados para os filtros selecionados.")
         return
 
-    # Config fixa
+    # ======== ajuste rápido do tamanho do rótulo ========
+    LABEL_SIZE = 9      # <<< Mude aqui: ex. 12, 13, 14...
+    SHOW_MIN   = 0.02   # oculta rótulos < 2% (coloque 0.0 p/ mostrar todos)
+    # ====================================================
+
+    # Cores/ordem fixas
     CIA_DOMAIN = ['AZUL', 'GOL', 'LATAM']
     CIA_COLORS = ['#0033A0', '#FF6600', '#8B0000']
     ORDER_MAP  = {'AZUL': 0, 'GOL': 1, 'LATAM': 2}
 
-    # Regras de rótulo
-    SHOW_MIN = 0.02   # oculta % < 2% (coloque 0.0 se quiser mostrar tudo)
-    BIG, MID = 0.15, 0.05
-    def label_size(share: float) -> int:
-        # tamanhos menores (limpos)
-        return 9 if share >= BIG else (7 if share >= MID else 6)
-
     base = df.copy()
     base['CIA_NORM'] = base['CIA_NORM'].astype(str).str.upper()
-
     if 'IDPESQUISA' not in base.columns:
         st.warning("Coluna IDPESQUISA ausente.")
         return
 
     import numpy as np
 
-    # -------- helper: prepara dados empilhados 0..1 com y0/y1 e centro --------
+    # -------- prepara dados empilhados 0..1 com y0/y1 e centro --------
     def build_stacked(df_in: pd.DataFrame, group_col: str) -> pd.DataFrame:
         counts = (df_in.groupby([group_col, 'CIA_NORM'])['IDPESQUISA']
                         .nunique().reset_index(name='n'))
@@ -1525,12 +1522,11 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
         counts['y0'] = counts['y1'] - counts['share']
         counts['y_center'] = (counts['y0'] + counts['y1']) / 2.0
 
-        # rótulo sem casas e tamanho adaptativo
+        # rótulo sem casas decimais
         counts['pct_txt'] = counts['share'].map(lambda x: f"{x*100:.0f}%")
-        counts['size']    = counts['share'].map(label_size)
         return counts
 
-    # -------- helper: desenha o gráfico (barras + rótulos) --------
+    # -------- desenha (barras 100% + rótulo no centro) --------
     def draw_chart(stacked: pd.DataFrame, group_col: str, x_title: str):
         if stacked.empty:
             st.info(f"Sem dados para {x_title} no recorte atual.")
@@ -1558,12 +1554,17 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
 
         labels = (
             alt.Chart(stacked[stacked['share'] >= SHOW_MIN])
-            .mark_text(color='white', fontWeight='bold', align='center', baseline='middle')
+            .mark_text(
+                color='white',
+                fontWeight='bold',
+                align='center',
+                baseline='middle',
+                size=LABEL_SIZE  # <<< tamanho fixo dos rótulos
+            )
             .encode(
                 x=alt.X(f'{group_col}:N'),
                 y=alt.Y('y_center:Q', scale=alt.Scale(domain=[0, 1])),
                 text='pct_txt:N',
-                size=alt.Size('size:Q', legend=None),
                 detail='CIA_NORM:N'
             )
         )
@@ -1586,6 +1587,7 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
     top15 = base.groupby('TRECHO')['IDPESQUISA'].nunique().nlargest(15).index
     dft = base[base['TRECHO'].isin(top15)].copy()
     draw_chart(build_stacked(dft, 'TRECHO'), 'TRECHO', 'Trecho')
+
 
 
 
