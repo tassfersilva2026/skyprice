@@ -1,13 +1,4 @@
-# ... existing code ...
-
-def update_ranking(aba):
-    if aba == 'Painel':
-        # Remove items with index 2 and 3 (adjusting for zero-based indexing)
-        ranking = ranking[:2] + ranking[4:]
-        
-        return ranking
-
-# ... rest of the code ...from __future__ import annotations
+from __future__ import annotations
 from pathlib import Path
 from datetime import date
 from typing import Callable, List, Tuple
@@ -234,8 +225,6 @@ def card_html(nome: str, p1: float, p2: float, p3: float, rank_cls: str = "") ->
         f"<div class='title'>{nome}</div>"
         f"<div class='row'>"
         f"<div class='item'><span class='pos'>1º</span><span class='pct'>{p1:.0f}%</span></div>"
-        f"<div class='item'><span class='pos'>2º</span><span class='pct'>{p2:.0f}%</span></div>"
-        f"<div class='item'><span class='pos'>3º</span><span class='pct'>{p3:.0f}%</span></div>"
         f"</div></div>"
     )
 
