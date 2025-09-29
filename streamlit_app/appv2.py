@@ -1,4 +1,13 @@
-from __future__ import annotations
+# ... existing code ...
+
+def update_ranking(aba):
+    if aba == 'Painel':
+        # Remove items with index 2 and 3 (adjusting for zero-based indexing)
+        ranking = ranking[:2] + ranking[4:]
+        
+        return ranking
+
+# ... rest of the code ...from __future__ import annotations
 from pathlib import Path
 from datetime import date
 from typing import Callable, List, Tuple
