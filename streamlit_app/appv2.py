@@ -225,6 +225,8 @@ def card_html(nome: str, p1: float, p2: float, p3: float, rank_cls: str = "") ->
         f"<div class='title'>{nome}</div>"
         f"<div class='row'>"
         f"<div class='item'><span class='pos'>1º</span><span class='pct'>{p1:.0f}%</span></div>"
+        f"<div class='item'><span class='pos'>2º</span><span class='pct'>{p2:.0f}%</span></div>"
+        f"<div class='item'><span class='pos'>3º</span><span class='pct'>{p3:.0f}%</span></div>"
         f"</div></div>"
     )
 
