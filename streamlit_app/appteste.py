@@ -423,20 +423,18 @@ def _init_filter_state(df_raw: pd.DataFrame):
 
 
 def _get_all_tab_prefixes() -> list[str]:
-    """Retorna os prefixes de abas (ex: t1, t2, ...) armazenados em session_state.
-    Se não estiverem definidos, gera um fallback a partir do TAB_REGISTRY.
+    """Retorna a lista de prefixes de abas (ex: t1, t2, ...) a partir do session_state
+    ou gera um fallback conforme o TAB_REGISTRY.
     """
     prefixes = st.session_state.get("tab_prefixes")
-    if prefixes:
-        return prefixes
+    if prefixes and isinstance(prefixes, (list, tuple)):
+        return list(prefixes)
     return [f"t{i+1}" for i in range(len(TAB_REGISTRY))]
 
 
 def _sync_filters_callback(changed_prefix: str):
-    """Callback para propagar o estado atual de filtros (st.session_state['flt'])
-    para os widgets de todas as outras abas.
-
-    Usa um flag '_sync_in_progress' para evitar reentrância/infinite loops.
+    """Propaga o estado de filtros atual (st.session_state['flt']) para os widgets
+    de todas as outras abas. Usa uma flag '_sync_in_progress' para evitar loops.
     """
     if st.session_state.get("_sync_in_progress"):
         return
@@ -447,7 +445,6 @@ def _sync_filters_callback(changed_prefix: str):
         for p in prefixes:
             if p == changed_prefix:
                 continue
-            # Atualiza as chaves dos widgets por prefixo — criar/atualizar session_state
             st.session_state[f"{p}_dtini"] = flt.get("dt_ini")
             st.session_state[f"{p}_dtfim"] = flt.get("dt_fim")
             st.session_state[f"{p}_advp"] = flt.get("advp", [])
@@ -474,7 +471,6 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
     dmax_abs = dmax_abs.date() if pd.notna(dmax_abs) else date.today()
 
     with c1:
-        # quando o usuário modificar a data inicial, atualizamos flt e propagamos
         dt_ini = st.date_input("Data inicial", key=f"{key_prefix}_dtini",
                                value=st.session_state["flt"]["dt_ini"],
                                min_value=dmin_abs, max_value=dmax_abs, format="DD/MM/YYYY",
@@ -487,25 +483,25 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
     with c3:
         advp_all = sorted(set(pd.to_numeric(df_raw.get("ADVP_CANON"), errors="coerce").dropna().astype(int).tolist()))
         advp_sel = st.multiselect("ADVP", options=advp_all,
-                                  default=st.session_state["flt"]["advp"], key=f"{key_prefix}_advp",
-                                  on_change=_sync_filters_callback, args=(key_prefix,))
+                      default=st.session_state["flt"]["advp"], key=f"{key_prefix}_advp",
+                      on_change=_sync_filters_callback, args=(key_prefix,))
     with c4:
         trechos_all = sorted([t for t in df_raw.get("TRECHO", pd.Series([], dtype=str)).dropna().unique().tolist() if str(t).strip() != ""])
         tr_sel = st.multiselect("Trechos", options=trechos_all,
-                                default=st.session_state["flt"]["trechos"], key=f"{key_prefix}_trechos",
-                                on_change=_sync_filters_callback, args=(key_prefix,))
+                    default=st.session_state["flt"]["trechos"], key=f"{key_prefix}_trechos",
+                    on_change=_sync_filters_callback, args=(key_prefix,))
     with c5:
         hh_sel = st.multiselect("Hora da busca", options=list(range(24)),
-                                default=st.session_state["flt"]["hh"], key=f"{key_prefix}_hh",
-                                on_change=_sync_filters_callback, args=(key_prefix,))
+                    default=st.session_state["flt"]["hh"], key=f"{key_prefix}_hh",
+                    on_change=_sync_filters_callback, args=(key_prefix,))
     with c6:
         cia_presentes = set(str(x).upper() for x in df_raw.get("CIA_NORM", pd.Series([], dtype=str)).dropna().unique())
         ordem = ["AZUL", "GOL", "LATAM"]
         cia_opts = [c for c in ordem if (not cia_presentes or c in cia_presentes)] or ordem
         cia_default = [c for c in st.session_state["flt"]["cia"] if c in cia_opts]
         cia_sel = st.multiselect("Cia (Azul/Gol/Latam)", options=cia_opts,
-                                 default=cia_default, key=f"{key_prefix}_cia",
-                                 on_change=_sync_filters_callback, args=(key_prefix,))
+                     default=cia_default, key=f"{key_prefix}_cia",
+                     on_change=_sync_filters_callback, args=(key_prefix,))
     with c7:
         st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)  # alinhamento vertical
         if st.button("↻", key=f"{key_prefix}_refresh", type="secondary", help="Recarregar base"):
