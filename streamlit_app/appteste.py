@@ -1,7 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
 from datetime import date
-from typing import Callable, List, Tuple
+from typing import Callable, List, Tuple, Optional, Dict
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -14,7 +14,7 @@ APP_DIR = Path(__file__).resolve().parent
 DATA_PATH = APP_DIR / "data" / "OFERTASCONSOLIDADO_OFERTAS.parquet"
 
 # ─────────────────────────── FUNÇÕES AUXILIARES BÁSICAS ───────────────────────────
-def _norm_hhmmss(v: object) -> str | None:
+def _norm_hhmmss(v: object) -> Optional[str]:
     """Normaliza uma string de tempo para o formato HH:MM:SS."""
     s = str(v or "").strip()
     m = re.search(r"(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?", s)
@@ -262,7 +262,7 @@ def make_bar(df: pd.DataFrame, x_col: str, y_col: str, sort_y_desc: bool = True)
         tooltip=[f"{y_col}:N", f"{x_col}:Q"],
     ).properties(height=300)
 
-def make_line(df: pd.DataFrame, x_col: str, y_col: str, color: str | None = None):
+def make_line(df: pd.DataFrame, x_col: str, y_col: str, color: Optional[str] = None):
     """Cria um gráfico de linhas Altair."""
     cols = [x_col, y_col] + ([color] if color else [])
     d = df[cols].copy()
@@ -362,7 +362,7 @@ def style_smart_colwise(df_show: pd.DataFrame, fmt_map: dict, grad_cols: list[st
     sty = sty.set_table_styles([{"selector": "tbody td, th", "props": [("border", "1px solid #EEE")]}])
     return sty
 
-def show_table(df: pd.DataFrame, styler: pd.io.formats.style.Styler | None = None, caption: str | None = None):
+def show_table(df: pd.DataFrame, styler: Optional[pd.io.formats.style.Styler] = None, caption: Optional[str] = None):
     """Exibe uma tabela no Streamlit, com ou sem estilo."""
     if caption:
         st.markdown(f"**{caption}**")
@@ -471,37 +471,69 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
     dmax_abs = dmax_abs.date() if pd.notna(dmax_abs) else date.today()
 
     with c1:
-        dt_ini = st.date_input("Data inicial", key=f"{key_prefix}_dtini",
-                               value=st.session_state["flt"]["dt_ini"],
-                               min_value=dmin_abs, max_value=dmax_abs, format="DD/MM/YYYY",
-                               on_change=_sync_filters_callback, args=(key_prefix,))
+        key_dtini = f"{key_prefix}_dtini"
+        if key_dtini in st.session_state:
+            dt_ini = st.date_input("Data inicial", key=key_dtini,
+                                   min_value=dmin_abs, max_value=dmax_abs, format="DD/MM/YYYY",
+                                   on_change=_sync_filters_callback, args=(key_prefix,))
+        else:
+            dt_ini = st.date_input("Data inicial", key=key_dtini,
+                                   value=st.session_state["flt"]["dt_ini"],
+                                   min_value=dmin_abs, max_value=dmax_abs, format="DD/MM/YYYY",
+                                   on_change=_sync_filters_callback, args=(key_prefix,))
     with c2:
-        dt_fim = st.date_input("Data final", key=f"{key_prefix}_dtfim",
-                               value=st.session_state["flt"]["dt_fim"],
-                               min_value=dmin_abs, max_value=dmax_abs, format="DD/MM/YYYY",
-                               on_change=_sync_filters_callback, args=(key_prefix,))
+        key_dtfim = f"{key_prefix}_dtfim"
+        if key_dtfim in st.session_state:
+            dt_fim = st.date_input("Data final", key=key_dtfim,
+                                   min_value=dmin_abs, max_value=dmax_abs, format="DD/MM/YYYY",
+                                   on_change=_sync_filters_callback, args=(key_prefix,))
+        else:
+            dt_fim = st.date_input("Data final", key=key_dtfim,
+                                   value=st.session_state["flt"]["dt_fim"],
+                                   min_value=dmin_abs, max_value=dmax_abs, format="DD/MM/YYYY",
+                                   on_change=_sync_filters_callback, args=(key_prefix,))
     with c3:
         advp_all = sorted(set(pd.to_numeric(df_raw.get("ADVP_CANON"), errors="coerce").dropna().astype(int).tolist()))
-        advp_sel = st.multiselect("ADVP", options=advp_all,
-                      default=st.session_state["flt"]["advp"], key=f"{key_prefix}_advp",
-                      on_change=_sync_filters_callback, args=(key_prefix,))
+        key_advp = f"{key_prefix}_advp"
+        if key_advp in st.session_state:
+            advp_sel = st.multiselect("ADVP", options=advp_all, key=key_advp,
+                                      on_change=_sync_filters_callback, args=(key_prefix,))
+        else:
+            advp_sel = st.multiselect("ADVP", options=advp_all,
+                          default=st.session_state["flt"]["advp"], key=key_advp,
+                          on_change=_sync_filters_callback, args=(key_prefix,))
     with c4:
         trechos_all = sorted([t for t in df_raw.get("TRECHO", pd.Series([], dtype=str)).dropna().unique().tolist() if str(t).strip() != ""])
-        tr_sel = st.multiselect("Trechos", options=trechos_all,
-                    default=st.session_state["flt"]["trechos"], key=f"{key_prefix}_trechos",
-                    on_change=_sync_filters_callback, args=(key_prefix,))
+        key_tr = f"{key_prefix}_trechos"
+        if key_tr in st.session_state:
+            tr_sel = st.multiselect("Trechos", options=trechos_all, key=key_tr,
+                        on_change=_sync_filters_callback, args=(key_prefix,))
+        else:
+            tr_sel = st.multiselect("Trechos", options=trechos_all,
+                        default=st.session_state["flt"]["trechos"], key=key_tr,
+                        on_change=_sync_filters_callback, args=(key_prefix,))
     with c5:
-        hh_sel = st.multiselect("Hora da busca", options=list(range(24)),
-                    default=st.session_state["flt"]["hh"], key=f"{key_prefix}_hh",
-                    on_change=_sync_filters_callback, args=(key_prefix,))
+        key_hh = f"{key_prefix}_hh"
+        if key_hh in st.session_state:
+            hh_sel = st.multiselect("Hora da busca", options=list(range(24)), key=key_hh,
+                        on_change=_sync_filters_callback, args=(key_prefix,))
+        else:
+            hh_sel = st.multiselect("Hora da busca", options=list(range(24)),
+                        default=st.session_state["flt"]["hh"], key=key_hh,
+                        on_change=_sync_filters_callback, args=(key_prefix,))
     with c6:
         cia_presentes = set(str(x).upper() for x in df_raw.get("CIA_NORM", pd.Series([], dtype=str)).dropna().unique())
         ordem = ["AZUL", "GOL", "LATAM"]
         cia_opts = [c for c in ordem if (not cia_presentes or c in cia_presentes)] or ordem
         cia_default = [c for c in st.session_state["flt"]["cia"] if c in cia_opts]
-        cia_sel = st.multiselect("Cia (Azul/Gol/Latam)", options=cia_opts,
-                     default=cia_default, key=f"{key_prefix}_cia",
-                     on_change=_sync_filters_callback, args=(key_prefix,))
+        key_cia = f"{key_prefix}_cia"
+        if key_cia in st.session_state:
+            cia_sel = st.multiselect("Cia (Azul/Gol/Latam)", options=cia_opts, key=key_cia,
+                         on_change=_sync_filters_callback, args=(key_prefix,))
+        else:
+            cia_sel = st.multiselect("Cia (Azul/Gol/Latam)", options=cia_opts,
+                         default=cia_default, key=key_cia,
+                         on_change=_sync_filters_callback, args=(key_prefix,))
     with c7:
         st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)  # alinhamento vertical
         if st.button("↻", key=f"{key_prefix}_refresh", type="secondary", help="Recarregar base"):
@@ -774,7 +806,7 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
             return "R$ " + f"{xv:,.0f}".replace(",", ".")
         except Exception:
             return "R$ -"
-    def _find_id_col(df_: pd.DataFrame) -> str | None:
+    def _find_id_col(df_: pd.DataFrame) -> Optional[str]:
         cands = ["IDPESQUISA", "ID_PESQUISA", "ID BUSCA", "IDBUSCA", "ID", "NOME_ARQUIVO_STD", "NOME_ARQUIVO", "NOME DO ARQUIVO", "ARQUIVO"]
         norm = {re.sub(r"[^A-Z0-9]+", "", c.upper()): c for c in df_.columns}
         for nm in cands:
@@ -837,7 +869,7 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
         except Exception:
             pass
         return s
-    def dt_and_id_for(sub_rows: pd.DataFrame) -> tuple[str, str | None]:
+    def dt_and_id_for(sub_rows: pd.DataFrame) -> tuple[str, Optional[str]]:
         """Data (DD/MM) + Hora HH:MM:SS, garantindo segundos."""
         if sub_rows.empty:
             return "", None
