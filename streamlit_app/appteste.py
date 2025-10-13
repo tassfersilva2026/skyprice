@@ -1722,6 +1722,32 @@ def tab_tabela_pesquisa(df_raw: pd.DataFrame):
         'PREÇO 123MILHAS': fmt_num0_br, 'PREÇOMAXMILHAS': fmt_num0_br, 'PREÇO FLIPMILHAS': fmt_num0_br,
         '123XFLIP (%)': fmt_pct0_br, 'MAX X FLIP (%)': fmt_pct0_br, '123 X MENOR PREÇO (%)': fmt_pct0_br,
     }, grad_cols=['PREÇO', 'PREÇO 123MILHAS', 'PREÇOMAXMILHAS', 'PREÇO FLIPMILHAS'])
+    # Aplicar estilo ternário para colunas percentuais: negativo->vermelho, zero/NaN->cinza, positivo->verde
+    pct_cols_style = ['123XFLIP (%)', 'MAX X FLIP (%)', '123 X MENOR PREÇO (%)']
+    def _ternary_pct_col(col_series: pd.Series):
+        out = []
+        for v in col_series:
+            try:
+                vv = float(v)
+            except Exception:
+                out.append('background-color:#E6E6E6; color:#111827')
+                continue
+            if np.isnan(vv) or vv == 0:
+                out.append('background-color:#E6E6E6; color:#111827')
+            elif vv < 0:
+                out.append('background-color:#FFD6D6; color:#9B1C1C')
+            else:
+                out.append('background-color:#D1FADF; color:#064E3B')
+        return out
+
+    # sty é um Styler; aplicamos por coluna existente
+    for col in pct_cols_style:
+        if col in display_df.columns:
+            try:
+                sty = sty.apply(lambda s: _ternary_pct_col(s) , subset=[col])
+            except Exception:
+                # se aplicar falhar, continuar sem a camada extra
+                pass
 
     # Downloads: botão CSV discreto no topo direito (sempre com separador ",")
     csv_bytes = display_df.to_csv(index=False, sep=',', decimal=',').encode('utf-8')
