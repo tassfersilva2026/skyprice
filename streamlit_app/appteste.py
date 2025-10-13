@@ -1712,7 +1712,11 @@ def tab_tabela_pesquisa(df_raw: pd.DataFrame):
 
     # Ordenar alfabeticamente por TRECHO ORIGEM conforme solicitado
     if 'TRECHO ORIGEM' in display_df.columns:
-        display_df = display_df.sort_values(by='TRECHO ORIGEM', key=lambda s: s.fillna('').str.upper()).reset_index(drop=True)
+        # ordenar por TRECHO ORIGEM (A->Z) e dentro de cada origem por ADVP (menor->maior)
+        if 'ADVP' in display_df.columns:
+            display_df = display_df.sort_values(by=['TRECHO ORIGEM', 'ADVP'], key=lambda s: s.fillna('').str.upper() if s.dtype == object else s).reset_index(drop=True)
+        else:
+            display_df = display_df.sort_values(by='TRECHO ORIGEM', key=lambda s: s.fillna('').str.upper()).reset_index(drop=True)
 
     sty = style_smart_colwise(display_df, {
         'PREÇO': fmt_num0_br,
