@@ -1545,86 +1545,108 @@ def tab_tabela_pesquisa(df_raw: pd.DataFrame):
         st.info("Sem resultados para os filtros selecionados.")
         return
 
-    # Normalizações locais
     work = df.copy()
-    # garantir colunas necessárias
     work['ADVP_CANON'] = work.get('ADVP_CANON', work.get('ADVP'))
     work['TRECHO'] = work.get('TRECHO', '').astype(str)
     work['AGENCIA_NORM'] = work.get('AGENCIA_NORM', work.get('AGENCIA_COMP', '')).astype(str)
     work['CIA_NORM'] = work.get('CIA_NORM', work.get('CIA', '')).astype(str)
 
-    # chaves de agrupamento: agrupamos por pesquisa+trecho+advp_can
-    grp_cols = ['IDPESQUISA', 'TRECHO', 'ADVP_CANON']
+    # Selecionar top 11 trechos por número de pesquisas (IDPESQUISA distintas)
+    top_trechos = work.groupby('TRECHO')['IDPESQUISA'].nunique().sort_values(ascending=False).head(11).index.tolist()
+    if len(top_trechos) < 11:
+        restantes = [t for t in work['TRECHO'].dropna().astype(str).unique().tolist() if t not in top_trechos]
+        top_trechos += restantes[: max(0, 11 - len(top_trechos))]
 
-    # pivot por agência (min preço por agência dentro de cada pesquisa/trecho/advp)
-    pivot = (work.pivot_table(index=grp_cols, columns='AGENCIA_NORM', values='PRECO', aggfunc='min')
-             .reset_index())
+    # ADVP buckets fixos (5 por trecho)
+    advp_buckets = [1, 5, 11, 17, 30]
 
-    # menor preço geral por grupo
-    min_price = work.groupby(grp_cols, as_index=False)['PRECO'].min().rename(columns={'PRECO': 'PRECO_MENOR'})
+    rows_out = []
+    # para cada trecho+advp, escolher a última pesquisa (DATAHORA_BUSCA) e extrair preços mínimos naquela pesquisa
+    for trecho in top_trechos:
+        for advp in advp_buckets:
+            sub = work[(work['TRECHO'] == trecho) & (pd.to_numeric(work['ADVP_CANON'], errors='coerce') == advp)].copy()
+            if sub.empty:
+                # se não houver essa combinação, pula
+                continue
+            # escolher a última pesquisa (por DATAHORA_BUSCA ou __DTKEY__)
+            if '__DTKEY__' in sub.columns and sub['__DTKEY__'].notna().any():
+                last_idx = sub['__DTKEY__'].idxmax()
+            else:
+                # fallback para DATAHORA_BUSCA
+                last_idx = sub['DATAHORA_BUSCA'].dropna().index.max() if sub['DATAHORA_BUSCA'].notna().any() else sub.index.max()
+            last_id = sub.loc[last_idx, 'IDPESQUISA'] if pd.notna(last_idx) else None
+            if last_id is None:
+                continue
+            # linhas pertencentes a essa pesquisa (filtrar por IDPESQUISA)
+            rows_pesq = work[(work['IDPESQUISA'] == last_id) & (work['TRECHO'] == trecho) & (pd.to_numeric(work['ADVP_CANON'], errors='coerce') == advp)].copy()
+            if rows_pesq.empty:
+                # fallback: pegar as linhas do trecho+advp independ. de id
+                rows_pesq = sub.copy()
 
-    base = pivot.merge(min_price, on=grp_cols, how='left')
+            # preço mais barato e empresa responsável
+            rows_pesq['PRECO_NUM'] = pd.to_numeric(rows_pesq['PRECO'], errors='coerce')
+            if rows_pesq['PRECO_NUM'].notna().any():
+                min_price = float(rows_pesq['PRECO_NUM'].min())
+                min_row = rows_pesq.loc[rows_pesq['PRECO_NUM'].idxmin()]
+                empresa_min = str(min_row.get('AGENCIA_NORM', ''))
+                cia_voo = str(min_row.get('CIA_NORM', ''))
+            else:
+                min_price = np.nan; empresa_min = ''; cia_voo = ''
 
-    # obter informações do registro que contém o menor preço (cia e agencia/empresa)
-    def pick_min_info(sub: pd.DataFrame) -> pd.Series:
-        if sub.empty:
-            return pd.Series({'DATAHORA_BUSCA': pd.NaT, 'DATA_EMBARQUE': pd.NaT, 'PRECO': np.nan, 'CIA_DO_VOO': '', 'EMPRESA': ''})
-        sub = sub.copy()
-        sub['PRECO_NUM'] = pd.to_numeric(sub['PRECO'], errors='coerce')
-        idx = sub['PRECO_NUM'].idxmin()
-        row = sub.loc[idx]
-        return pd.Series({
-            'DATAHORA_BUSCA': row.get('DATAHORA_BUSCA'),
-            'DATA_EMBARQUE': row.get('DATA_EMBARQUE'),
-            'PRECO': row.get('PRECO_num') if 'PRECO_num' in row else row.get('PRECO'),
-            'CIA_DO_VOO': row.get('CIA_NORM'),
-            'EMPRESA': row.get('AGENCIA_NORM')
-        })
+            # preços por agência específicas (se apareceram nessa pesquisa)
+            def get_ag_price(df_sub, ag_name):
+                dfx = df_sub[df_sub['AGENCIA_NORM'].str.upper() == ag_name.upper()]
+                v = pd.to_numeric(dfx['PRECO'], errors='coerce')
+                return float(v.min()) if v.notna().any() else np.nan
 
-    # Para obter CIA_DO_VOO e EMPRESA relacionados ao menor preço, agrupamos e selecionamos a primeira ocorrência do menor preço
-    reps = []
-    for (pid, trecho, advp), g in work.groupby(grp_cols):
-        # localização da menor
-        minp = float(g['PRECO'].min(skipna=True)) if g['PRECO'].notna().any() else np.nan
-        row_min = g.loc[g['PRECO'] == minp]
-        if not row_min.empty:
-            r = row_min.iloc[0]
-            reps.append({
-                'IDPESQUISA': pid, 'TRECHO': trecho, 'ADVP_CANON': advp,
-                'DATAHORA_BUSCA': r.get('DATAHORA_BUSCA'), 'DATA_EMBARQUE': r.get('DATA_EMBARQUE'),
-                'PRECO_MIN_ROW': minp, 'CIA_DO_VOO': r.get('CIA_NORM'), 'EMPRESA': r.get('AGENCIA_NORM')
+            price_123 = get_ag_price(rows_pesq, '123MILHAS')
+            price_max = get_ag_price(rows_pesq, 'MAXMILHAS')
+            price_flip = get_ag_price(rows_pesq, 'FLIPMILHAS')
+
+            # data/hora e data embarque
+            dt_busca = (pd.to_datetime(rows_pesq['DATAHORA_BUSCA'], errors='coerce').max() if 'DATAHORA_BUSCA' in rows_pesq.columns else pd.NaT)
+            dt_emb = (pd.to_datetime(rows_pesq['DATA_EMBARQUE'], dayfirst=True, errors='coerce').min() if 'DATA_EMBARQUE' in rows_pesq.columns else pd.NaT)
+
+            rows_out.append({
+                'IDPESQUISA': last_id,
+                'TRECHO': trecho,
+                'ADVP': advp,
+                'DATAHORA_BUSCA': dt_busca,
+                'DATA_EMBARQUE': dt_emb,
+                'PRECO': min_price,
+                'CIA_DO_VOO': cia_voo,
+                'EMPRESA': empresa_min,
+                '123MILHAS': price_123,
+                'MAXMILHAS': price_max,
+                'FLIPMILHAS': price_flip,
             })
-        else:
-            reps.append({'IDPESQUISA': pid, 'TRECHO': trecho, 'ADVP_CANON': advp,
-                         'DATAHORA_BUSCA': pd.NaT, 'DATA_EMBARQUE': pd.NaT,
-                         'PRECO_MIN_ROW': np.nan, 'CIA_DO_VOO': '', 'EMPRESA': ''})
-    reps_df = pd.DataFrame(reps)
 
-    df_out = base.merge(reps_df, left_on=grp_cols, right_on=['IDPESQUISA', 'TRECHO', 'ADVP_CANON'], how='left')
+    out_df = pd.DataFrame(rows_out)
 
-    # Extrair origem/destino a partir do campo TRECHO (procura códigos IATA de 3 letras)
-    def split_trecho(t: str) -> tuple[str, str]:
-        s = str(t or '').upper()
-        found = re.findall(r"\b[A-Z]{3}\b", s)
+    # Extrair ORIGEM e DESTINO seguindo sua regra: se TRECHO estiver concatenado (ex: BELGRU), usar 1-3 e 4-6
+    def parse_origem_destino(t: str) -> tuple[str, str]:
+        s = str(t or '').strip().upper()
+        if len(s) >= 6 and re.match(r'^[A-Z]{6}$', s):
+            return s[0:3], s[3:6]
+        found = re.findall(r"[A-Z]{3}", s)
         if len(found) >= 2:
             return found[0], found[1]
-        # fallback: split por separadores
-        for sep in ['-', '–', '/', ' ']:
-            parts = [p.strip() for p in s.split(sep) if p.strip()]
-            if len(parts) >= 2:
-                return parts[0], parts[1]
-        return s, ''
+        # try split by non-alnum
+        parts = re.split(r'[^A-Z0-9]+', s)
+        parts = [p for p in parts if p]
+        if len(parts) >= 2:
+            return parts[0][0:3], parts[1][0:3]
+        # fallback: first 3 and next 3 if possible
+        if len(s) >= 6:
+            return s[0:3], s[3:6]
+        return s[0:3], ''
 
-    df_out['ORIGEM'] = df_out['TRECHO'].apply(lambda x: split_trecho(x)[0])
-    df_out['DESTINO'] = df_out['TRECHO'].apply(lambda x: split_trecho(x)[1])
+    if not out_df.empty:
+        out_df['TRECHO ORIGEM'] = out_df['TRECHO'].apply(lambda x: parse_origem_destino(x)[0])
+        out_df['TRECHO DESTINO'] = out_df['TRECHO'].apply(lambda x: parse_origem_destino(x)[1])
 
-    # Colunas de preço das agências específicas
-    for c in ['123MILHAS', 'MAXMILHAS', 'FLIPMILHAS']:
-        if c not in df_out.columns:
-            df_out[c] = np.nan
-
-    # Cálculo das diferenças percentuais (seguindo (x - base) / base * 100)
-    def pct_diff(base, other):
+    # Cálculo %: seguiremos (other - base)/base * 100, usando FLIP como base para 123XFLIP e PRECO (menor) como base para 123 X MENOR PREÇO
+    def pct(base, other):
         try:
             if pd.isna(base) or pd.isna(other) or base == 0:
                 return np.nan
@@ -1632,63 +1654,59 @@ def tab_tabela_pesquisa(df_raw: pd.DataFrame):
         except Exception:
             return np.nan
 
-    df_out['123XFLIP (%)'] = df_out.apply(lambda r: pct_diff(r.get('FLIPMILHAS'), r.get('123MILHAS')), axis=1)
-    df_out['MAX X FLIP (%)'] = df_out.apply(lambda r: pct_diff(r.get('FLIPMILHAS'), r.get('MAXMILHAS')), axis=1)
-    df_out['123 X MENOR PREÇO (%)'] = df_out.apply(lambda r: pct_diff(r.get('PRECO_MENOR'), r.get('123MILHAS')), axis=1)
+    out_df['123XFLIP (%)'] = out_df.apply(lambda r: pct(r.get('FLIPMILHAS'), r.get('123MILHAS')), axis=1)
+    out_df['MAX X FLIP (%)'] = out_df.apply(lambda r: pct(r.get('FLIPMILHAS'), r.get('MAXMILHAS')), axis=1)
+    out_df['123 X MENOR PREÇO (%)'] = out_df.apply(lambda r: pct(r.get('PRECO'), r.get('123MILHAS')), axis=1)
 
-    # Formatar colunas para exibição
-    df_show = df_out.rename(columns={
+    # Formatação para exibição
+    display_df = out_df.rename(columns={
         'DATAHORA_BUSCA': 'DATA+ HORA DA PESQUISA',
-        'ORIGEM': 'TRECHO ORIGEM', 'DESTINO': 'TRECHO DESTINO',
-        'ADVP_CANON': 'ADVP', 'DATA_EMBARQUE': 'DATA DE EMBARQUE',
-        'PRECO_MIN_ROW': 'PREÇO', 'CIA_DO_VOO': 'CIA DO VOO', 'EMPRESA': 'EMPRESA',
+        'TRECHO ORIGEM': 'TRECHO ORIGEM', 'TRECHO DESTINO': 'TRECHO DESTINO',
+        'ADVP': 'ADVP', 'DATA_EMBARQUE': 'DATA DE EMBARQUE',
+        'PRECO': 'PREÇO', 'CIA_DO_VOO': 'CIA DO VOO', 'EMPRESA': 'EMPRESA',
         '123MILHAS': 'PREÇO 123MILHAS', 'MAXMILHAS': 'PREÇOMAXMILHAS', 'FLIPMILHAS': 'PREÇO FLIPMILHAS'
     })
 
-    # Ajustes de tipos e formatos
     def fmt_dt(v):
         try:
             return pd.to_datetime(v).strftime('%d/%m/%Y %H:%M:%S')
         except Exception:
             return '-'
-    df_show['DATA+ HORA DA PESQUISA'] = df_show['DATA+ HORA DA PESQUISA'].apply(fmt_dt)
-    df_show['DATA DE EMBARQUE'] = df_show['DATA DE EMBARQUE'].apply(lambda v: pd.to_datetime(v).strftime('%d/%m/%Y') if pd.notna(v) else '-')
 
-    # Selecionar colunas na ordem solicitada
+    if 'DATA+ HORA DA PESQUISA' in display_df.columns:
+        display_df['DATA+ HORA DA PESQUISA'] = display_df['DATA+ HORA DA PESQUISA'].apply(fmt_dt)
+    if 'DATA DE EMBARQUE' in display_df.columns:
+        display_df['DATA DE EMBARQUE'] = display_df['DATA DE EMBARQUE'].apply(lambda v: pd.to_datetime(v).strftime('%d/%m/%Y') if pd.notna(v) else '-')
+
     cols_order = [
         'DATA+ HORA DA PESQUISA', 'TRECHO ORIGEM', 'TRECHO DESTINO', 'ADVP', 'DATA DE EMBARQUE',
         'PREÇO', 'CIA DO VOO', 'EMPRESA', 'PREÇO 123MILHAS', 'PREÇOMAXMILHAS', 'PREÇO FLIPMILHAS',
         '123XFLIP (%)', 'MAX X FLIP (%)', '123 X MENOR PREÇO (%)'
     ]
     for c in cols_order:
-        if c not in df_show.columns:
-            df_show[c] = np.nan
+        if c not in display_df.columns:
+            display_df[c] = np.nan
 
-    df_final = df_show[cols_order].reset_index(drop=True)
+    display_df = display_df[cols_order].reset_index(drop=True)
 
-    # Estilização
-    fmt_map = {
+    sty = style_smart_colwise(display_df, {
         'PREÇO': fmt_num0_br,
         'PREÇO 123MILHAS': fmt_num0_br, 'PREÇOMAXMILHAS': fmt_num0_br, 'PREÇO FLIPMILHAS': fmt_num0_br,
-    }
-    pct_cols = ['123XFLIP (%)', 'MAX X FLIP (%)', '123 X MENOR PREÇO (%)']
-    sty = style_smart_colwise(df_final, fmt_map, grad_cols=['PREÇO', 'PREÇO 123MILHAS', 'PREÇOMAXMILHAS', 'PREÇO FLIPMILHAS'])
-    show_table(df_final, sty, caption='Tabela de Pesquisa — visão por pesquisa/trecho/ADVP')
+    }, grad_cols=['PREÇO', 'PREÇO 123MILHAS', 'PREÇOMAXMILHAS', 'PREÇO FLIPMILHAS'])
+    show_table(display_df, sty, caption='Tabela (11 trechos × 5 ADVPs = até 55 pesquisas)')
 
-    # Download controls
+    # Downloads
     sep = st.selectbox('Separador CSV', options=[',', ';'], index=1, help='Escolha o separador para o arquivo CSV')
-    csv_bytes = df_final.to_csv(index=False, sep=sep, decimal=',').encode('utf-8')
+    csv_bytes = display_df.to_csv(index=False, sep=sep, decimal=',').encode('utf-8')
     st.download_button('Baixar CSV', data=csv_bytes, file_name='tabela_pesquisa.csv', mime='text/csv')
 
-    # XLSX
     to_xlsx = io.BytesIO()
     try:
         with pd.ExcelWriter(to_xlsx, engine='openpyxl') as writer:
-            df_final.to_excel(writer, index=False, sheet_name='TABELA_PESQUISA')
+            display_df.to_excel(writer, index=False, sheet_name='TABELA_PESQUISA')
         to_xlsx.seek(0)
         st.download_button('Baixar XLSX', data=to_xlsx.read(), file_name='tabela_pesquisa.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     except Exception:
-        # fallback: csv inside .xlsx name
         st.warning('Não foi possível gerar XLSX (biblioteca ausente). Baixe o CSV como alternativa.')
 
 # ================================ MAIN ========================================
