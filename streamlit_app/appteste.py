@@ -197,8 +197,10 @@ st.markdown(GLOBAL_TABLE_CSS, unsafe_allow_html=True)
 # Ajuste global de cabeçalhos: diminuir fonte e evitar quebra de linha
 GLOBAL_HEADER_CSS = """
 <style>
-table th { font-size:12px !important; white-space:nowrap !important; }
-table td { font-size:12px !important; }
+table th { font-size:11px !important; white-space:nowrap !important; overflow:hidden !important; text-overflow:ellipsis !important; padding:4px 6px !important; }
+table td { font-size:12px !important; padding:6px 8px !important; }
+/* garantir que o conteúdo do cabeçalho seja truncado com reticências quando necessário */
+table th div, table th span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 </style>
 """
 st.markdown(GLOBAL_HEADER_CSS, unsafe_allow_html=True)
@@ -1723,7 +1725,7 @@ def tab_tabela_pesquisa(df_raw: pd.DataFrame):
     # coloca o botão mais discreto no topo direito usando columns
     c1, c2, c3 = st.columns([1, 1, 0.2])
     with c3:
-        st.download_button('CSV', data=csv_bytes, file_name='tabela_pesquisa.csv', mime='text/csv', key='dl_csv_tabela')
+        st.download_button('Baixar CSV', data=csv_bytes, file_name='tabela_pesquisa.csv', mime='text/csv', key='dl_csv_tabela')
 
     to_xlsx = io.BytesIO()
     try:
@@ -1732,7 +1734,8 @@ def tab_tabela_pesquisa(df_raw: pd.DataFrame):
         to_xlsx.seek(0)
         st.download_button('Baixar XLSX', data=to_xlsx.read(), file_name='tabela_pesquisa.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     except Exception:
-        st.warning('Não foi possível gerar XLSX (biblioteca ausente). Baixe o CSV como alternativa.')
+        # Se não for possível gerar XLSX (biblioteca ausente), não exibir mensagem — CSV já disponível
+        pass
 
 # ================================ MAIN ========================================
 def main():
