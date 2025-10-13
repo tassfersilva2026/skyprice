@@ -1781,8 +1781,17 @@ def tab_tabela_pesquisa(df_raw: pd.DataFrame):
     ] if c in export_df.columns]
     export_df = export_df[export_cols]
 
+    # Antes de exportar, converter colunas percentuais do formato 'porcentagem em %' (ex: 2.157 => 2.157%)
+    # para fração (ex: 0.02157) para que, ao aplicar formato % no Excel, o valor apareça corretamente.
+    export_df_for_file = export_df.copy()
+    pct_cols_export = [c for c in ['123XFLIP (%)', 'MAX X FLIP (%)', '123 X MENOR PREÇO (%)'] if c in export_df_for_file.columns]
+    for c in pct_cols_export:
+        # garantir numérico e dividir por 100 (2.157 -> 0.02157). Arredondar para 6 casas decimais para evitar excesso de casas.
+        export_df_for_file[c] = pd.to_numeric(export_df_for_file[c], errors='coerce')
+        export_df_for_file[c] = export_df_for_file[c].apply(lambda x: round(float(x) / 100, 6) if pd.notna(x) else x)
+
     # CSV com BOM UTF-8 e separador ponto-e-vírgula para compatibilidade com Excel regional
-    csv_bytes = export_df.to_csv(index=False, sep=';', decimal=',', encoding='utf-8-sig').encode('utf-8-sig')
+    csv_bytes = export_df_for_file.to_csv(index=False, sep=';', decimal=',', encoding='utf-8-sig').encode('utf-8-sig')
     # coloca o botão no topo direito usando columns antes da tabela
     c1, c2, c3 = st.columns([1, 1, 0.2])
     with c3:
@@ -1797,7 +1806,8 @@ def tab_tabela_pesquisa(df_raw: pd.DataFrame):
         try:
             with pd.ExcelWriter(to_xlsx, engine=engine) as writer:
                 # escreve export_df (tipos preservados)
-                export_df.to_excel(writer, index=False, sheet_name='TABELA_PESQUISA')
+                # escrever a versão preparada para arquivo (percentuais como fração)
+                export_df_for_file.to_excel(writer, index=False, sheet_name='TABELA_PESQUISA')
             xlsx_written = True
             break
         except Exception:
