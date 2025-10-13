@@ -1708,6 +1708,10 @@ def tab_tabela_pesquisa(df_raw: pd.DataFrame):
 
     display_df = display_df[cols_order].reset_index(drop=True)
 
+    # Ordenar alfabeticamente por TRECHO ORIGEM conforme solicitado
+    if 'TRECHO ORIGEM' in display_df.columns:
+        display_df = display_df.sort_values(by='TRECHO ORIGEM', key=lambda s: s.fillna('').str.upper()).reset_index(drop=True)
+
     sty = style_smart_colwise(display_df, {
         'PREÇO': fmt_num0_br,
         'PREÇO 123MILHAS': fmt_num0_br, 'PREÇOMAXMILHAS': fmt_num0_br, 'PREÇO FLIPMILHAS': fmt_num0_br,
