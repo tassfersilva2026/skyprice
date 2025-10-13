@@ -1561,7 +1561,6 @@ def tab_tabela_pesquisa(df_raw: pd.DataFrame):
     - TRECHO é uma string que contém códigos IATA (ex: 'GRU REC' ou 'GRU-REC'); tentamos extrair os dois códigos.
     """
     df = render_filters(df_raw, key_prefix="t8")
-    st.subheader("TABELA DE PESQUISA")
     if df.empty:
         st.info("Sem resultados para os filtros selecionados.")
         return
@@ -1731,7 +1730,7 @@ def tab_tabela_pesquisa(df_raw: pd.DataFrame):
     with c3:
         st.download_button('Baixar CSV', data=csv_bytes, file_name='tabela_pesquisa.csv', mime='text/csv', key='dl_csv_tabela')
 
-    show_table(display_df, sty, caption='Tabela (11 trechos × 5 ADVPs = até 55 pesquisas)')
+    show_table(display_df, sty)
 
     to_xlsx = io.BytesIO()
     try:
