@@ -1710,12 +1710,55 @@ def tab_tabela_pesquisa(df_raw: pd.DataFrame):
     display_df = display_df[cols_order].reset_index(drop=True)
 
     # Ordenar alfabeticamente por TRECHO ORIGEM conforme solicitado
-    if 'TRECHO ORIGEM' in display_df.columns:
-        # ordenar por TRECHO ORIGEM (A->Z) e dentro de cada origem por ADVP (menor->maior)
-        if 'ADVP' in display_df.columns:
-            display_df = display_df.sort_values(by=['TRECHO ORIGEM', 'ADVP'], key=lambda s: s.fillna('').str.upper() if s.dtype == object else s).reset_index(drop=True)
-        else:
-            display_df = display_df.sort_values(by='TRECHO ORIGEM', key=lambda s: s.fillna('').str.upper()).reset_index(drop=True)
+    # Ordenar por sequência customizada fornecida pelo usuário (TRECHO ORIGEM, TRECHO DESTINO, ADVP)
+    if 'TRECHO ORIGEM' in display_df.columns and 'TRECHO DESTINO' in display_df.columns and 'ADVP' in display_df.columns:
+        # lista explícita na ordem desejada
+        desired_seq = [
+            ("BEL","GRU",1),("BEL","GRU",5),("BEL","GRU",11),("BEL","GRU",17),("BEL","GRU",30),
+            ("BSB","GRU",1),("BSB","GRU",5),("BSB","GRU",11),("BSB","GRU",17),("BSB","GRU",30),
+            ("CGH","GIG",1),("CGH","GIG",5),("CGH","GIG",11),("CGH","GIG",17),("CGH","GIG",30),
+            ("CGH","REC",1),("CGH","REC",5),("CGH","REC",11),("CGH","REC",17),("CGH","REC",30),
+            ("FOR","GRU",1),("FOR","GRU",5),("FOR","GRU",11),("FOR","GRU",17),("FOR","GRU",30),
+            ("GIG","CGH",1),("GIG","CGH",5),("GIG","CGH",11),("GIG","CGH",17),("GIG","CGH",30),
+            ("GRU","MCZ",1),("GRU","MCZ",5),("GRU","MCZ",11),("GRU","MCZ",17),("GRU","MCZ",30),
+            ("GRU","REC",1),("GRU","REC",5),("GRU","REC",11),("GRU","REC",17),("GRU","REC",30),
+            ("GRU","SSA",1),("GRU","SSA",5),("GRU","SSA",11),("GRU","SSA",17),("GRU","SSA",30),
+            ("REC","GRU",1),("REC","GRU",5),("REC","GRU",11),("REC","GRU",17),("REC","GRU",30),
+            ("SAO","MCZ",1),("SAO","MCZ",5),("SAO","MCZ",11),("SAO","MCZ",17),("SAO","MCZ",30),
+        ]
+        order_map = {k: i for i, k in enumerate(desired_seq)}
+
+        def _row_order_key(row):
+            try:
+                o = str(row.get('TRECHO ORIGEM') or '').strip().upper()
+                d = str(row.get('TRECHO DESTINO') or '').strip().upper()
+                a = int(pd.to_numeric(row.get('ADVP'), errors='coerce')) if pd.notna(row.get('ADVP')) else None
+            except Exception:
+                return (len(order_map) + 1, )
+            key = (o, d, a)
+            if key in order_map:
+                return (order_map[key], 0, 0)
+            # fallback: place after desired seq; secondary sort by origem,dest,advp
+            return (len(order_map) + 1, o, d, a if a is not None else 9999)
+
+        display_df['_ORDER_KEY_'] = display_df.apply(_row_order_key, axis=1)
+        display_df = display_df.sort_values(by=['_ORDER_KEY_']).drop(columns=['_ORDER_KEY_']).reset_index(drop=True)
+        # aplicar mesma ordem ao export_df quando possível (buscar pela combinação)
+        if 'TRECHO ORIGEM' in export_df.columns and 'TRECHO DESTINO' in export_df.columns and 'ADVP' in export_df.columns:
+            export_df['_ORDIDX_'] = export_df.apply(lambda r: order_map.get((str(r.get('TRECHO ORIGEM') or '').strip().upper(), str(r.get('TRECHO DESTINO') or '').strip().upper(), int(pd.to_numeric(r.get('ADVP'), errors='coerce')) if pd.notna(r.get('ADVP')) else None), None), axis=1)
+            # rows with mapped index first (sorted by that), then others alphabetically
+            mapped = export_df[export_df['_ORDIDX_'].notna()].copy()
+            mapped = mapped.sort_values(by=['_ORDIDX_'])
+            unmapped = export_df[export_df['_ORDIDX_'].isna()].copy()
+            unmapped = unmapped.sort_values(by=['TRECHO ORIGEM', 'TRECHO DESTINO', 'ADVP'], key=lambda s: s.fillna('').astype(str).str.upper() if s.dtype==object else s)
+            export_df = pd.concat([mapped.drop(columns=['_ORDIDX_']), unmapped.drop(columns=['_ORDIDX_'])], axis=0).reset_index(drop=True)
+    else:
+        # fallback para ordenar por origem/alfa e ADVP
+        if 'TRECHO ORIGEM' in display_df.columns:
+            if 'ADVP' in display_df.columns:
+                display_df = display_df.sort_values(by=['TRECHO ORIGEM', 'ADVP'], key=lambda s: s.fillna('').str.upper() if s.dtype == object else s).reset_index(drop=True)
+            else:
+                display_df = display_df.sort_values(by='TRECHO ORIGEM', key=lambda s: s.fillna('').str.upper()).reset_index(drop=True)
 
     sty = style_smart_colwise(display_df, {
         'PREÇO': fmt_num0_br,
