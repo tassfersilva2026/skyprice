@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 import altair as alt
 import re
+import io
 
 # ─────────────────────────── CONFIG DA PÁGINA ────────────────────────────────
 st.set_page_config(page_title="Skyscanner — Painel", layout="wide", initial_sidebar_state="expanded")
@@ -117,6 +118,16 @@ def fmt_pct2_br(v):
     except Exception:
         return "-"
 
+def fmt_pct0_br(v):
+    """Formata um número para porcentagem arredondada sem casas decimais (ex: 3%)."""
+    try:
+        x = float(v)
+        if not np.isfinite(x):
+            return "-"
+        return f"{int(round(x))}%"
+    except Exception:
+        return "-"
+
 # ─────────────────────────── CARREGAMENTO DA BASE ────────────────────────────
 @st.cache_data(show_spinner=True)
 def load_base(path: Path) -> pd.DataFrame:
@@ -182,6 +193,17 @@ table { width:100% !important; }
 </style>
 """
 st.markdown(GLOBAL_TABLE_CSS, unsafe_allow_html=True)
+
+# Ajuste global de cabeçalhos: diminuir fonte e evitar quebra de linha
+GLOBAL_HEADER_CSS = """
+<style>
+table th { font-size:11px !important; white-space:nowrap !important; overflow:hidden !important; text-overflow:ellipsis !important; padding:4px 6px !important; }
+table td { font-size:12px !important; padding:6px 8px !important; }
+/* garantir que o conteúdo do cabeçalho seja truncado com reticências quando necessário */
+table th div, table th span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+</style>
+"""
+st.markdown(GLOBAL_HEADER_CSS, unsafe_allow_html=True)
 
 CARD_CSS = """
 <style>
@@ -1528,6 +1550,321 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
     top15 = base.groupby('TRECHO')['IDPESQUISA'].nunique().nlargest(15).index
     dft = base[base['TRECHO'].isin(top15)].copy()
     draw_chart(build_stacked(dft, 'TRECHO'), 'TRECHO', 'Trecho')
+
+
+@register_tab("TABELA DE PESQUISA")
+def tab_tabela_pesquisa(df_raw: pd.DataFrame):
+    """Tabela detalhada por pesquisa com colunas e downloads (XLSX/CSV).
+
+    Assunções razoáveis:
+    - Agrupamos por IDPESQUISA + TRECHO + ADVP_CANON para obter o menor preço por pesquisa/trecho/advp.
+    - TRECHO é uma string que contém códigos IATA (ex: 'GRU REC' ou 'GRU-REC'); tentamos extrair os dois códigos.
+    """
+    df = render_filters(df_raw, key_prefix="t8")
+    if df.empty:
+        st.info("Sem resultados para os filtros selecionados.")
+        return
+
+    work = df.copy()
+    work['ADVP_CANON'] = work.get('ADVP_CANON', work.get('ADVP'))
+    work['TRECHO'] = work.get('TRECHO', '').astype(str)
+    work['AGENCIA_NORM'] = work.get('AGENCIA_NORM', work.get('AGENCIA_COMP', '')).astype(str)
+    work['CIA_NORM'] = work.get('CIA_NORM', work.get('CIA', '')).astype(str)
+
+    # Selecionar top 11 trechos por número de pesquisas (IDPESQUISA distintas)
+    top_trechos = work.groupby('TRECHO')['IDPESQUISA'].nunique().sort_values(ascending=False).head(11).index.tolist()
+    if len(top_trechos) < 11:
+        restantes = [t for t in work['TRECHO'].dropna().astype(str).unique().tolist() if t not in top_trechos]
+        top_trechos += restantes[: max(0, 11 - len(top_trechos))]
+
+    # ADVP buckets fixos (5 por trecho)
+    advp_buckets = [1, 5, 11, 17, 30]
+
+    rows_out = []
+    # para cada trecho+advp, escolher a última pesquisa (DATAHORA_BUSCA) e extrair preços mínimos naquela pesquisa
+    for trecho in top_trechos:
+        for advp in advp_buckets:
+            sub = work[(work['TRECHO'] == trecho) & (pd.to_numeric(work['ADVP_CANON'], errors='coerce') == advp)].copy()
+            if sub.empty:
+                # se não houver essa combinação, pula
+                continue
+            # escolher a última pesquisa (por DATAHORA_BUSCA ou __DTKEY__)
+            if '__DTKEY__' in sub.columns and sub['__DTKEY__'].notna().any():
+                last_idx = sub['__DTKEY__'].idxmax()
+            else:
+                # fallback para DATAHORA_BUSCA
+                last_idx = sub['DATAHORA_BUSCA'].dropna().index.max() if sub['DATAHORA_BUSCA'].notna().any() else sub.index.max()
+            last_id = sub.loc[last_idx, 'IDPESQUISA'] if pd.notna(last_idx) else None
+            if last_id is None:
+                continue
+            # linhas pertencentes a essa pesquisa (filtrar por IDPESQUISA)
+            rows_pesq = work[(work['IDPESQUISA'] == last_id) & (work['TRECHO'] == trecho) & (pd.to_numeric(work['ADVP_CANON'], errors='coerce') == advp)].copy()
+            if rows_pesq.empty:
+                # fallback: pegar as linhas do trecho+advp independ. de id
+                rows_pesq = sub.copy()
+
+            # preço mais barato e empresa responsável
+            rows_pesq['PRECO_NUM'] = pd.to_numeric(rows_pesq['PRECO'], errors='coerce')
+            if rows_pesq['PRECO_NUM'].notna().any():
+                min_price = float(rows_pesq['PRECO_NUM'].min())
+                min_row = rows_pesq.loc[rows_pesq['PRECO_NUM'].idxmin()]
+                empresa_min = str(min_row.get('AGENCIA_NORM', ''))
+                cia_voo = str(min_row.get('CIA_NORM', ''))
+            else:
+                min_price = np.nan; empresa_min = ''; cia_voo = ''
+
+            # preços por agência específicas (se apareceram nessa pesquisa)
+            def get_ag_price(df_sub, ag_name):
+                dfx = df_sub[df_sub['AGENCIA_NORM'].str.upper() == ag_name.upper()]
+                v = pd.to_numeric(dfx['PRECO'], errors='coerce')
+                return float(v.min()) if v.notna().any() else np.nan
+
+            price_123 = get_ag_price(rows_pesq, '123MILHAS')
+            price_max = get_ag_price(rows_pesq, 'MAXMILHAS')
+            price_flip = get_ag_price(rows_pesq, 'FLIPMILHAS')
+
+            # data/hora e data embarque
+            dt_busca = (pd.to_datetime(rows_pesq['DATAHORA_BUSCA'], errors='coerce').max() if 'DATAHORA_BUSCA' in rows_pesq.columns else pd.NaT)
+            dt_emb = (pd.to_datetime(rows_pesq['DATA_EMBARQUE'], dayfirst=True, errors='coerce').min() if 'DATA_EMBARQUE' in rows_pesq.columns else pd.NaT)
+
+            rows_out.append({
+                'IDPESQUISA': last_id,
+                'TRECHO': trecho,
+                'ADVP': advp,
+                'DATAHORA_BUSCA': dt_busca,
+                'DATA_EMBARQUE': dt_emb,
+                'PRECO': min_price,
+                'CIA_DO_VOO': cia_voo,
+                'EMPRESA': empresa_min,
+                '123MILHAS': price_123,
+                'MAXMILHAS': price_max,
+                'FLIPMILHAS': price_flip,
+            })
+
+    out_df = pd.DataFrame(rows_out)
+
+    # Extrair ORIGEM e DESTINO seguindo sua regra: se TRECHO estiver concatenado (ex: BELGRU), usar 1-3 e 4-6
+    def parse_origem_destino(t: str) -> tuple[str, str]:
+        s = str(t or '').strip().upper()
+        if len(s) >= 6 and re.match(r'^[A-Z]{6}$', s):
+            return s[0:3], s[3:6]
+        found = re.findall(r"[A-Z]{3}", s)
+        if len(found) >= 2:
+            return found[0], found[1]
+        # try split by non-alnum
+        parts = re.split(r'[^A-Z0-9]+', s)
+        parts = [p for p in parts if p]
+        if len(parts) >= 2:
+            return parts[0][0:3], parts[1][0:3]
+        # fallback: first 3 and next 3 if possible
+        if len(s) >= 6:
+            return s[0:3], s[3:6]
+        return s[0:3], ''
+
+    if not out_df.empty:
+        out_df['TRECHO ORIGEM'] = out_df['TRECHO'].apply(lambda x: parse_origem_destino(x)[0])
+        out_df['TRECHO DESTINO'] = out_df['TRECHO'].apply(lambda x: parse_origem_destino(x)[1])
+
+    # Cálculo %: seguiremos (other - base)/base * 100, usando FLIP como base para 123XFLIP e PRECO (menor) como base para 123 X MENOR PREÇO
+    def pct(base, other):
+        try:
+            if pd.isna(base) or pd.isna(other) or base == 0:
+                return np.nan
+            return (other - base) / base * 100
+        except Exception:
+            return np.nan
+
+    out_df['123XFLIP (%)'] = out_df.apply(lambda r: pct(r.get('FLIPMILHAS'), r.get('123MILHAS')), axis=1)
+    out_df['MAX X FLIP (%)'] = out_df.apply(lambda r: pct(r.get('FLIPMILHAS'), r.get('MAXMILHAS')), axis=1)
+    out_df['123 X MENOR PREÇO (%)'] = out_df.apply(lambda r: pct(r.get('PRECO'), r.get('123MILHAS')), axis=1)
+
+    # Formatação para exibição
+    display_df = out_df.rename(columns={
+        'DATAHORA_BUSCA': 'DATA+ HORA DA PESQUISA',
+        'TRECHO ORIGEM': 'TRECHO ORIGEM', 'TRECHO DESTINO': 'TRECHO DESTINO',
+        'ADVP': 'ADVP', 'DATA_EMBARQUE': 'DATA DE EMBARQUE',
+        'PRECO': 'PREÇO', 'CIA_DO_VOO': 'CIA DO VOO', 'EMPRESA': 'EMPRESA',
+        '123MILHAS': 'PREÇO 123MILHAS', 'MAXMILHAS': 'PREÇOMAXMILHAS', 'FLIPMILHAS': 'PREÇO FLIPMILHAS'
+    })
+
+    def fmt_dt(v):
+        try:
+            return pd.to_datetime(v).strftime('%d/%m/%Y %H:%M:%S')
+        except Exception:
+            return '-'
+
+    if 'DATA+ HORA DA PESQUISA' in display_df.columns:
+        display_df['DATA+ HORA DA PESQUISA'] = display_df['DATA+ HORA DA PESQUISA'].apply(fmt_dt)
+    if 'DATA DE EMBARQUE' in display_df.columns:
+        display_df['DATA DE EMBARQUE'] = display_df['DATA DE EMBARQUE'].apply(lambda v: pd.to_datetime(v).strftime('%d/%m/%Y') if pd.notna(v) else '-')
+
+    cols_order = [
+        'DATA+ HORA DA PESQUISA', 'TRECHO ORIGEM', 'TRECHO DESTINO', 'ADVP', 'DATA DE EMBARQUE',
+        'PREÇO', 'CIA DO VOO', 'EMPRESA', 'PREÇO 123MILHAS', 'PREÇOMAXMILHAS', 'PREÇO FLIPMILHAS',
+        '123XFLIP (%)', 'MAX X FLIP (%)', '123 X MENOR PREÇO (%)'
+    ]
+    for c in cols_order:
+        if c not in display_df.columns:
+            display_df[c] = np.nan
+
+    display_df = display_df[cols_order].reset_index(drop=True)
+
+    # Preparar DataFrame de exportação (mantém tipos numéricos e datetimes para XLSX)
+    export_df = out_df.copy()
+    # garantir colunas de origem/destino caso não existam
+    if 'TRECHO ORIGEM' not in export_df.columns and 'TRECHO ORIGEM' in display_df.columns:
+        export_df['TRECHO ORIGEM'] = display_df['TRECHO ORIGEM']
+    if 'TRECHO DESTINO' not in export_df.columns and 'TRECHO DESTINO' in display_df.columns:
+        export_df['TRECHO DESTINO'] = display_df['TRECHO DESTINO']
+
+    # Ordenar alfabeticamente por TRECHO ORIGEM conforme solicitado
+    # Ordenar por sequência customizada fornecida pelo usuário (TRECHO ORIGEM, TRECHO DESTINO, ADVP)
+    if 'TRECHO ORIGEM' in display_df.columns and 'TRECHO DESTINO' in display_df.columns and 'ADVP' in display_df.columns:
+        # lista explícita na ordem desejada
+        desired_seq = [
+            ("BEL","GRU",1),("BEL","GRU",5),("BEL","GRU",11),("BEL","GRU",17),("BEL","GRU",30),
+            ("BSB","GRU",1),("BSB","GRU",5),("BSB","GRU",11),("BSB","GRU",17),("BSB","GRU",30),
+            ("CGH","GIG",1),("CGH","GIG",5),("CGH","GIG",11),("CGH","GIG",17),("CGH","GIG",30),
+            ("CGH","REC",1),("CGH","REC",5),("CGH","REC",11),("CGH","REC",17),("CGH","REC",30),
+            ("FOR","GRU",1),("FOR","GRU",5),("FOR","GRU",11),("FOR","GRU",17),("FOR","GRU",30),
+            ("GIG","CGH",1),("GIG","CGH",5),("GIG","CGH",11),("GIG","CGH",17),("GIG","CGH",30),
+            ("GRU","MCZ",1),("GRU","MCZ",5),("GRU","MCZ",11),("GRU","MCZ",17),("GRU","MCZ",30),
+            ("GRU","REC",1),("GRU","REC",5),("GRU","REC",11),("GRU","REC",17),("GRU","REC",30),
+            ("GRU","SSA",1),("GRU","SSA",5),("GRU","SSA",11),("GRU","SSA",17),("GRU","SSA",30),
+            ("REC","GRU",1),("REC","GRU",5),("REC","GRU",11),("REC","GRU",17),("REC","GRU",30),
+            ("SAO","MCZ",1),("SAO","MCZ",5),("SAO","MCZ",11),("SAO","MCZ",17),("SAO","MCZ",30),
+        ]
+        order_map = {k: i for i, k in enumerate(desired_seq)}
+
+        def _row_order_key(row):
+            try:
+                o = str(row.get('TRECHO ORIGEM') or '').strip().upper()
+                d = str(row.get('TRECHO DESTINO') or '').strip().upper()
+                a = int(pd.to_numeric(row.get('ADVP'), errors='coerce')) if pd.notna(row.get('ADVP')) else None
+            except Exception:
+                return (len(order_map) + 1, )
+            key = (o, d, a)
+            if key in order_map:
+                return (order_map[key], 0, 0)
+            # fallback: place after desired seq; secondary sort by origem,dest,advp
+            return (len(order_map) + 1, o, d, a if a is not None else 9999)
+
+        display_df['_ORDER_KEY_'] = display_df.apply(_row_order_key, axis=1)
+        display_df = display_df.sort_values(by=['_ORDER_KEY_']).drop(columns=['_ORDER_KEY_']).reset_index(drop=True)
+        # aplicar mesma ordem ao export_df quando possível (buscar pela combinação)
+        if 'TRECHO ORIGEM' in export_df.columns and 'TRECHO DESTINO' in export_df.columns and 'ADVP' in export_df.columns:
+            export_df['_ORDIDX_'] = export_df.apply(lambda r: order_map.get((str(r.get('TRECHO ORIGEM') or '').strip().upper(), str(r.get('TRECHO DESTINO') or '').strip().upper(), int(pd.to_numeric(r.get('ADVP'), errors='coerce')) if pd.notna(r.get('ADVP')) else None), None), axis=1)
+            # rows with mapped index first (sorted by that), then others alphabetically
+            mapped = export_df[export_df['_ORDIDX_'].notna()].copy()
+            mapped = mapped.sort_values(by=['_ORDIDX_'])
+            unmapped = export_df[export_df['_ORDIDX_'].isna()].copy()
+            unmapped = unmapped.sort_values(by=['TRECHO ORIGEM', 'TRECHO DESTINO', 'ADVP'], key=lambda s: s.fillna('').astype(str).str.upper() if s.dtype==object else s)
+            export_df = pd.concat([mapped.drop(columns=['_ORDIDX_']), unmapped.drop(columns=['_ORDIDX_'])], axis=0).reset_index(drop=True)
+    else:
+        # fallback para ordenar por origem/alfa e ADVP
+        if 'TRECHO ORIGEM' in display_df.columns:
+            if 'ADVP' in display_df.columns:
+                display_df = display_df.sort_values(by=['TRECHO ORIGEM', 'ADVP'], key=lambda s: s.fillna('').str.upper() if s.dtype == object else s).reset_index(drop=True)
+            else:
+                display_df = display_df.sort_values(by='TRECHO ORIGEM', key=lambda s: s.fillna('').str.upper()).reset_index(drop=True)
+
+    sty = style_smart_colwise(display_df, {
+        'PREÇO': fmt_num0_br,
+        'PREÇO 123MILHAS': fmt_num0_br, 'PREÇOMAXMILHAS': fmt_num0_br, 'PREÇO FLIPMILHAS': fmt_num0_br,
+        '123XFLIP (%)': fmt_pct0_br, 'MAX X FLIP (%)': fmt_pct0_br, '123 X MENOR PREÇO (%)': fmt_pct0_br,
+    }, grad_cols=['PREÇO', 'PREÇO 123MILHAS', 'PREÇOMAXMILHAS', 'PREÇO FLIPMILHAS'])
+    # Aplicar estilo ternário para colunas percentuais: negativo->vermelho, zero/NaN->cinza, positivo->verde
+    pct_cols_style = ['123XFLIP (%)', 'MAX X FLIP (%)', '123 X MENOR PREÇO (%)']
+    def _ternary_pct_col(col_series: pd.Series):
+        out = []
+        for v in col_series:
+            try:
+                vv = float(v)
+            except Exception:
+                out.append('background-color:#E6E6E6; color:#111827')
+                continue
+            if np.isnan(vv) or vv == 0:
+                out.append('background-color:#E6E6E6; color:#111827')
+            elif vv < 0:
+                out.append('background-color:#FFD6D6; color:#9B1C1C')
+            else:
+                out.append('background-color:#D1FADF; color:#064E3B')
+        return out
+
+    # sty é um Styler; aplicamos por coluna existente
+    for col in pct_cols_style:
+        if col in display_df.columns:
+            try:
+                sty = sty.apply(lambda s: _ternary_pct_col(s) , subset=[col])
+            except Exception:
+                # se aplicar falhar, continuar sem a camada extra
+                pass
+
+    # (export_df is already prepared above)
+
+    # renomear colunas para o arquivo exportado (sem formatar percentuais como strings)
+    rename_map_export = {
+        'DATAHORA_BUSCA': 'DATA+ HORA DA PESQUISA',
+        'TRECHO': 'TRECHO',
+        'ADVP': 'ADVP',
+        'DATA_EMBARQUE': 'DATA DE EMBARQUE',
+        'PRECO': 'PREÇO',
+        'CIA_DO_VOO': 'CIA DO VOO',
+        'EMPRESA': 'EMPRESA',
+        '123MILHAS': 'PREÇO 123MILHAS',
+        'MAXMILHAS': 'PREÇOMAXMILHAS',
+        'FLIPMILHAS': 'PREÇO FLIPMILHAS',
+        'TRECHO ORIGEM': 'TRECHO ORIGEM',
+        'TRECHO DESTINO': 'TRECHO DESTINO'
+    }
+    export_df = export_df.rename(columns=rename_map_export)
+    # selecionar mesmas colunas na ordem de exibição (se existirem)
+    export_cols = [c for c in [
+        'DATA+ HORA DA PESQUISA', 'TRECHO ORIGEM', 'TRECHO DESTINO', 'ADVP', 'DATA DE EMBARQUE',
+        'PREÇO', 'CIA DO VOO', 'EMPRESA', 'PREÇO 123MILHAS', 'PREÇOMAXMILHAS', 'PREÇO FLIPMILHAS',
+        '123XFLIP (%)', 'MAX X FLIP (%)', '123 X MENOR PREÇO (%)'
+    ] if c in export_df.columns]
+    export_df = export_df[export_cols]
+
+    # Antes de exportar, converter colunas percentuais do formato 'porcentagem em %' (ex: 2.157 => 2.157%)
+    # para fração (ex: 0.02157) para que, ao aplicar formato % no Excel, o valor apareça corretamente.
+    export_df_for_file = export_df.copy()
+    pct_cols_export = [c for c in ['123XFLIP (%)', 'MAX X FLIP (%)', '123 X MENOR PREÇO (%)'] if c in export_df_for_file.columns]
+    for c in pct_cols_export:
+        # garantir numérico e dividir por 100 (2.157 -> 0.02157). Arredondar para 6 casas decimais para evitar excesso de casas.
+        export_df_for_file[c] = pd.to_numeric(export_df_for_file[c], errors='coerce')
+        export_df_for_file[c] = export_df_for_file[c].apply(lambda x: round(float(x) / 100, 6) if pd.notna(x) else x)
+
+    # CSV com BOM UTF-8 e separador ponto-e-vírgula para compatibilidade com Excel regional
+    csv_bytes = export_df_for_file.to_csv(index=False, sep=';', decimal=',', encoding='utf-8-sig').encode('utf-8-sig')
+    # coloca o botão no topo direito usando columns antes da tabela
+    c1, c2, c3 = st.columns([1, 1, 0.2])
+    with c3:
+        st.download_button('Baixar CSV', data=csv_bytes, file_name='tabela_pesquisa.csv', mime='text/csv', key='dl_csv_tabela')
+
+    show_table(display_df, sty)
+
+    # Gerar XLSX: tenta openpyxl, depois xlsxwriter; se ambos falharem, exibe erro
+    to_xlsx = io.BytesIO()
+    xlsx_written = False
+    for engine in ("openpyxl", "xlsxwriter"):
+        try:
+            with pd.ExcelWriter(to_xlsx, engine=engine) as writer:
+                # escreve export_df (tipos preservados)
+                # escrever a versão preparada para arquivo (percentuais como fração)
+                export_df_for_file.to_excel(writer, index=False, sheet_name='TABELA_PESQUISA')
+            xlsx_written = True
+            break
+        except Exception:
+            # reset buffer and tentar próximo engine
+            to_xlsx = io.BytesIO()
+            continue
+    if xlsx_written:
+        to_xlsx.seek(0)
+        st.download_button('Baixar XLSX', data=to_xlsx.read(), file_name='tabela_pesquisa.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    else:
+        # silencioso: não exibir mensagem, CSV está disponível
+        pass
 
 # ================================ MAIN ========================================
 def main():
