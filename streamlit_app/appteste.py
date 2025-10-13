@@ -1749,8 +1749,40 @@ def tab_tabela_pesquisa(df_raw: pd.DataFrame):
                 # se aplicar falhar, continuar sem a camada extra
                 pass
 
-    # Downloads: botão CSV discreto no topo direito (sempre com separador ",")
-    csv_bytes = display_df.to_csv(index=False, sep=',', decimal=',').encode('utf-8')
+    # Preparar DataFrame de exportação (mantém tipos numéricos e datetimes para XLSX)
+    export_df = out_df.copy()
+    # garantir colunas de origem/destino caso não existam
+    if 'TRECHO ORIGEM' not in export_df.columns and 'TRECHO ORIGEM' in display_df.columns:
+        export_df['TRECHO ORIGEM'] = display_df['TRECHO ORIGEM']
+    if 'TRECHO DESTINO' not in export_df.columns and 'TRECHO DESTINO' in display_df.columns:
+        export_df['TRECHO DESTINO'] = display_df['TRECHO DESTINO']
+
+    # renomear colunas para o arquivo exportado (sem formatar percentuais como strings)
+    rename_map_export = {
+        'DATAHORA_BUSCA': 'DATA+ HORA DA PESQUISA',
+        'TRECHO': 'TRECHO',
+        'ADVP': 'ADVP',
+        'DATA_EMBARQUE': 'DATA DE EMBARQUE',
+        'PRECO': 'PREÇO',
+        'CIA_DO_VOO': 'CIA DO VOO',
+        'EMPRESA': 'EMPRESA',
+        '123MILHAS': 'PREÇO 123MILHAS',
+        'MAXMILHAS': 'PREÇOMAXMILHAS',
+        'FLIPMILHAS': 'PREÇO FLIPMILHAS',
+        'TRECHO ORIGEM': 'TRECHO ORIGEM',
+        'TRECHO DESTINO': 'TRECHO DESTINO'
+    }
+    export_df = export_df.rename(columns=rename_map_export)
+    # selecionar mesmas colunas na ordem de exibição (se existirem)
+    export_cols = [c for c in [
+        'DATA+ HORA DA PESQUISA', 'TRECHO ORIGEM', 'TRECHO DESTINO', 'ADVP', 'DATA DE EMBARQUE',
+        'PREÇO', 'CIA DO VOO', 'EMPRESA', 'PREÇO 123MILHAS', 'PREÇOMAXMILHAS', 'PREÇO FLIPMILHAS',
+        '123XFLIP (%)', 'MAX X FLIP (%)', '123 X MENOR PREÇO (%)'
+    ] if c in export_df.columns]
+    export_df = export_df[export_cols]
+
+    # CSV com BOM UTF-8 para compatibilidade com Excel no Windows
+    csv_bytes = export_df.to_csv(index=False, sep=',', encoding='utf-8-sig').encode('utf-8-sig')
     # coloca o botão no topo direito usando columns antes da tabela
     c1, c2, c3 = st.columns([1, 1, 0.2])
     with c3:
@@ -1758,15 +1790,25 @@ def tab_tabela_pesquisa(df_raw: pd.DataFrame):
 
     show_table(display_df, sty)
 
+    # Gerar XLSX: tenta openpyxl, depois xlsxwriter; se ambos falharem, exibe erro
     to_xlsx = io.BytesIO()
-    try:
-        with pd.ExcelWriter(to_xlsx, engine='openpyxl') as writer:
-            display_df.to_excel(writer, index=False, sheet_name='TABELA_PESQUISA')
+    xlsx_written = False
+    for engine in ("openpyxl", "xlsxwriter"):
+        try:
+            with pd.ExcelWriter(to_xlsx, engine=engine) as writer:
+                # escreve export_df (tipos preservados)
+                export_df.to_excel(writer, index=False, sheet_name='TABELA_PESQUISA')
+            xlsx_written = True
+            break
+        except Exception:
+            # reset buffer and tentar próximo engine
+            to_xlsx = io.BytesIO()
+            continue
+    if xlsx_written:
         to_xlsx.seek(0)
         st.download_button('Baixar XLSX', data=to_xlsx.read(), file_name='tabela_pesquisa.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-    except Exception:
-        # Se não for possível gerar XLSX (biblioteca ausente), não exibir mensagem — CSV já disponível
-        pass
+    else:
+        st.error('Não foi possível gerar arquivo Excel (XLSX). Baixe o CSV.')
 
 # ================================ MAIN ========================================
 def main():
