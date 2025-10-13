@@ -8,6 +8,18 @@ import streamlit as st
 import altair as alt
 import re
 import io
+from zipfile import ZipFile
+from typing import Optional
+import html
+
+# Google Drive API imports (optional). If not installed, features ficarão desativadas com instrução ao usuário.
+try:
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaIoBaseDownload
+    DRIVE_AVAILABLE = True
+except Exception:
+    DRIVE_AVAILABLE = False
 
 # ─────────────────────────── CONFIG DA PÁGINA ────────────────────────────────
 st.set_page_config(page_title="Skyscanner — Painel", layout="wide", initial_sidebar_state="expanded")
@@ -1783,12 +1795,201 @@ def tab_tabela_pesquisa(df_raw: pd.DataFrame):
 
     # CSV com BOM UTF-8 e separador ponto-e-vírgula para compatibilidade com Excel regional
     csv_bytes = export_df.to_csv(index=False, sep=';', decimal=',', encoding='utf-8-sig').encode('utf-8-sig')
+
+    # ---------- Google Drive: busca e download de PDFs (opcional) ----------
+    st.markdown("---")
+    st.markdown("### PDFs (Google Drive)")
+    if not DRIVE_AVAILABLE:
+        st.info("Funcionalidade de download de PDFs via Google Drive desativada. Instale: google-api-python-client google-auth");
+        st.markdown("`pip install google-api-python-client google-auth`", unsafe_allow_html=True)
+    else:
+        # Inputs: folder ID e credenciais (service account JSON) — ambos opcionais, mas necessários para listar/download
+        col_f1, col_f2 = st.columns([2, 1])
+        with col_f1:
+            folder_id = st.text_input("Google Drive Folder ID", value="", help="ID da pasta (ex: parte após /folders/ na URL)")
+        with col_f2:
+            creds_file = st.file_uploader("Service Account JSON (opcional)", type=["json"], help="Upload do JSON da conta de serviço para autenticação")
+
+        service = None
+        if folder_id:
+            # construir service se credenciais disponíveis
+            try:
+                creds = None
+                if creds_file is not None:
+                    info = creds_file.read()
+                    creds = service_account.Credentials.from_service_account_info(__import__('json').loads(info), scopes=["https://www.googleapis.com/auth/drive.readonly"])
+                else:
+                    # utiliza credenciais padrão do ambiente (ADC)
+                    creds = None
+                service = build('drive', 'v3', credentials=creds) if creds is not None else build('drive', 'v3')
+            except Exception as e:
+                st.error(f"Falha ao criar cliente Google Drive: {e}")
+                service = None
+
+        drive_index = {}
+        if folder_id and service is not None:
+            # listar arquivos na pasta (até 1000)
+            try:
+                res = service.files().list(q=f"'{folder_id}' in parents and trashed=false",
+                                           fields='files(id,name,mimeType,webViewLink,webContentLink)', pageSize=1000).execute()
+                files = res.get('files', [])
+                drive_index = {f['name']: f for f in files}
+                st.success(f"{len(files)} arquivos encontrados na pasta")
+            except Exception as e:
+                st.error(f"Erro ao listar arquivos na pasta: {e}")
+                drive_index = {}
+
+        # Seleção de linhas para download de PDF
+        if not export_df.empty:
+            sel_label = export_df.apply(lambda r: f"{r.get('TRECHO ORIGEM','')}-{r.get('TRECHO DESTINO','')} ADVP{int(r.get('ADVP') if pd.notna(r.get('ADVP')) else 0)} - {r.get('IDPESQUISA','')}", axis=1)
+            sel_map = {lbl: idx for idx, lbl in enumerate(sel_label.tolist())}
+            choose = st.multiselect("Selecionar pesquisas para baixar PDF (se houver)", options=list(sel_map.keys()), default=[]) 
+            if choose and folder_id and service is not None:
+                if st.button("Baixar PDFs selecionados (zip)"):
+                    # montar zip em memória
+                    zip_buf = io.BytesIO()
+                    with ZipFile(zip_buf, 'w') as zf:
+                        for lbl in choose:
+                            idx = sel_map[lbl]
+                            row = export_df.iloc[idx]
+                            # nome do arquivo está na coluna A do parquet — tentar localizar col 'A' ou 'NOME_ARQUIVO' ou usar valor IDPESQUISA
+                            fname_candidates = []
+                            for coln in ['A', 'NOME_ARQUIVO', 'NOME_ARQUIVO_STD', 'IDPESQUISA']:
+                                if coln in df.columns and pd.notna(df.iloc[idx].get(coln)):
+                                    fname_candidates.append(str(df.iloc[idx].get(coln)))
+                            # também tentar compor nome padrão a partir do TRECHO+ADVP+DATA etc
+                            # prioridade: procurar pelo campo exatamente igual ao nome no drive
+                            found = None
+                            for cand in fname_candidates:
+                                if cand in drive_index:
+                                    found = drive_index[cand]
+                                    break
+                            if not found:
+                                # tentar variações (ex: adicionar .pdf)
+                                for cand in fname_candidates:
+                                    key = cand if cand.endswith('.pdf') else cand + '.pdf'
+                                    if key in drive_index:
+                                        found = drive_index[key]; break
+                            if not found:
+                                # pular se não encontrado
+                                continue
+                            file_id = found['id']
+                            # download em bytes
+                            try:
+                                request = service.files().get_media(fileId=file_id)
+                                fh = io.BytesIO()
+                                downloader = MediaIoBaseDownload(fh, request)
+                                done = False
+                                while not done:
+                                    status, done = downloader.next_chunk()
+                                fh.seek(0)
+                                zf.writestr(found['name'], fh.read())
+                            except Exception as e:
+                                st.warning(f"Falha ao baixar {found.get('name')}: {e}")
+                    zip_buf.seek(0)
+                    st.download_button("Baixar ZIP com PDFs", data=zip_buf.read(), file_name='pdfs_selecionados.zip', mime='application/zip')
+
     # coloca o botão no topo direito usando columns antes da tabela
     c1, c2, c3 = st.columns([1, 1, 0.2])
     with c3:
         st.download_button('Baixar CSV', data=csv_bytes, file_name='tabela_pesquisa.csv', mime='text/csv', key='dl_csv_tabela')
 
-    show_table(display_df, sty)
+    # ---------- Renderizar tabela com link clicável na coluna de data (se houver arquivo no Drive) ----------
+    # Construir mapeamento de links para cada linha usando IDPESQUISA/TRECHO/ADVP
+    def _find_file_link_for_row(idpesquisa, trecho, advp) -> Optional[str]:
+        # procura por nomes do arquivo nas linhas do dataset original (work)
+        try:
+            candidates_cols = [c for c in ['A', 'NOME_ARQUIVO', 'NOME_ARQUIVO_STD', 'NOME DO ARQUIVO', 'ARQUIVO'] if c in work.columns]
+            # filtrar linhas correspondentes à pesquisa e trecho/advp
+            mask = (work.get('IDPESQUISA').astype(str) == str(idpesquisa))
+            if trecho is not None:
+                mask &= (work.get('TRECHO', '').astype(str) == str(trecho))
+            try:
+                mask &= (pd.to_numeric(work.get('ADVP_CANON'), errors='coerce') == float(advp))
+            except Exception:
+                pass
+            rows = work[mask]
+            # se não houver linhas combinando, tentar por IDPESQUISA apenas
+            if rows.empty:
+                rows = work[work.get('IDPESQUISA').astype(str) == str(idpesquisa)]
+            for _, r in rows.iterrows():
+                for coln in candidates_cols:
+                    val = r.get(coln)
+                    if pd.isna(val):
+                        continue
+                    s = str(val).strip()
+                    if not s:
+                        continue
+                    # tentar correspondência exata
+                    if s in drive_index:
+                        meta = drive_index[s]
+                        return meta.get('webViewLink') or f"https://drive.google.com/file/d/{meta.get('id')}/view"
+                    # tentar com .pdf
+                    key = s if s.lower().endswith('.pdf') else s + '.pdf'
+                    if key in drive_index:
+                        meta = drive_index[key]
+                        return meta.get('webViewLink') or f"https://drive.google.com/file/d/{meta.get('id')}/view"
+            # nenhuma correspondência encontrada
+            return None
+        except Exception:
+            return None
+
+    # montar HTML manualmente para permitir <a href=> na célula de data
+    def _fmt_cell(col, val):
+        # percent columns formatted with fmt_pct0_br, preço with fmt_num0_br, datas já estão strings
+        if col in ('PREÇO', 'PREÇO 123MILHAS', 'PREÇOMAXMILHAS', 'PREÇO FLIPMILHAS'):
+            return html.escape(fmt_num0_br(val))
+        if col in ('123XFLIP (%)', 'MAX X FLIP (%)', '123 X MENOR PREÇO (%)'):
+            v = val
+            try:
+                if pd.isna(v):
+                    return '<span style="color:#6b7280">-</span>'
+                vv = float(v)
+            except Exception:
+                return '<span style="color:#6b7280">-</span>'
+            txt = fmt_pct0_br(vv)
+            if np.isnan(vv) or vv == 0:
+                style = 'background-color:#E6E6E6; color:#111827; padding:2px 6px; border-radius:4px;'
+            elif vv < 0:
+                style = 'background-color:#FFD6D6; color:#9B1C1C; padding:2px 6px; border-radius:4px;'
+            else:
+                style = 'background-color:#D1FADF; color:#064E3B; padding:2px 6px; border-radius:4px;'
+            return f'<span style="{style}">{html.escape(txt)}</span>'
+        # default: escape string
+        return html.escape(str(val) if pd.notna(val) else '-')
+
+    # headers
+    headers = [html.escape(c) for c in display_df.columns.tolist()]
+    rows_html = []
+    for i, r in display_df.iterrows():
+        # localizar link para esta pesquisa
+        idp = out_df.loc[i, 'IDPESQUISA'] if i in out_df.index else None
+        trecho = out_df.loc[i, 'TRECHO'] if i in out_df.index else None
+        advp = out_df.loc[i, 'ADVP'] if i in out_df.index else None
+        link = None
+        if DRIVE_AVAILABLE and folder_id and isinstance(drive_index, dict) and drive_index:
+            link = _find_file_link_for_row(idp, trecho, advp)
+        cells = []
+        for col in display_df.columns:
+            val = r[col]
+            if col == 'DATA+ HORA DA PESQUISA':
+                txt = html.escape(str(val))
+                if link:
+                    cell_html = f'<a href="{html.escape(link)}" target="_blank" style="color:#0B5FFF;text-decoration:underline">{txt}</a>'
+                else:
+                    cell_html = txt
+                cells.append(f"<td>{cell_html}</td>")
+            else:
+                cells.append(f"<td>{_fmt_cell(col, val)}</td>")
+        rows_html.append('<tr>' + ''.join(cells) + '</tr>')
+
+    table_html = (
+        '<div style="overflow:auto; max-width:100%;">'
+        + '<table style="width:100%; border-collapse:collapse; table-layout:fixed;">'
+        + '<thead><tr>' + ''.join([f'<th style="text-align:left; padding:6px 8px; font-size:11px; white-space:nowrap;">{h}</th>' for h in headers]) + '</tr></thead>'
+        + '<tbody>' + ''.join(rows_html) + '</tbody></table></div>'
+    )
+    st.markdown(table_html, unsafe_allow_html=True)
 
     # Gerar XLSX: tenta openpyxl, depois xlsxwriter; se ambos falharem, exibe erro
     to_xlsx = io.BytesIO()
