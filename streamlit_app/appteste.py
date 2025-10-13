@@ -118,6 +118,16 @@ def fmt_pct2_br(v):
     except Exception:
         return "-"
 
+def fmt_pct0_br(v):
+    """Formata um número para porcentagem arredondada sem casas decimais (ex: 3%)."""
+    try:
+        x = float(v)
+        if not np.isfinite(x):
+            return "-"
+        return f"{int(round(x))}%"
+    except Exception:
+        return "-"
+
 # ─────────────────────────── CARREGAMENTO DA BASE ────────────────────────────
 @st.cache_data(show_spinner=True)
 def load_base(path: Path) -> pd.DataFrame:
@@ -183,6 +193,15 @@ table { width:100% !important; }
 </style>
 """
 st.markdown(GLOBAL_TABLE_CSS, unsafe_allow_html=True)
+
+# Ajuste global de cabeçalhos: diminuir fonte e evitar quebra de linha
+GLOBAL_HEADER_CSS = """
+<style>
+table th { font-size:12px !important; white-space:nowrap !important; }
+table td { font-size:12px !important; }
+</style>
+"""
+st.markdown(GLOBAL_HEADER_CSS, unsafe_allow_html=True)
 
 CARD_CSS = """
 <style>
@@ -1692,6 +1711,7 @@ def tab_tabela_pesquisa(df_raw: pd.DataFrame):
     sty = style_smart_colwise(display_df, {
         'PREÇO': fmt_num0_br,
         'PREÇO 123MILHAS': fmt_num0_br, 'PREÇOMAXMILHAS': fmt_num0_br, 'PREÇO FLIPMILHAS': fmt_num0_br,
+        '123XFLIP (%)': fmt_pct0_br, 'MAX X FLIP (%)': fmt_pct0_br, '123 X MENOR PREÇO (%)': fmt_pct0_br,
     }, grad_cols=['PREÇO', 'PREÇO 123MILHAS', 'PREÇOMAXMILHAS', 'PREÇO FLIPMILHAS'])
     show_table(display_df, sty, caption='Tabela (11 trechos × 5 ADVPs = até 55 pesquisas)')
 
