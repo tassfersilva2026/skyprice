@@ -1781,8 +1781,8 @@ def tab_tabela_pesquisa(df_raw: pd.DataFrame):
     ] if c in export_df.columns]
     export_df = export_df[export_cols]
 
-    # CSV com BOM UTF-8 para compatibilidade com Excel no Windows
-    csv_bytes = export_df.to_csv(index=False, sep=',', encoding='utf-8-sig').encode('utf-8-sig')
+    # CSV com BOM UTF-8 e separador ponto-e-vírgula para compatibilidade com Excel regional
+    csv_bytes = export_df.to_csv(index=False, sep=';', decimal=',', encoding='utf-8-sig').encode('utf-8-sig')
     # coloca o botão no topo direito usando columns antes da tabela
     c1, c2, c3 = st.columns([1, 1, 0.2])
     with c3:
@@ -1808,7 +1808,8 @@ def tab_tabela_pesquisa(df_raw: pd.DataFrame):
         to_xlsx.seek(0)
         st.download_button('Baixar XLSX', data=to_xlsx.read(), file_name='tabela_pesquisa.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     else:
-        st.error('Não foi possível gerar arquivo Excel (XLSX). Baixe o CSV.')
+        # silencioso: não exibir mensagem, CSV está disponível
+        pass
 
 # ================================ MAIN ========================================
 def main():
