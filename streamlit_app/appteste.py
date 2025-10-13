@@ -1723,13 +1723,15 @@ def tab_tabela_pesquisa(df_raw: pd.DataFrame):
         'PREÇO 123MILHAS': fmt_num0_br, 'PREÇOMAXMILHAS': fmt_num0_br, 'PREÇO FLIPMILHAS': fmt_num0_br,
         '123XFLIP (%)': fmt_pct0_br, 'MAX X FLIP (%)': fmt_pct0_br, '123 X MENOR PREÇO (%)': fmt_pct0_br,
     }, grad_cols=['PREÇO', 'PREÇO 123MILHAS', 'PREÇOMAXMILHAS', 'PREÇO FLIPMILHAS'])
-    show_table(display_df, sty, caption='Tabela (11 trechos × 5 ADVPs = até 55 pesquisas)')
-    # Downloads: botão CSV discreto no topo (sempre com separador ",")
+
+    # Downloads: botão CSV discreto no topo direito (sempre com separador ",")
     csv_bytes = display_df.to_csv(index=False, sep=',', decimal=',').encode('utf-8')
-    # coloca o botão mais discreto no topo direito usando columns
+    # coloca o botão no topo direito usando columns antes da tabela
     c1, c2, c3 = st.columns([1, 1, 0.2])
     with c3:
         st.download_button('Baixar CSV', data=csv_bytes, file_name='tabela_pesquisa.csv', mime='text/csv', key='dl_csv_tabela')
+
+    show_table(display_df, sty, caption='Tabela (11 trechos × 5 ADVPs = até 55 pesquisas)')
 
     to_xlsx = io.BytesIO()
     try:
