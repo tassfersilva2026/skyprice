@@ -1709,6 +1709,14 @@ def tab_tabela_pesquisa(df_raw: pd.DataFrame):
 
     display_df = display_df[cols_order].reset_index(drop=True)
 
+    # Preparar DataFrame de exportação (mantém tipos numéricos e datetimes para XLSX)
+    export_df = out_df.copy()
+    # garantir colunas de origem/destino caso não existam
+    if 'TRECHO ORIGEM' not in export_df.columns and 'TRECHO ORIGEM' in display_df.columns:
+        export_df['TRECHO ORIGEM'] = display_df['TRECHO ORIGEM']
+    if 'TRECHO DESTINO' not in export_df.columns and 'TRECHO DESTINO' in display_df.columns:
+        export_df['TRECHO DESTINO'] = display_df['TRECHO DESTINO']
+
     # Ordenar alfabeticamente por TRECHO ORIGEM conforme solicitado
     # Ordenar por sequência customizada fornecida pelo usuário (TRECHO ORIGEM, TRECHO DESTINO, ADVP)
     if 'TRECHO ORIGEM' in display_df.columns and 'TRECHO DESTINO' in display_df.columns and 'ADVP' in display_df.columns:
@@ -1792,13 +1800,7 @@ def tab_tabela_pesquisa(df_raw: pd.DataFrame):
                 # se aplicar falhar, continuar sem a camada extra
                 pass
 
-    # Preparar DataFrame de exportação (mantém tipos numéricos e datetimes para XLSX)
-    export_df = out_df.copy()
-    # garantir colunas de origem/destino caso não existam
-    if 'TRECHO ORIGEM' not in export_df.columns and 'TRECHO ORIGEM' in display_df.columns:
-        export_df['TRECHO ORIGEM'] = display_df['TRECHO ORIGEM']
-    if 'TRECHO DESTINO' not in export_df.columns and 'TRECHO DESTINO' in display_df.columns:
-        export_df['TRECHO DESTINO'] = display_df['TRECHO DESTINO']
+    # (export_df is already prepared above)
 
     # renomear colunas para o arquivo exportado (sem formatar percentuais como strings)
     rename_map_export = {
