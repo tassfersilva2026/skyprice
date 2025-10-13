@@ -1,12 +1,13 @@
 from __future__ import annotations
 from pathlib import Path
 from datetime import date
-from typing import Callable, List, Tuple, Optional, Dict
+from typing import Callable, List, Tuple
 import numpy as np
 import pandas as pd
 import streamlit as st
 import altair as alt
 import re
+import io
 
 # ─────────────────────────── CONFIG DA PÁGINA ────────────────────────────────
 st.set_page_config(page_title="Skyscanner — Painel", layout="wide", initial_sidebar_state="expanded")
@@ -14,7 +15,7 @@ APP_DIR = Path(__file__).resolve().parent
 DATA_PATH = APP_DIR / "data" / "OFERTASCONSOLIDADO_OFERTAS.parquet"
 
 # ─────────────────────────── FUNÇÕES AUXILIARES BÁSICAS ───────────────────────────
-def _norm_hhmmss(v: object) -> Optional[str]:
+def _norm_hhmmss(v: object) -> str | None:
     """Normaliza uma string de tempo para o formato HH:MM:SS."""
     s = str(v or "").strip()
     m = re.search(r"(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?", s)
@@ -262,7 +263,7 @@ def make_bar(df: pd.DataFrame, x_col: str, y_col: str, sort_y_desc: bool = True)
         tooltip=[f"{y_col}:N", f"{x_col}:Q"],
     ).properties(height=300)
 
-def make_line(df: pd.DataFrame, x_col: str, y_col: str, color: Optional[str] = None):
+def make_line(df: pd.DataFrame, x_col: str, y_col: str, color: str | None = None):
     """Cria um gráfico de linhas Altair."""
     cols = [x_col, y_col] + ([color] if color else [])
     d = df[cols].copy()
@@ -362,7 +363,7 @@ def style_smart_colwise(df_show: pd.DataFrame, fmt_map: dict, grad_cols: list[st
     sty = sty.set_table_styles([{"selector": "tbody td, th", "props": [("border", "1px solid #EEE")]}])
     return sty
 
-def show_table(df: pd.DataFrame, styler: Optional[pd.io.formats.style.Styler] = None, caption: Optional[str] = None):
+def show_table(df: pd.DataFrame, styler: pd.io.formats.style.Styler | None = None, caption: str | None = None):
     """Exibe uma tabela no Streamlit, com ou sem estilo."""
     if caption:
         st.markdown(f"**{caption}**")
@@ -421,39 +422,6 @@ def _init_filter_state(df_raw: pd.DataFrame):
         "advp": [], "trechos": [], "hh": [], "cia": [],
     }
 
-
-def _get_all_tab_prefixes() -> list[str]:
-    """Retorna a lista de prefixes de abas (ex: t1, t2, ...) a partir do session_state
-    ou gera um fallback conforme o TAB_REGISTRY.
-    """
-    prefixes = st.session_state.get("tab_prefixes")
-    if prefixes and isinstance(prefixes, (list, tuple)):
-        return list(prefixes)
-    return [f"t{i+1}" for i in range(len(TAB_REGISTRY))]
-
-
-def _sync_filters_callback(changed_prefix: str):
-    """Propaga o estado de filtros atual (st.session_state['flt']) para os widgets
-    de todas as outras abas. Usa uma flag '_sync_in_progress' para evitar loops.
-    """
-    if st.session_state.get("_sync_in_progress"):
-        return
-    try:
-        st.session_state["_sync_in_progress"] = True
-        flt = st.session_state.get("flt", {})
-        prefixes = _get_all_tab_prefixes()
-        for p in prefixes:
-            if p == changed_prefix:
-                continue
-            st.session_state[f"{p}_dtini"] = flt.get("dt_ini")
-            st.session_state[f"{p}_dtfim"] = flt.get("dt_fim")
-            st.session_state[f"{p}_advp"] = flt.get("advp", [])
-            st.session_state[f"{p}_trechos"] = flt.get("trechos", [])
-            st.session_state[f"{p}_hh"] = flt.get("hh", [])
-            st.session_state[f"{p}_cia"] = flt.get("cia", [])
-    finally:
-        st.session_state["_sync_in_progress"] = False
-
 def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
     """Renderiza os widgets de filtro e aplica as seleções ao DataFrame."""
     _init_filter_state(df_raw)
@@ -471,69 +439,31 @@ def render_filters(df_raw: pd.DataFrame, key_prefix: str = "flt"):
     dmax_abs = dmax_abs.date() if pd.notna(dmax_abs) else date.today()
 
     with c1:
-        key_dtini = f"{key_prefix}_dtini"
-        if key_dtini in st.session_state:
-            dt_ini = st.date_input("Data inicial", key=key_dtini,
-                                   min_value=dmin_abs, max_value=dmax_abs, format="DD/MM/YYYY",
-                                   on_change=_sync_filters_callback, args=(key_prefix,))
-        else:
-            dt_ini = st.date_input("Data inicial", key=key_dtini,
-                                   value=st.session_state["flt"]["dt_ini"],
-                                   min_value=dmin_abs, max_value=dmax_abs, format="DD/MM/YYYY",
-                                   on_change=_sync_filters_callback, args=(key_prefix,))
+        dt_ini = st.date_input("Data inicial", key=f"{key_prefix}_dtini",
+                               value=st.session_state["flt"]["dt_ini"],
+                               min_value=dmin_abs, max_value=dmax_abs, format="DD/MM/YYYY")
     with c2:
-        key_dtfim = f"{key_prefix}_dtfim"
-        if key_dtfim in st.session_state:
-            dt_fim = st.date_input("Data final", key=key_dtfim,
-                                   min_value=dmin_abs, max_value=dmax_abs, format="DD/MM/YYYY",
-                                   on_change=_sync_filters_callback, args=(key_prefix,))
-        else:
-            dt_fim = st.date_input("Data final", key=key_dtfim,
-                                   value=st.session_state["flt"]["dt_fim"],
-                                   min_value=dmin_abs, max_value=dmax_abs, format="DD/MM/YYYY",
-                                   on_change=_sync_filters_callback, args=(key_prefix,))
+        dt_fim = st.date_input("Data final", key=f"{key_prefix}_dtfim",
+                               value=st.session_state["flt"]["dt_fim"],
+                               min_value=dmin_abs, max_value=dmax_abs, format="DD/MM/YYYY")
     with c3:
         advp_all = sorted(set(pd.to_numeric(df_raw.get("ADVP_CANON"), errors="coerce").dropna().astype(int).tolist()))
-        key_advp = f"{key_prefix}_advp"
-        if key_advp in st.session_state:
-            advp_sel = st.multiselect("ADVP", options=advp_all, key=key_advp,
-                                      on_change=_sync_filters_callback, args=(key_prefix,))
-        else:
-            advp_sel = st.multiselect("ADVP", options=advp_all,
-                          default=st.session_state["flt"]["advp"], key=key_advp,
-                          on_change=_sync_filters_callback, args=(key_prefix,))
+        advp_sel = st.multiselect("ADVP", options=advp_all,
+                                  default=st.session_state["flt"]["advp"], key=f"{key_prefix}_advp")
     with c4:
         trechos_all = sorted([t for t in df_raw.get("TRECHO", pd.Series([], dtype=str)).dropna().unique().tolist() if str(t).strip() != ""])
-        key_tr = f"{key_prefix}_trechos"
-        if key_tr in st.session_state:
-            tr_sel = st.multiselect("Trechos", options=trechos_all, key=key_tr,
-                        on_change=_sync_filters_callback, args=(key_prefix,))
-        else:
-            tr_sel = st.multiselect("Trechos", options=trechos_all,
-                        default=st.session_state["flt"]["trechos"], key=key_tr,
-                        on_change=_sync_filters_callback, args=(key_prefix,))
+        tr_sel = st.multiselect("Trechos", options=trechos_all,
+                                default=st.session_state["flt"]["trechos"], key=f"{key_prefix}_trechos")
     with c5:
-        key_hh = f"{key_prefix}_hh"
-        if key_hh in st.session_state:
-            hh_sel = st.multiselect("Hora da busca", options=list(range(24)), key=key_hh,
-                        on_change=_sync_filters_callback, args=(key_prefix,))
-        else:
-            hh_sel = st.multiselect("Hora da busca", options=list(range(24)),
-                        default=st.session_state["flt"]["hh"], key=key_hh,
-                        on_change=_sync_filters_callback, args=(key_prefix,))
+        hh_sel = st.multiselect("Hora da busca", options=list(range(24)),
+                                default=st.session_state["flt"]["hh"], key=f"{key_prefix}_hh")
     with c6:
         cia_presentes = set(str(x).upper() for x in df_raw.get("CIA_NORM", pd.Series([], dtype=str)).dropna().unique())
         ordem = ["AZUL", "GOL", "LATAM"]
         cia_opts = [c for c in ordem if (not cia_presentes or c in cia_presentes)] or ordem
         cia_default = [c for c in st.session_state["flt"]["cia"] if c in cia_opts]
-        key_cia = f"{key_prefix}_cia"
-        if key_cia in st.session_state:
-            cia_sel = st.multiselect("Cia (Azul/Gol/Latam)", options=cia_opts, key=key_cia,
-                         on_change=_sync_filters_callback, args=(key_prefix,))
-        else:
-            cia_sel = st.multiselect("Cia (Azul/Gol/Latam)", options=cia_opts,
-                         default=cia_default, key=key_cia,
-                         on_change=_sync_filters_callback, args=(key_prefix,))
+        cia_sel = st.multiselect("Cia (Azul/Gol/Latam)", options=cia_opts,
+                                 default=cia_default, key=f"{key_prefix}_cia")
     with c7:
         st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)  # alinhamento vertical
         if st.button("↻", key=f"{key_prefix}_refresh", type="secondary", help="Recarregar base"):
@@ -806,7 +736,7 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
             return "R$ " + f"{xv:,.0f}".replace(",", ".")
         except Exception:
             return "R$ -"
-    def _find_id_col(df_: pd.DataFrame) -> Optional[str]:
+    def _find_id_col(df_: pd.DataFrame) -> str | None:
         cands = ["IDPESQUISA", "ID_PESQUISA", "ID BUSCA", "IDBUSCA", "ID", "NOME_ARQUIVO_STD", "NOME_ARQUIVO", "NOME DO ARQUIVO", "ARQUIVO"]
         norm = {re.sub(r"[^A-Z0-9]+", "", c.upper()): c for c in df_.columns}
         for nm in cands:
@@ -869,7 +799,7 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
         except Exception:
             pass
         return s
-    def dt_and_id_for(sub_rows: pd.DataFrame) -> tuple[str, Optional[str]]:
+    def dt_and_id_for(sub_rows: pd.DataFrame) -> tuple[str, str | None]:
         """Data (DD/MM) + Hora HH:MM:SS, garantindo segundos."""
         if sub_rows.empty:
             return "", None
@@ -1600,6 +1530,167 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
     dft = base[base['TRECHO'].isin(top15)].copy()
     draw_chart(build_stacked(dft, 'TRECHO'), 'TRECHO', 'Trecho')
 
+
+@register_tab("TABELA DE PESQUISA")
+def tab_tabela_pesquisa(df_raw: pd.DataFrame):
+    """Tabela detalhada por pesquisa com colunas e downloads (XLSX/CSV).
+
+    Assunções razoáveis:
+    - Agrupamos por IDPESQUISA + TRECHO + ADVP_CANON para obter o menor preço por pesquisa/trecho/advp.
+    - TRECHO é uma string que contém códigos IATA (ex: 'GRU REC' ou 'GRU-REC'); tentamos extrair os dois códigos.
+    """
+    df = render_filters(df_raw, key_prefix="t8")
+    st.subheader("TABELA DE PESQUISA")
+    if df.empty:
+        st.info("Sem resultados para os filtros selecionados.")
+        return
+
+    # Normalizações locais
+    work = df.copy()
+    # garantir colunas necessárias
+    work['ADVP_CANON'] = work.get('ADVP_CANON', work.get('ADVP'))
+    work['TRECHO'] = work.get('TRECHO', '').astype(str)
+    work['AGENCIA_NORM'] = work.get('AGENCIA_NORM', work.get('AGENCIA_COMP', '')).astype(str)
+    work['CIA_NORM'] = work.get('CIA_NORM', work.get('CIA', '')).astype(str)
+
+    # chaves de agrupamento: agrupamos por pesquisa+trecho+advp_can
+    grp_cols = ['IDPESQUISA', 'TRECHO', 'ADVP_CANON']
+
+    # pivot por agência (min preço por agência dentro de cada pesquisa/trecho/advp)
+    pivot = (work.pivot_table(index=grp_cols, columns='AGENCIA_NORM', values='PRECO', aggfunc='min')
+             .reset_index())
+
+    # menor preço geral por grupo
+    min_price = work.groupby(grp_cols, as_index=False)['PRECO'].min().rename(columns={'PRECO': 'PRECO_MENOR'})
+
+    base = pivot.merge(min_price, on=grp_cols, how='left')
+
+    # obter informações do registro que contém o menor preço (cia e agencia/empresa)
+    def pick_min_info(sub: pd.DataFrame) -> pd.Series:
+        if sub.empty:
+            return pd.Series({'DATAHORA_BUSCA': pd.NaT, 'DATA_EMBARQUE': pd.NaT, 'PRECO': np.nan, 'CIA_DO_VOO': '', 'EMPRESA': ''})
+        sub = sub.copy()
+        sub['PRECO_NUM'] = pd.to_numeric(sub['PRECO'], errors='coerce')
+        idx = sub['PRECO_NUM'].idxmin()
+        row = sub.loc[idx]
+        return pd.Series({
+            'DATAHORA_BUSCA': row.get('DATAHORA_BUSCA'),
+            'DATA_EMBARQUE': row.get('DATA_EMBARQUE'),
+            'PRECO': row.get('PRECO_num') if 'PRECO_num' in row else row.get('PRECO'),
+            'CIA_DO_VOO': row.get('CIA_NORM'),
+            'EMPRESA': row.get('AGENCIA_NORM')
+        })
+
+    # Para obter CIA_DO_VOO e EMPRESA relacionados ao menor preço, agrupamos e selecionamos a primeira ocorrência do menor preço
+    reps = []
+    for (pid, trecho, advp), g in work.groupby(grp_cols):
+        # localização da menor
+        minp = float(g['PRECO'].min(skipna=True)) if g['PRECO'].notna().any() else np.nan
+        row_min = g.loc[g['PRECO'] == minp]
+        if not row_min.empty:
+            r = row_min.iloc[0]
+            reps.append({
+                'IDPESQUISA': pid, 'TRECHO': trecho, 'ADVP_CANON': advp,
+                'DATAHORA_BUSCA': r.get('DATAHORA_BUSCA'), 'DATA_EMBARQUE': r.get('DATA_EMBARQUE'),
+                'PRECO_MIN_ROW': minp, 'CIA_DO_VOO': r.get('CIA_NORM'), 'EMPRESA': r.get('AGENCIA_NORM')
+            })
+        else:
+            reps.append({'IDPESQUISA': pid, 'TRECHO': trecho, 'ADVP_CANON': advp,
+                         'DATAHORA_BUSCA': pd.NaT, 'DATA_EMBARQUE': pd.NaT,
+                         'PRECO_MIN_ROW': np.nan, 'CIA_DO_VOO': '', 'EMPRESA': ''})
+    reps_df = pd.DataFrame(reps)
+
+    df_out = base.merge(reps_df, left_on=grp_cols, right_on=['IDPESQUISA', 'TRECHO', 'ADVP_CANON'], how='left')
+
+    # Extrair origem/destino a partir do campo TRECHO (procura códigos IATA de 3 letras)
+    def split_trecho(t: str) -> tuple[str, str]:
+        s = str(t or '').upper()
+        found = re.findall(r"\b[A-Z]{3}\b", s)
+        if len(found) >= 2:
+            return found[0], found[1]
+        # fallback: split por separadores
+        for sep in ['-', '–', '/', ' ']:
+            parts = [p.strip() for p in s.split(sep) if p.strip()]
+            if len(parts) >= 2:
+                return parts[0], parts[1]
+        return s, ''
+
+    df_out['ORIGEM'] = df_out['TRECHO'].apply(lambda x: split_trecho(x)[0])
+    df_out['DESTINO'] = df_out['TRECHO'].apply(lambda x: split_trecho(x)[1])
+
+    # Colunas de preço das agências específicas
+    for c in ['123MILHAS', 'MAXMILHAS', 'FLIPMILHAS']:
+        if c not in df_out.columns:
+            df_out[c] = np.nan
+
+    # Cálculo das diferenças percentuais (seguindo (x - base) / base * 100)
+    def pct_diff(base, other):
+        try:
+            if pd.isna(base) or pd.isna(other) or base == 0:
+                return np.nan
+            return (other - base) / base * 100
+        except Exception:
+            return np.nan
+
+    df_out['123XFLIP (%)'] = df_out.apply(lambda r: pct_diff(r.get('FLIPMILHAS'), r.get('123MILHAS')), axis=1)
+    df_out['MAX X FLIP (%)'] = df_out.apply(lambda r: pct_diff(r.get('FLIPMILHAS'), r.get('MAXMILHAS')), axis=1)
+    df_out['123 X MENOR PREÇO (%)'] = df_out.apply(lambda r: pct_diff(r.get('PRECO_MENOR'), r.get('123MILHAS')), axis=1)
+
+    # Formatar colunas para exibição
+    df_show = df_out.rename(columns={
+        'DATAHORA_BUSCA': 'DATA+ HORA DA PESQUISA',
+        'ORIGEM': 'TRECHO ORIGEM', 'DESTINO': 'TRECHO DESTINO',
+        'ADVP_CANON': 'ADVP', 'DATA_EMBARQUE': 'DATA DE EMBARQUE',
+        'PRECO_MIN_ROW': 'PREÇO', 'CIA_DO_VOO': 'CIA DO VOO', 'EMPRESA': 'EMPRESA',
+        '123MILHAS': 'PREÇO 123MILHAS', 'MAXMILHAS': 'PREÇOMAXMILHAS', 'FLIPMILHAS': 'PREÇO FLIPMILHAS'
+    })
+
+    # Ajustes de tipos e formatos
+    def fmt_dt(v):
+        try:
+            return pd.to_datetime(v).strftime('%d/%m/%Y %H:%M:%S')
+        except Exception:
+            return '-'
+    df_show['DATA+ HORA DA PESQUISA'] = df_show['DATA+ HORA DA PESQUISA'].apply(fmt_dt)
+    df_show['DATA DE EMBARQUE'] = df_show['DATA DE EMBARQUE'].apply(lambda v: pd.to_datetime(v).strftime('%d/%m/%Y') if pd.notna(v) else '-')
+
+    # Selecionar colunas na ordem solicitada
+    cols_order = [
+        'DATA+ HORA DA PESQUISA', 'TRECHO ORIGEM', 'TRECHO DESTINO', 'ADVP', 'DATA DE EMBARQUE',
+        'PREÇO', 'CIA DO VOO', 'EMPRESA', 'PREÇO 123MILHAS', 'PREÇOMAXMILHAS', 'PREÇO FLIPMILHAS',
+        '123XFLIP (%)', 'MAX X FLIP (%)', '123 X MENOR PREÇO (%)'
+    ]
+    for c in cols_order:
+        if c not in df_show.columns:
+            df_show[c] = np.nan
+
+    df_final = df_show[cols_order].reset_index(drop=True)
+
+    # Estilização
+    fmt_map = {
+        'PREÇO': fmt_num0_br,
+        'PREÇO 123MILHAS': fmt_num0_br, 'PREÇOMAXMILHAS': fmt_num0_br, 'PREÇO FLIPMILHAS': fmt_num0_br,
+    }
+    pct_cols = ['123XFLIP (%)', 'MAX X FLIP (%)', '123 X MENOR PREÇO (%)']
+    sty = style_smart_colwise(df_final, fmt_map, grad_cols=['PREÇO', 'PREÇO 123MILHAS', 'PREÇOMAXMILHAS', 'PREÇO FLIPMILHAS'])
+    show_table(df_final, sty, caption='Tabela de Pesquisa — visão por pesquisa/trecho/ADVP')
+
+    # Download controls
+    sep = st.selectbox('Separador CSV', options=[',', ';'], index=1, help='Escolha o separador para o arquivo CSV')
+    csv_bytes = df_final.to_csv(index=False, sep=sep, decimal=',').encode('utf-8')
+    st.download_button('Baixar CSV', data=csv_bytes, file_name='tabela_pesquisa.csv', mime='text/csv')
+
+    # XLSX
+    to_xlsx = io.BytesIO()
+    try:
+        with pd.ExcelWriter(to_xlsx, engine='openpyxl') as writer:
+            df_final.to_excel(writer, index=False, sheet_name='TABELA_PESQUISA')
+        to_xlsx.seek(0)
+        st.download_button('Baixar XLSX', data=to_xlsx.read(), file_name='tabela_pesquisa.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    except Exception:
+        # fallback: csv inside .xlsx name
+        st.warning('Não foi possível gerar XLSX (biblioteca ausente). Baixe o CSV como alternativa.')
+
 # ================================ MAIN ========================================
 def main():
     """Função principal que executa o aplicativo Streamlit."""
@@ -1610,8 +1701,6 @@ def main():
         if imgs:
             st.image(imgs[0].as_posix(), use_container_width=True); break
     labels = [label for label, _ in TAB_REGISTRY]
-    # registra prefixes esperados para cada aba (t1, t2, ...). Usado pelo sincronizador.
-    st.session_state.setdefault("tab_prefixes", [f"t{i+1}" for i in range(len(labels))])
     tabs = st.tabs(labels)
     for i, (label, fn) in enumerate(TAB_REGISTRY):
         with tabs[i]:
