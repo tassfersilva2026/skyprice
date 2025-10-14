@@ -1773,7 +1773,7 @@ def tab_tabela_pesquisa(df_raw: pd.DataFrame):
         'PREÇO 123MILHAS': fmt_num0_br, 'PREÇOMAXMILHAS': fmt_num0_br, 'PREÇO FLIPMILHAS': fmt_num0_br,
         '123XFLIP (%)': fmt_pct0_br, 'MAX X FLIP (%)': fmt_pct0_br, '123 X MENOR PREÇO (%)': fmt_pct0_br,
     }, grad_cols=['PREÇO', 'PREÇO 123MILHAS', 'PREÇOMAXMILHAS', 'PREÇO FLIPMILHAS'])
-    # Aplicar estilo ternário para colunas percentuais: negativo->vermelho, zero/NaN->cinza, positivo->verde
+    # Aplicar estilo ternário para colunas percentuais: NEGATIVO -> VERDE, ZERO/NaN -> CINZA, POSITIVO -> VERMELHO
     pct_cols_style = ['123XFLIP (%)', 'MAX X FLIP (%)', '123 X MENOR PREÇO (%)']
     def _ternary_pct_col(col_series: pd.Series):
         out = []
@@ -1783,12 +1783,15 @@ def tab_tabela_pesquisa(df_raw: pd.DataFrame):
             except Exception:
                 out.append('background-color:#E6E6E6; color:#111827')
                 continue
+            # zero or NaN -> gray
             if np.isnan(vv) or vv == 0:
                 out.append('background-color:#E6E6E6; color:#111827')
+            # negative values should be GREEN (mais barato)
             elif vv < 0:
-                out.append('background-color:#FFD6D6; color:#9B1C1C')
-            else:
                 out.append('background-color:#D1FADF; color:#064E3B')
+            # positive values should be RED (mais caro)
+            else:
+                out.append('background-color:#FFD6D6; color:#9B1C1C')
         return out
 
     # sty é um Styler; aplicamos por coluna existente
