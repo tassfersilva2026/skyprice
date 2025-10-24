@@ -1605,62 +1605,91 @@ def tab_desenv_d7(df_raw: pd.DataFrame):
     df7["ADVP_CANON_NUM"] = pd.to_numeric(df7.get("ADVP_CANON"), errors="coerce")
 
     # 6) Agregar: média do preço do 1º lugar por dia e agência
-    rows = []
+    dfs = []
     all_dates = pd.date_range(start=dmin, end=dmax, freq="D")
+    # índice cartesiano de datas x empresas para garantir combinação única
+    full_index = pd.MultiIndex.from_product([all_dates, companies], names=["DT", "AGENCIA"])
     for advp in advp_buckets:
         sub = df7[df7["ADVP_CANON_NUM"] == advp].copy()
         if not sub.empty:
-            # criar coluna de data normalizada explicitamente antes do groupby
             sub_loc = sub.copy()
             sub_loc["DT_NORM"] = pd.to_datetime(sub_loc["DT"]).dt.normalize()
             grp = (
                 sub_loc.groupby(["DT_NORM", "AGENCIA_NORM"], as_index=False)
                 .agg(PRECO=("PRECO", "mean"))
             )
-            # renomear colunas de forma explícita
             grp = grp.rename(columns={"DT_NORM": "DT", "AGENCIA_NORM": "AGENCIA"})
             grp["DT"] = pd.to_datetime(grp["DT"])
-            # preencher datas/empresas ausentes com NaN para manter consistência
-            for dt in all_dates:
-                for ag in companies:
-                    mask = (grp["DT"].dt.normalize() == dt.normalize()) & (grp["AGENCIA"] == ag)
-                    if mask.any():
-                        val = float(grp.loc[mask, "PRECO"].mean())
-                    else:
-                        val = np.nan
-                    rows.append({"ADVP": advp, "DT": dt, "AGENCIA": ag, "PRECO": val})
+            # reindexar para todas as combinações de data x empresa
+            grp_idx = grp.set_index(["DT", "AGENCIA"]).reindex(full_index)
+            grp_idx = grp_idx.reset_index()
+            grp_idx["ADVP"] = advp
+            dfs.append(grp_idx[["ADVP", "DT", "AGENCIA", "PRECO"]])
         else:
-            # sem dados para esse ADVP — preencher com linhas NaN para manter eixo uniforme
-            for dt in all_dates:
-                for ag in companies:
-                    rows.append({"ADVP": advp, "DT": dt, "AGENCIA": ag, "PRECO": np.nan})
+            # montar DataFrame vazio com ADVP e combinações de datas x empresas (PRECO NaN)
+            empty_df = pd.DataFrame(list(full_index)).rename(columns={0: "DT", 1: "AGENCIA"})
+            empty_df["PRECO"] = np.nan
+            empty_df["ADVP"] = advp
+            dfs.append(empty_df[["ADVP", "DT", "AGENCIA", "PRECO"]])
 
-    plot_df = pd.DataFrame(rows)
+    plot_df = pd.concat(dfs, ignore_index=True)
 
-    # 7) Renderizar os 5 gráficos — dois por linha e o último centralizado
+    # 7) Para cada ADVP: contar quantas pesquisas (IDPESQUISA únicas) existem e
+    # quantas vezes cada empresa ficou em 1º lugar (RANKING == 1) no período D-7.
     st.markdown("<div style='margin-top:6px;'></div>", unsafe_allow_html=True)
-    c1, c2 = st.columns(2, gap="small")
-    for i, advp in enumerate(advp_buckets):
-        sub = plot_df[plot_df["ADVP"] == advp].copy()
-        title = f"ADVP {advp} — 1º lugar (média diária)"
-        chart = (
-            alt.Chart(sub)
-            .mark_line(point=True)
-            .encode(
-                x=alt.X("DT:T", axis=alt.Axis(format="%d/%m", title="Data")),
-                y=alt.Y("PRECO:Q", title="Preço (R$)"),
-                color=alt.Color("AGENCIA:N", title="Agência", sort=companies),
-                tooltip=[alt.Tooltip("DT:T", title="Data", format="%d/%m/%Y"), "AGENCIA:N", alt.Tooltip("PRECO:Q", title="Preço", format=",.0f")],
-            )
-            .properties(height=220)
-        )
-        if i < 4:
-            with (c1 if i % 2 == 0 else c2):
+
+    summary_rows = []
+    charts = []
+    for advp in advp_buckets:
+        sub_advp = df7[pd.to_numeric(df7.get("ADVP_CANON"), errors="coerce") == advp].copy()
+        # total de pesquisas distintas no periodo para este ADVP
+        total_pesq = int(sub_advp["IDPESQUISA"].nunique() or 0)
+        counts = []
+        for ag in companies:
+            cnt = int(sub_advp.loc[sub_advp["AGENCIA_NORM"] == ag, "IDPESQUISA"].nunique() or 0)
+            pct = (cnt / total_pesq * 100) if total_pesq else 0.0
+            counts.append({"ADVP": advp, "AGENCIA": ag, "COUNT": cnt, "PCT": pct, "TOTAL": total_pesq})
+        summary_rows.extend(counts)
+        charts.append(pd.DataFrame(counts))
+
+    summary_df = pd.DataFrame(summary_rows)
+    # mostrar tabela resumo com volumes e % por ADVP
+    if not summary_df.empty:
+        # pivot para exibir por ADVP as contagens e porcentagens
+        piv = (summary_df.pivot(index="ADVP", columns="AGENCIA", values="COUNT").fillna(0).astype(int))
+        piv_pct = (summary_df.pivot(index="ADVP", columns="AGENCIA", values="PCT").fillna(0))
+        # construir uma tabela legível com contagens e % juntos
+        display_table = piv.copy().astype(object)
+        for col in display_table.columns:
+            display_table[col] = display_table[col].apply(lambda v: fmt_int(v)) + " (" + piv_pct[col].map(lambda x: f"{x:.1f}%") + ")"
+        st.subheader("Resumo por ADVP (últimos 7 dias)")
+        st.markdown("**Legenda:** Contagem de pesquisas únicas onde a agência apareceu em 1º lugar — seguido de % sobre o volume do ADVP")
+        st.dataframe(display_table.reset_index().rename(columns={"ADVP": "ADVP (dias)"}), use_container_width=True)
+
+    # 8) Renderizar 5 mini-gráficos (um por ADVP) com barras horizontais (empresa no eixo Y)
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    cols = st.columns(2)
+    for i, df_chart in enumerate(charts):
+        advp = advp_buckets[i]
+        title = f"ADVP {advp} — Vitórias (1º lugar)"
+        if df_chart["TOTAL"].iloc[0] == 0:
+            with (cols[0] if i % 2 == 0 else cols[1]):
                 st.markdown(f"**{title}**")
-                st.altair_chart(chart, use_container_width=True)
-        else:
-            # último gráfico ocupa toda a largura
-            st.markdown(f"**{title}**")
+                st.info("Sem pesquisas neste ADVP no período D-7")
+            continue
+        chart = (
+            alt.Chart(df_chart)
+            .mark_bar()
+            .encode(
+                x=alt.X("COUNT:Q", title="# Pesquisas"),
+                y=alt.Y("AGENCIA:N", sort=companies, title="Agência"),
+                color=alt.Color("AGENCIA:N", scale=alt.Scale(domain=companies), legend=None),
+                tooltip=["AGENCIA:N", "COUNT:Q", alt.Tooltip("PCT:Q", format=".1f", title="% do ADVP")]
+            )
+            .properties(height=140)
+        )
+        with (cols[0] if i % 2 == 0 else cols[1]):
+            st.markdown(f"**{title} — Total Pesquisas: {fmt_int(int(df_chart['TOTAL'].iloc[0]))}**")
             st.altair_chart(chart, use_container_width=True)
 
 
