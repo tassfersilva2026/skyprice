@@ -1677,6 +1677,85 @@ def tab_desenv_d7(df_raw: pd.DataFrame):
     st.markdown("**Gráficos de linhas — Tendência de % participação em 1º lugar por ADVP (últimos 7 dias)**")
     st.altair_chart(line, use_container_width=True)
 
+    # --- NOVO: Heatmap por ADVP com eixo vertical em buckets de 6 horas e eixo horizontal datas D-7 ---
+    st.markdown("**Gráficos por ADVP — Contagem de 1º lugar por janela de horário (6h) nos últimos 7 dias**")
+
+    # construir base com hora (preferir __DTKEY__ senão HORA_HH)
+    df_hours = df1.copy()
+    ts = pd.to_datetime(df_hours.get("__DTKEY__"), errors="coerce")
+    if ts.isna().all():
+        ts = pd.to_datetime(df_hours.get("DATAHORA_BUSCA"), errors="coerce", dayfirst=True)
+    df_hours["__TS__"] = ts
+    # extrair data e hora
+    df_hours["DT_DATE"] = pd.to_datetime(df_hours["__TS__"]).dt.normalize()
+    df_hours["HOUR"] = pd.to_datetime(df_hours["__TS__"]).dt.hour
+    # fallback para HORA_HH quando hour for nan
+    if "HORA_HH" in df_hours.columns:
+        hour_fallback = pd.to_numeric(df_hours.get("HORA_HH"), errors="coerce")
+        df_hours.loc[df_hours["HOUR"].isna(), "HOUR"] = hour_fallback
+    df_hours["HOUR"] = df_hours["HOUR"].fillna(0).astype(int)
+
+    # janela D-7 (mesma janela anterior)
+    df_hours = df_hours[(df_hours["DT_DATE"] >= dmin) & (df_hours["DT_DATE"] <= dmax)].copy()
+    if df_hours.empty:
+        st.info("Sem registros com informação de hora nos últimos 7 dias para o recorte atual.")
+        return
+
+    # buckets de 6 horas: 00-05,06-11,12-17,18-23
+    bins = [0, 6, 12, 18, 24]
+    labels = ["00-05", "06-11", "12-17", "18-23"]
+    df_hours["HOUR_BKT"] = pd.cut(df_hours["HOUR"].clip(0, 23), bins=bins, right=False, labels=labels)
+
+    # agregar contagens de vitórias (1º lugar) por ADVP × Data × Bucket
+    df_hours["ADVP_CANON_NUM"] = pd.to_numeric(df_hours.get("ADVP_CANON"), errors="coerce").astype("Int64")
+    df_hours = df_hours[df_hours["ADVP_CANON_NUM"].notna()].copy()
+    df_hours["ADVP_CANON_NUM"] = df_hours["ADVP_CANON_NUM"].astype(int)
+    df_hours["DT_LABEL"] = df_hours["DT_DATE"].dt.strftime("%d/%m")
+
+    # index completo para preencher zeros
+    all_dates = pd.date_range(start=dmin, end=dmax, freq="D")
+    date_labels = [dt.strftime("%d/%m") for dt in all_dates]
+    full_idx = pd.MultiIndex.from_product([advp_buckets, date_labels, labels], names=["ADVP", "DT_LABEL", "HOUR_BKT"])
+
+    agg = (
+        df_hours.groupby(["ADVP_CANON_NUM", "DT_LABEL", "HOUR_BKT"], as_index=False)
+        .agg(COUNT=("IDPESQUISA", "nunique"))
+        .rename(columns={"ADVP_CANON_NUM": "ADVP", "HOUR_BKT": "HOUR_BKT"})
+    )
+    # converter labels
+    agg["DT_LABEL"] = agg["DT_LABEL"].astype(str)
+    agg["HOUR_BKT"] = agg["HOUR_BKT"].astype(str)
+    agg["ADVP"] = agg["ADVP"].astype(int)
+
+    # garantir linhas faltantes com zero
+    agg_full = (
+        agg.set_index(["ADVP", "DT_LABEL", "HOUR_BKT"]) 
+        .reindex(full_idx, fill_value=0)
+        .rename_axis(index=["ADVP", "DT_LABEL", "HOUR_BKT"]) 
+        .reset_index()
+    )
+    agg_full["ADVP_LABEL"] = agg_full["ADVP"].astype(str)
+
+    # ordenar buckets
+    hour_order = labels
+
+    # plot: heatmap (rect) facetado por ADVP (linha por ADVP)
+    heat = (
+        alt.Chart(agg_full)
+        .mark_rect()
+        .encode(
+            x=alt.X("DT_LABEL:N", title="Data", sort=date_labels),
+            y=alt.Y("HOUR_BKT:N", title="Janela Horária (6h)", sort=hour_order),
+            color=alt.Color("COUNT:Q", title="# Vitórias", scale=alt.Scale(scheme="blues")),
+            tooltip=[alt.Tooltip("ADVP:O", title="ADVP"), alt.Tooltip("DT_LABEL:N", title="Data"), alt.Tooltip("HOUR_BKT:N", title="Janela"), alt.Tooltip("COUNT:Q", title="Vitórias")]
+        )
+        .facet(row=alt.Row("ADVP_LABEL:N", title="ADVP", sort=advp_labels))
+        .properties(height=100)
+        .resolve_scale(color="shared")
+    )
+
+    st.altair_chart(heat, use_container_width=True)
+
 
 @register_tab("TABELA DE PESQUISA")
 def tab_tabela_pesquisa(df_raw: pd.DataFrame):
