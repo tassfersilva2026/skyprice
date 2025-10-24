@@ -1610,12 +1610,15 @@ def tab_desenv_d7(df_raw: pd.DataFrame):
     for advp in advp_buckets:
         sub = df7[df7["ADVP_CANON_NUM"] == advp].copy()
         if not sub.empty:
+            # criar coluna de data normalizada explicitamente antes do groupby
+            sub_loc = sub.copy()
+            sub_loc["DT_NORM"] = pd.to_datetime(sub_loc["DT"]).dt.normalize()
             grp = (
-                sub.groupby([pd.to_datetime(sub["DT"]).dt.normalize(), "AGENCIA_NORM"], as_index=False)
+                sub_loc.groupby(["DT_NORM", "AGENCIA_NORM"], as_index=False)
                 .agg(PRECO=("PRECO", "mean"))
             )
-            # garantir nomes de colunas consistentes
-            grp.columns = ["DT", "AGENCIA", "PRECO"]
+            # renomear colunas de forma explícita
+            grp = grp.rename(columns={"DT_NORM": "DT", "AGENCIA_NORM": "AGENCIA"})
             grp["DT"] = pd.to_datetime(grp["DT"])
             # preencher datas/empresas ausentes com NaN para manter consistência
             for dt in all_dates:
