@@ -1642,31 +1642,84 @@ def tab_desenv_d7(df_raw: pd.DataFrame):
     wins_full["ADVP_LABEL"] = wins_full["ADVP_CANON_NUM"].astype(int).astype(str)
     wins_full["DT_LABEL"] = wins_full["DT"].dt.strftime("%d/%m")
 
-    # 7) Gráficos de linhas: tendência de % de participação em 1º lugar ao longo dos últimos 7 dias
-    # Facet por ADVP (eixo vertical), X=datas, Y=% , linhas por empresa
-    chart_data = wins_full.copy()
-    chart_data["DT_LABEL"] = pd.Categorical(chart_data["DT_LABEL"], categories=date_labels, ordered=True)
+    # 7) Gráfico pedido: manter facet por ADVP, X = data (últimos 7 dias), Y = bloco de hora (0-5,6-11,12-17,18-23)
+    # Para cada ADVP × Data × BlocoHora × Agência calculamos a participação (%) nas vitórias (1º lugar).
+    # Visualização: linhas por agência conectando os blocos de hora ao longo das datas; pontos com tamanho proporcional ao %.
+    # Preparar coluna de hora (extrair de __DTKEY__ quando possível, senão de HORA_BUSCA)
+    df7_dt = pd.to_datetime(df7.get("__DTKEY__"), errors="coerce")
+    if df7_dt.isna().all():
+        df7_dt = pd.to_datetime(df7.get("HORA_BUSCA"), format="%H:%M:%S", errors="coerce")
+    df7["HOUR"] = pd.to_datetime(df7_dt, errors="coerce").dt.hour.fillna(pd.to_datetime(df7.get("HORA_BUSCA"), format="%H:%M:%S", errors="coerce").dt.hour)
+    # preencher NaN com 0 e converter para int
+    df7["HOUR"] = pd.to_numeric(df7["HOUR"], errors="coerce").fillna(0).astype(int)
+
+    # Definir buckets de 6h e rótulos
+    hour_bins = [0, 6, 12, 18, 24]
+    hour_labels = ["00-05", "06-11", "12-17", "18-23"]
+    df7["HOUR_BKT"] = pd.cut(df7["HOUR"], bins=hour_bins, right=False, labels=hour_labels)
+
+    # Agregar contagens por ADVP × Data × HourBucket × Agência
+    wins_h = (
+        df7.groupby(["ADVP_CANON_NUM", "DT", "HOUR_BKT", "AGENCIA_NORM"], as_index=False)["IDPESQUISA"]
+        .nunique()
+        .rename(columns={"IDPESQUISA": "COUNT"})
+    )
+
+    # Criar índice completo para preencher zeros (ADVPs x datas x horas x empresas)
+    full_idx_h = pd.MultiIndex.from_product([advp_buckets, all_dates, hour_labels, companies], names=["ADVP_CANON_NUM", "DT", "HOUR_BKT", "AGENCIA_NORM"])
+    wins_full_h = (
+        wins_h.set_index(["ADVP_CANON_NUM", "DT", "HOUR_BKT", "AGENCIA_NORM"]) 
+        .reindex(full_idx_h, fill_value=0)
+        .reset_index()
+    )
+
+    # Totais por ADVP × Data × HourBucket (soma sobre empresas)
+    totals_h = (
+        wins_full_h.groupby(["ADVP_CANON_NUM", "DT", "HOUR_BKT"], as_index=False)["COUNT"].sum().rename(columns={"COUNT": "TOTAL"})
+    )
+    wins_full_h = wins_full_h.merge(totals_h, on=["ADVP_CANON_NUM", "DT", "HOUR_BKT"], how="left")
+    wins_full_h["TOTAL"] = wins_full_h["TOTAL"].fillna(0).astype(int)
+    wins_full_h["PCT"] = np.where(wins_full_h["TOTAL"] > 0, wins_full_h["COUNT"] / wins_full_h["TOTAL"] * 100, 0.0)
+
+    # Rótulos para facet e eixo Y
+    wins_full_h["ADVP_LABEL"] = wins_full_h["ADVP_CANON_NUM"].astype(int).astype(str)
+    wins_full_h["HOUR_BKT_LABEL"] = wins_full_h["HOUR_BKT"].astype(str)
+
+    # Preparar dados para Altair
+    chart_data = wins_full_h.copy()
+    # Garantir tipos/ordens
+    chart_data["DT"] = pd.to_datetime(chart_data["DT"])  # X temporal
+    chart_data["HOUR_BKT_LABEL"] = pd.Categorical(chart_data["HOUR_BKT_LABEL"], categories=hour_labels, ordered=True)
     chart_data["ADVP_LABEL"] = pd.Categorical(chart_data["ADVP_LABEL"], categories=advp_labels, ordered=True)
     chart_data["AGENCIA_NORM"] = pd.Categorical(chart_data["AGENCIA_NORM"], categories=companies, ordered=True)
 
-    line_chart = alt.Chart(chart_data).mark_line(point=True).encode(
+    base = alt.Chart(chart_data)
+    lines = base.mark_line().encode(
         x=alt.X("DT:T", title="Data", axis=alt.Axis(format="%d/%m")),
-        y=alt.Y("PCT:Q", title="% Participação em 1º Lugar", scale=alt.Scale(domain=[0, 100])),
+        y=alt.Y("HOUR_BKT_LABEL:N", title="Bloco Hora (6h)", sort=hour_labels),
         color=alt.Color("AGENCIA_NORM:N", title="Agência", sort=companies),
+        detail="AGENCIA_NORM:N"
+    )
+    points = base.mark_point(filled=True).encode(
+        x=alt.X("DT:T"),
+        y=alt.Y("HOUR_BKT_LABEL:N", sort=hour_labels),
+        color=alt.Color("AGENCIA_NORM:N", sort=companies),
+        size=alt.Size("PCT:Q", title="% Participação", scale=alt.Scale(domain=[0, 100], range=[10, 240])),
         tooltip=[
             alt.Tooltip("AGENCIA_NORM:N", title="Agência"),
             alt.Tooltip("ADVP_LABEL:N", title="ADVP"),
             alt.Tooltip("DT:T", title="Data", format="%d/%m/%Y"),
+            alt.Tooltip("HOUR_BKT_LABEL:N", title="Bloco Hora"),
             alt.Tooltip("COUNT:Q", title="Vitórias"),
             alt.Tooltip("TOTAL:Q", title="Total Pesquisas"),
             alt.Tooltip("PCT:Q", title="% 1º Lugar", format=".1f")
         ]
-    ).facet(
-        row=alt.Row("ADVP_LABEL:N", title="ADVP", sort=advp_labels)
-    ).resolve_scale(y='independent')
+    )
 
-    st.markdown("**Gráficos de linhas — Tendência de % participação em 1º lugar por ADVP (últimos 7 dias)**")
-    st.altair_chart(line_chart, use_container_width=True)
+    final_chart = (lines + points).facet(row=alt.Row("ADVP_LABEL:N", title="ADVP", sort=advp_labels)).resolve_scale(x='shared', y='independent')
+
+    st.markdown("**Tendência por ADVP — eixo X = datas (últimos 7 dias), eixo Y = blocos de 6 horas; tamanho dos pontos = % participação em 1º lugar**")
+    st.altair_chart(final_chart, use_container_width=True)
 
 
 @register_tab("TABELA DE PESQUISA")
