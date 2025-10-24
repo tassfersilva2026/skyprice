@@ -1551,6 +1551,115 @@ def tab7_ofertas_x_cias(df_raw: pd.DataFrame):
     dft = base[base['TRECHO'].isin(top15)].copy()
     draw_chart(build_stacked(dft, 'TRECHO'), 'TRECHO', 'Trecho')
 
+@register_tab("Desenvolvendo(Visão D-7)")
+def tab_desenv_d7(df_raw: pd.DataFrame):
+    """Visão D-7: últimos 7 dias com gráficos de tendência do 1º lugar de preço por ADVP.
+
+    - Exibe 5 gráficos (um por ADVP: 1,5,11,17,30).
+    - Cada gráfico mostra série temporal (últimos 7 dias) do preço médio do 1º lugar
+      por agência (123MILHAS, MAXMILHAS, FLIPMILHAS).
+    - Eixo X: datas (formato dd/mm). Eixo Y: preço (R$). Legenda: agência.
+    """
+    df = render_filters(df_raw, key_prefix="td7")
+    st.subheader("Desenvolvendo — Visão D-7 (Últimos 7 dias)")
+    if df.empty:
+        st.info("Sem dados para os filtros selecionados.")
+        return
+
+    # 1) Filtra apenas 1º lugar
+    if "RANKING" not in df.columns:
+        st.warning("Coluna 'RANKING' não encontrada nos dados.")
+        return
+    df1 = df[df["RANKING"].astype("Int64") == 1].copy()
+    if df1.empty:
+        st.info("Nenhum 1º lugar no recorte.")
+        return
+
+    # 2) Extrair data (usar __DTKEY__ quando disponível, senão DATAHORA_BUSCA)
+    dt_base = pd.to_datetime(df1.get("__DTKEY__"), errors="coerce")
+    if dt_base.isna().all():
+        dt_base = pd.to_datetime(df1.get("DATAHORA_BUSCA"), errors="coerce", dayfirst=True)
+    df1["DT"] = dt_base.dt.normalize()
+    if df1["DT"].isna().all():
+        st.info("Sem datas válidas para plotagem.")
+        return
+
+    # 3) Janela D-7 (últimos 7 dias a partir da data máxima disponível)
+    dmax = df1["DT"].max()
+    dmin = (dmax - pd.Timedelta(days=6)).normalize()
+    df7 = df1[(df1["DT"] >= dmin) & (df1["DT"] <= dmax)].copy()
+    if df7.empty:
+        st.info("Sem registros nos últimos 7 dias.")
+        return
+
+    # 4) Empresas de interesse (vertical/legenda)
+    companies = ["123MILHAS", "MAXMILHAS", "FLIPMILHAS"]
+    df7 = df7[df7["AGENCIA_NORM"].isin(companies)].copy()
+    if df7.empty:
+        st.info("Nenhuma das empresas 123MILHAS / MAXMILHAS / FLIPMILHAS aparece no recorte.")
+        return
+
+    # 5) ADVP buckets fixos — gerar um gráfico por bucket
+    advp_buckets = [1, 5, 11, 17, 30]
+    # garantir coluna numérica ADVP_CANON
+    df7["ADVP_CANON_NUM"] = pd.to_numeric(df7.get("ADVP_CANON"), errors="coerce")
+
+    # 6) Agregar: média do preço do 1º lugar por dia e agência
+    rows = []
+    all_dates = pd.date_range(start=dmin, end=dmax, freq="D")
+    for advp in advp_buckets:
+        sub = df7[df7["ADVP_CANON_NUM"] == advp].copy()
+        if not sub.empty:
+            grp = (
+                sub.groupby([pd.to_datetime(sub["DT"]).dt.normalize(), "AGENCIA_NORM"], as_index=False)
+                .agg(PRECO=("PRECO", "mean"))
+            )
+            # garantir nomes de colunas consistentes
+            grp.columns = ["DT", "AGENCIA", "PRECO"]
+            grp["DT"] = pd.to_datetime(grp["DT"])
+            # preencher datas/empresas ausentes com NaN para manter consistência
+            for dt in all_dates:
+                for ag in companies:
+                    mask = (grp["DT"].dt.normalize() == dt.normalize()) & (grp["AGENCIA"] == ag)
+                    if mask.any():
+                        val = float(grp.loc[mask, "PRECO"].mean())
+                    else:
+                        val = np.nan
+                    rows.append({"ADVP": advp, "DT": dt, "AGENCIA": ag, "PRECO": val})
+        else:
+            # sem dados para esse ADVP — preencher com linhas NaN para manter eixo uniforme
+            for dt in all_dates:
+                for ag in companies:
+                    rows.append({"ADVP": advp, "DT": dt, "AGENCIA": ag, "PRECO": np.nan})
+
+    plot_df = pd.DataFrame(rows)
+
+    # 7) Renderizar os 5 gráficos — dois por linha e o último centralizado
+    st.markdown("<div style='margin-top:6px;'></div>", unsafe_allow_html=True)
+    c1, c2 = st.columns(2, gap="small")
+    for i, advp in enumerate(advp_buckets):
+        sub = plot_df[plot_df["ADVP"] == advp].copy()
+        title = f"ADVP {advp} — 1º lugar (média diária)"
+        chart = (
+            alt.Chart(sub)
+            .mark_line(point=True)
+            .encode(
+                x=alt.X("DT:T", axis=alt.Axis(format="%d/%m", title="Data")),
+                y=alt.Y("PRECO:Q", title="Preço (R$)"),
+                color=alt.Color("AGENCIA:N", title="Agência", sort=companies),
+                tooltip=[alt.Tooltip("DT:T", title="Data", format="%d/%m/%Y"), "AGENCIA:N", alt.Tooltip("PRECO:Q", title="Preço", format=",.0f")],
+            )
+            .properties(height=220)
+        )
+        if i < 4:
+            with (c1 if i % 2 == 0 else c2):
+                st.markdown(f"**{title}**")
+                st.altair_chart(chart, use_container_width=True)
+        else:
+            # último gráfico ocupa toda a largura
+            st.markdown(f"**{title}**")
+            st.altair_chart(chart, use_container_width=True)
+
 
 @register_tab("TABELA DE PESQUISA")
 def tab_tabela_pesquisa(df_raw: pd.DataFrame):
