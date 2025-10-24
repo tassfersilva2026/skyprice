@@ -1642,65 +1642,31 @@ def tab_desenv_d7(df_raw: pd.DataFrame):
     wins_full["ADVP_LABEL"] = wins_full["ADVP_CANON_NUM"].astype(int).astype(str)
     wins_full["DT_LABEL"] = wins_full["DT"].dt.strftime("%d/%m")
 
-    # 7) Tabela resumo (somatório dos 7 dias) com contagens e percentuais
-    totals_by_advp = (
-        totals_full.groupby("ADVP_CANON_NUM")["TOTAL"].sum().to_dict()
-    )
-    summary = (
-        wins_full.groupby(["ADVP_CANON_NUM", "AGENCIA_NORM"], as_index=False)["COUNT"]
-        .sum()
-    )
-    summary["TOTAL"] = summary["ADVP_CANON_NUM"].map(totals_by_advp).fillna(0).astype(int)
-    summary["PCT"] = np.where(summary["TOTAL"] > 0, summary["COUNT"] / summary["TOTAL"] * 100, 0.0)
-
-    if summary["TOTAL"].sum() == 0:
-        st.info("Sem vitórias registradas nos últimos 7 dias para os ADVPs selecionados.")
-        return
-
-    summary_pivot = summary.pivot(index="ADVP_CANON_NUM", columns="AGENCIA_NORM", values="COUNT").reindex(advp_buckets, fill_value=0)
-    summary_pct = summary.pivot(index="ADVP_CANON_NUM", columns="AGENCIA_NORM", values="PCT").reindex(advp_buckets, fill_value=0.0)
-    total_series = pd.Series(totals_by_advp).reindex(advp_buckets, fill_value=0).astype(int)
-
-    display_table = summary_pivot.astype(object)
-    for col in display_table.columns:
-        display_table[col] = display_table[col].apply(fmt_int) + " (" + summary_pct[col].map(lambda x: f"{x:.1f}%") + ")"
-    display_table.insert(0, "Total Pesquisas", total_series.map(fmt_int))
-    display_table = display_table.rename_axis("ADVP").reset_index()
-    display_table["ADVP"] = display_table["ADVP"].astype(str)
-
-    st.subheader("Resumo por ADVP — Participação em 1º Lugar (Últimos 7 dias)")
-    st.dataframe(display_table.rename(columns={ag: ag.title() for ag in display_table.columns if ag in companies}), use_container_width=True)
-
-    # 8) Heatmap: eixo vertical ADVP, eixo horizontal datas (dd/mm), cor = % de vitórias, facet por agência
+    # 7) Gráficos de linhas: tendência de % de participação em 1º lugar ao longo dos últimos 7 dias
+    # Facet por ADVP (eixo vertical), X=datas, Y=% , linhas por empresa
     chart_data = wins_full.copy()
     chart_data["DT_LABEL"] = pd.Categorical(chart_data["DT_LABEL"], categories=date_labels, ordered=True)
     chart_data["ADVP_LABEL"] = pd.Categorical(chart_data["ADVP_LABEL"], categories=advp_labels, ordered=True)
     chart_data["AGENCIA_NORM"] = pd.Categorical(chart_data["AGENCIA_NORM"], categories=companies, ordered=True)
 
-    base_chart = alt.Chart(chart_data)
-    heatmap = base_chart.mark_rect().encode(
-        x=alt.X("DT_LABEL:N", title="Data (dd/mm)", sort=date_labels),
-        y=alt.Y("ADVP_LABEL:N", title="ADVP", sort=advp_labels),
-        color=alt.Color("PCT:Q", title="% 1º Lugar", scale=alt.Scale(domain=[0, 100], scheme="blues")),
+    line_chart = alt.Chart(chart_data).mark_line(point=True).encode(
+        x=alt.X("DT:T", title="Data", axis=alt.Axis(format="%d/%m")),
+        y=alt.Y("PCT:Q", title="% Participação em 1º Lugar", scale=alt.Scale(domain=[0, 100])),
+        color=alt.Color("AGENCIA_NORM:N", title="Agência", sort=companies),
         tooltip=[
             alt.Tooltip("AGENCIA_NORM:N", title="Agência"),
             alt.Tooltip("ADVP_LABEL:N", title="ADVP"),
-            alt.Tooltip("DT_LABEL:N", title="Data"),
+            alt.Tooltip("DT:T", title="Data", format="%d/%m/%Y"),
             alt.Tooltip("COUNT:Q", title="Vitórias"),
             alt.Tooltip("TOTAL:Q", title="Total Pesquisas"),
             alt.Tooltip("PCT:Q", title="% 1º Lugar", format=".1f")
         ]
-    )
-    text = base_chart.mark_text(fontWeight="600", color="#0f172a").encode(
-        x=alt.X("DT_LABEL:N", sort=date_labels),
-        y=alt.Y("ADVP_LABEL:N", sort=advp_labels),
-        text=alt.Text("PCT:Q", format=".0f")
-    )
-    final_chart = (heatmap + text).facet(column=alt.Column("AGENCIA_NORM:N", title="Agência", sort=companies))
+    ).facet(
+        row=alt.Row("ADVP_LABEL:N", title="ADVP", sort=advp_labels)
+    ).resolve_scale(y='independent')
 
-    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-    st.markdown("**Mapa de calor — % de participação em 1º lugar por ADVP (vertical) e dia (horizontal)**")
-    st.altair_chart(final_chart, use_container_width=True)
+    st.markdown("**Gráficos de linhas — Tendência de % participação em 1º lugar por ADVP (últimos 7 dias)**")
+    st.altair_chart(line_chart, use_container_width=True)
 
 
 @register_tab("TABELA DE PESQUISA")
