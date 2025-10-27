@@ -1,15 +1,8 @@
 import streamlit as st
-import os
 
-# Ler o arquivo de manutenção
-caminho_manutencao = "data/MANUTENÇÃO.txt"
+st.set_page_config(page_title="Manutenção")
+st.markdown("# 🔧 Em Manutenção")
+st.info("Estamos realizando manutenção. Por favor, volte em breve!")
+st.stop()
 
-if os.path.exists(caminho_manutencao):
-    with open(caminho_manutencao, "r", encoding="utf-8") as file:
-        conteudo_manutencao = file.read()
-    
-    # Exibir no app
-    st.header("📋 Manutenção")
-    st.text(conteudo_manutencao)
-else:
-    st.warning(f"Arquivo não encontrado: {caminho_manutencao}")
+# Resto do seu app aqui...
