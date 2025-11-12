@@ -880,7 +880,7 @@ def tab3_top3_precos(df_raw: pd.DataFrame):
                     f"<div style='position:absolute;left:0;top:0;bottom:0;width:6px;border-radius:10px 0 0 10px;background:{stripe};'></div>"
                     f"<div style='{DT_WRAP_STYLE}'><span style='{DT_TXT_STYLE}'>{dt_lbl}</span>"
                     f"<span class='idp-wrap'><span class='idp-badge'>?</span>"
-                    f"<span class='idp-pop'>ID:&nbsp;<input class='idp-idbox' type='text' value='{_normalize_id(id_val)}' readonly></span></span></div>"
+                    f"<span class='idp-pop'>ID:&nbsp;<span class='idp-idbox'>{_normalize_id(id_val)}</span></span></span></div>"
                     f"<div style='{RANK_STYLE}'>{i + 1}º</div>"
                     f"<div style='{AG_STYLE}'>{row_i['AGENCIA_UP']}</div>"
                     f"<div style='{PR_STYLE}'>{fmt_moeda_br(preco_i)}</div>"
